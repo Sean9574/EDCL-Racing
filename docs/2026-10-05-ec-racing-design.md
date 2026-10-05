@@ -12,7 +12,7 @@ The paper asks one question: **on tracks none of them has seen, do networks evol
 driving (GA, ES) beat networks trained to copy an expert, whose shape was tuned by Keras
 Tuner?**
 
-How it fits the course brief (`../projects26Fv1.pdf`):
+How it fits the course brief (`../../projects26Fv1.pdf`):
 
 - It includes every required model: a baseline, Keras Tuner Random / Hyperband / Bayesian,
   ES (μ+λ) with the 1/5 rule, and a GA.
@@ -109,7 +109,7 @@ Project/
 ├── notebooks/          01_dataset, 02_imitation, 03_ga, 04_es, 05_evaluate
 ├── tests/
 ├── results/            (gitignored) datasets, logs, checkpoints, champions, tables, figures
-└── docs/superpowers/specs/
+└── docs/               design spec and build plan
 ```
 
 Code style: plain loops and if/elif, readable over clever. Each file has one job. The
