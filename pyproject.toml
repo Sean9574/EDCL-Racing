@@ -8,4 +8,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["slow: tests that take more than about ten seconds"]
 addopts = "-m 'not slow' -p no:launch_testing -p no:launch_ros -p no:ament_copyright -p no:ament_flake8 -p no:ament_lint -p no:ament_pep257 -p no:ament_xmllint"
-filterwarnings = ["ignore:pkg_resources is deprecated:UserWarning"]
+filterwarnings = [
+    "ignore:pkg_resources is deprecated:UserWarning",
+    "ignore:__array__ implementation doesn't accept a copy keyword:DeprecationWarning",
+    "ignore:currentThread\\(\\) is deprecated:DeprecationWarning",
+    "ignore:getName\\(\\) is deprecated:DeprecationWarning",
+]

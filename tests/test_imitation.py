@@ -5,13 +5,6 @@ import pytest
 
 from racing import imitation
 
-# Deprecations raised inside TensorFlow/Keras and keras-tuner themselves, not by this code.
-pytestmark = [
-    pytest.mark.filterwarnings("ignore:__array__ implementation doesn't accept a copy keyword:DeprecationWarning"),
-    pytest.mark.filterwarnings("ignore:currentThread\\(\\) is deprecated:DeprecationWarning"),
-    pytest.mark.filterwarnings("ignore:getName\\(\\) is deprecated:DeprecationWarning"),
-]
-
 
 @pytest.fixture
 def toy_data():
