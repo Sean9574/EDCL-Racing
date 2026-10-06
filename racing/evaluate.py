@@ -82,6 +82,18 @@ def to_markdown(frame):
     return "\n".join([header, rule, *body]) + "\n"
 
 
+def tuner_trials(runs_dir):
+    """Each tuner's trials table and its chosen trial's row. Trial ids stay strings: keras-tuner zero-pads them."""
+    trials = {}
+    for approach in ("kt_random", "kt_hyperband", "kt_bayesian"):
+        path = Path(runs_dir) / approach / "trials.csv"
+        if path.exists():
+            table = pd.read_csv(path, dtype={"trial_id": str})
+            chosen = str(read_summary(runs_dir, approach).get("chosen_trial"))
+            trials[approach] = (table, table[table["trial_id"] == chosen])
+    return trials
+
+
 def figures(runs_dir, out_dir):
     """Fitness curves, step sizes and Keras Tuner trials; only the figures whose data exists are written."""
     import matplotlib
@@ -121,16 +133,13 @@ def figures(runs_dir, out_dir):
         fig.savefig(written[-1], dpi=150)
         plt.close(fig)
 
-    tuners = ("kt_random", "kt_hyperband", "kt_bayesian")
-    trials = {a: pd.read_csv(runs_dir / a / "trials.csv") for a in tuners if (runs_dir / a / "trials.csv").exists()}
+    trials = tuner_trials(runs_dir)
     if trials:
         fig, ax = plt.subplots(figsize=(7, 4))
-        for approach, table in trials.items():
+        for approach, (table, pick) in trials.items():
             color = config.COLORS[approach]
             ax.scatter(table["params"], table["val_accuracy"], color=color, s=18, alpha=0.7,
                        label=config.LABELS[approach])
-            chosen = str(read_summary(runs_dir, approach).get("chosen_trial"))
-            pick = table[table["trial_id"].astype(str) == chosen]
             ax.scatter(pick["params"], pick["val_accuracy"], color=color, s=140, marker="*",
                        edgecolor="black", linewidth=0.8)
         ax.set_xscale("log")

@@ -64,3 +64,23 @@ def test_figures_with_partial_logs(tmp_path):
 def test_main_without_champions_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         evaluate.main(champions_dir=tmp_path, runs_dir=tmp_path, data_path=tmp_path / "none.npz", out_dir=tmp_path)
+
+
+def test_chosen_trial_star_with_zero_padded_ids(monkeypatch, tmp_path):
+    import matplotlib.pyplot as plt
+    runs = tmp_path / "runs"
+    for approach, width, chosen in (("kt_random", 2, "07"), ("kt_hyperband", 4, "0003")):
+        (runs / approach).mkdir(parents=True)
+        pd.DataFrame({"trial_id": [f"{i:0{width}d}" for i in range(12)], "val_accuracy": np.linspace(0.5, 0.9, 12),
+                      "params": np.arange(12) * 100 + 50, "epochs": 5, "hyperparameters": "{}"}
+                     ).to_csv(runs / approach / "trials.csv", index=False)
+        (runs / approach / "summary.json").write_text(json.dumps({"chosen_trial": chosen}))
+    trials = evaluate.tuner_trials(runs)
+    assert list(trials["kt_random"][1]["params"]) == [750] and list(trials["kt_hyperband"][1]["params"]) == [350]
+    shown, close = [], plt.close
+    monkeypatch.setattr(plt, "close", shown.append)
+    evaluate.figures(runs, tmp_path / "figures")
+    scatter = shown[-1].axes[0].collections
+    for fig in shown:
+        close(fig)
+    assert [len(c.get_offsets()) for c in scatter] == [12, 1, 12, 1]   # all trials, then the chosen star
