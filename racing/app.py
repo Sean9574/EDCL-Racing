@@ -142,8 +142,8 @@ def trainer_main(approach, size, reports, running):
     from racing.expert import collect_dataset
 
     def send(report):
-        running.wait()                      # training holds here while the viewer is paused
         reports.put(report)
+        running.wait()                      # training holds here while the viewer is paused
 
     out_dir = config.APP_RUNS_DIR / approach
     if approach == "ga":
@@ -152,9 +152,12 @@ def trainer_main(approach, size, reports, running):
     if approach == "es":
         es.run_es(lam=size, out_dir=out_dir, on_generation=send, champion_dir=None, n_jobs=config.N_JOBS)
         return
-    if not config.DATASET_PATH.exists():
-        collect_dataset()
-    data = imitation.load_dataset()
+    path = config.DATASET_PATH
+    if not path.exists():
+        path = config.APP_RUNS_DIR / "dataset.npz"     # never write the reported dataset
+        if not path.exists():
+            collect_dataset(path)
+    data = imitation.load_dataset(path)
     members, scores = [], []
 
     def add(number, model, val_accuracy):

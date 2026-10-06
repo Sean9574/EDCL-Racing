@@ -65,9 +65,11 @@ def epoch_reporter(on_epoch):
     return EpochReporter()
 
 
-def train_baseline(data, out_dir=None, champion_dir=config.CHAMPIONS_DIR, on_epoch=None, epochs=config.MAX_EPOCHS):
+def train_baseline(data, out_dir=None, champion_dir=config.CHAMPIONS_DIR, on_epoch=None, epochs=config.MAX_EPOCHS,
+                   seed=0):
     out_dir = Path(out_dir or config.RUNS_DIR / "baseline")
     out_dir.mkdir(parents=True, exist_ok=True)
+    keras_cpu().utils.set_random_seed(seed)
     model = build_baseline()
     callbacks = [early_stopping()]
     if on_epoch is not None:
@@ -137,6 +139,7 @@ def run_tuner(approach, data, out_dir=None, champion_dir=config.CHAMPIONS_DIR, o
               hyperband_iterations=config.HYPERBAND_ITERATIONS):
     out_dir = Path(out_dir or config.RUNS_DIR / approach)
     out_dir.mkdir(parents=True, exist_ok=True)
+    keras_cpu().utils.set_random_seed(seed)
     tuner = make_tuner(approach, out_dir / "tuner", seed, on_trial, max_trials, max_epochs, hyperband_iterations)
     start = time.time()
     tuner.search(data["X_train"], data["y_train"], validation_data=(data["X_val"], data["y_val"]),

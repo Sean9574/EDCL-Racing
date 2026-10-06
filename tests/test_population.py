@@ -83,3 +83,10 @@ def test_save_champion(tmp_path):
     w = nets.init_population(np.random.default_rng(3), 1)[0]
     path = population.save_champion("ga", w, tmp_path)
     assert path == tmp_path / "ga.keras" and path.exists()
+
+
+def test_logger_removes_stale_best_networks(tmp_path):
+    (tmp_path / "best_gen0007.npy").write_bytes(b"stale")
+    (tmp_path / "notes.txt").write_text("kept")
+    population.RunLogger(tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["log.csv", "notes.txt"]

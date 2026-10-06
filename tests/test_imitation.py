@@ -65,3 +65,9 @@ def test_run_tuner_small(approach, toy_data, tmp_path):
     assert summary["trials"] == len(seen) >= 2
     assert (tmp_path / approach / "trials.csv").exists()
     assert summary["chosen_params"] <= max(seen)
+
+
+def test_train_baseline_is_reproducible_with_a_seed(toy_data, tmp_path):
+    runs = [imitation.train_baseline(toy_data, out_dir=tmp_path / f"run{i}", champion_dir=None, epochs=3, seed=3)
+            for i in range(2)]
+    assert runs[0]["val_accuracy"] == runs[1]["val_accuracy"]

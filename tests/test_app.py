@@ -256,3 +256,59 @@ def test_handle_slider_sets_cars_shown(window):
     assert window.shown == 30
     window.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(0, 0)))
     assert not window.dragging
+
+
+def test_pausing_still_delivers_the_finished_generation(monkeypatch, tmp_path):
+    from racing import ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    monkeypatch.setattr(ga, "run_ga", lambda **kwargs: kwargs["on_generation"](ga_report(0)))
+    reports, running = queue.Queue(), threading.Event()           # paused: running is not set
+    trainer = threading.Thread(target=viewer.trainer_main, args=("ga", 30, reports, running), daemon=True)
+    trainer.start()
+    try:
+        assert reports.get(timeout=5)["generation"] == 0          # the finished generation is shown while paused
+        assert trainer.is_alive()                                  # and training holds until resumed
+    finally:
+        running.set()
+    trainer.join(timeout=5)
+    assert not trainer.is_alive()
+
+
+def fake_imitation(monkeypatch, tmp_path):
+    """Stubs dataset collection and baseline training; returns the lists they record into."""
+    from racing import expert, imitation
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path / "app_runs")
+    monkeypatch.setattr(config, "DATASET_PATH", tmp_path / "results" / "dataset.npz")
+    collected, trained = [], []
+
+    def collect(path=None, splits=None):
+        collected.append(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(path, y_train=np.array([1]))
+        return {}, {}
+
+    monkeypatch.setattr(expert, "collect_dataset", collect)
+    monkeypatch.setattr(imitation, "train_baseline", lambda data, **kwargs: trained.append(data))
+    return collected, trained
+
+
+def run_baseline_trainer():
+    running = threading.Event()
+    running.set()
+    viewer.trainer_main("baseline", 0, queue.Queue(), running)
+
+
+def test_trainer_main_collects_its_own_dataset(monkeypatch, tmp_path):
+    collected, trained = fake_imitation(monkeypatch, tmp_path)
+    run_baseline_trainer()
+    assert collected == [tmp_path / "app_runs" / "dataset.npz"] and not config.DATASET_PATH.exists()
+    run_baseline_trainer()                                          # reuses the dataset it collected
+    assert len(collected) == 1 and [list(d["y_train"]) for d in trained] == [[1], [1]]
+
+
+def test_trainer_main_uses_the_reported_dataset(monkeypatch, tmp_path):
+    collected, trained = fake_imitation(monkeypatch, tmp_path)
+    config.DATASET_PATH.parent.mkdir(parents=True)
+    np.savez(config.DATASET_PATH, y_train=np.array([7]))
+    run_baseline_trainer()
+    assert collected == [] and list(trained[0]["y_train"]) == [7]

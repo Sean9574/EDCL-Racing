@@ -57,6 +57,8 @@ class RunLogger:
     def __init__(self, out_dir):
         self.dir = Path(out_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
+        for stale in self.dir.glob("best_gen*.npy"):    # left over from an earlier run in the same directory
+            stale.unlink()
         self.csv_path = self.dir / "log.csv"
         with open(self.csv_path, "w", newline="") as f:
             csv.writer(f).writerow(self.FIELDS)
