@@ -92,19 +92,26 @@ Project/
 ├── README.md
 ├── racing/
 │   ├── config.py       default parameters (§13) and color assignments
-│   ├── track_gen.py    curriculum levels, seeds, validation, road grid
+│   ├── actions.py      action table: class ↔ steering and throttle fractions
+│   ├── backend.py      Keras access with GPUs hidden
+│   ├── track.py        track data structure, road grid, wall-distance lookup
+│   ├── track_gen.py    curriculum level shapes and geometric validation
+│   ├── tracks.py       validated tracks with the expert's lap time (cached)
 │   ├── sim.py          vehicle dynamics, sensors, collisions, progress, fitness
-│   ├── nets.py         action table, batched numpy forward pass, Keras export
+│   ├── nets.py         batched numpy forward pass, Keras conversion, champion loading
 │   ├── expert.py       scripted expert driver and dataset collection
 │   ├── imitation.py    baseline, three Keras Tuner searches, model selection
 │   ├── curriculum.py   level-advancement rule, GA mutation-strength rule
+│   ├── population.py   shared evolutionary helpers: evaluation, logging, selection
 │   ├── ga.py           genetic algorithm
 │   ├── es.py           (μ+λ) evolution strategy
 │   ├── evaluate.py     test-track evaluation, tables, figures
+│   ├── bench.py        generation-time measurement
 │   └── app.py          pygame application: training view and race view
 ├── notebooks/          01_dataset, 02_imitation, 03_ga, 04_es, 05_evaluate
+├── scripts/            notebook generation
 ├── tests/
-├── results/            (excluded from version control) datasets, logs, checkpoints, models, tables, figures
+├── results/            generated data (not under version control)
 └── docs/               design specification and implementation plan
 ```
 
@@ -192,7 +199,7 @@ all be learned by the controllers.
 ### 5.2 Sensors
 
 Nine rays at −90°, −67.5°, …, +90° relative to the heading measure the distance to the track boundary,
-up to 50 m. Rays are cast by sphere tracing on the distance-to-boundary map, using at most 12 steps.
+up to 50 m. Rays are cast by sphere tracing on the distance-to-boundary map, with a minimum step of 0.5 m and at most 48 iterations per ray. Each ray stops as soon as it reaches the boundary.
 
 The input vector has 10 elements: the nine distances divided by 50, plus the speed divided by a
 reference speed of 40 m/s. The reference speed only scales the input and does not limit the vehicle.
@@ -435,7 +442,7 @@ control strategies. Their behavior is compared in the results.
 ### 9.4 Computational performance
 
 The simulation is vectorized over individuals, and rays use sphere tracing (§5.2). The time for one
-generation is measured in the first implementation task, before any other work depends on it.
+generation is measured as soon as the simulator and the expert driver exist, before any training run.
 
 If that time is too long, the following measures are applied in order:
 
@@ -471,13 +478,14 @@ Training is observed live rather than recorded.
 
 - **Controls:**
   - The user selects an approach.
-  - For the GA and ES, the user sets the population size before starting.
+  - For the GA and ES, the user sets the population size before starting. For the ES, this setting is the number of offspring λ.
   - Training is started and paused with a play/pause control.
 - **Training process:**
   - Training runs in a separate process at full speed.
   - After each generation, completed Keras Tuner trial or baseline epoch, it sends the weights,
     fitness values, level and track seeds to the view through a `multiprocessing.Queue`.
   - Pausing halts training at the next generation boundary.
+  - Training started from the application writes to `results/app_runs/` and never saves final controllers, so it cannot overwrite the reported results.
 - **Playback:**
   - The view re-simulates only the displayed individuals, on the generation's first track, at 1×, 2×,
     4× or 8× speed.
@@ -575,6 +583,7 @@ Automated tests use pytest.
 | Grip limit μg (friction circle) | 12 m/s² |
 | Speed input scaling | 40 m/s (normalization only) |
 | Sensors | 9 rays from −90° to +90°, 50 m range |
+| Sphere tracing | Minimum step 0.5 m; at most 48 iterations per ray |
 | Time limit per lap | Twice the expert lap time |
 | No-progress timeout | 5 s |
 | Tracks per generation | 3 |
