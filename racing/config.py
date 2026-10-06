@@ -83,7 +83,7 @@ ES_SIGMA_MAX = 1.0
 
 # --- Budget and parallelism ---
 EVAL_BUDGET = 200_000
-N_JOBS = 1                   # worker processes for population evaluation; set from the Task 11 benchmark (racing/bench.py)
+N_JOBS = 8                   # worker processes for population evaluation; measured with racing/bench.py (1: 14.6 s, 4: 5.9 s, 8: 5.7 s, 12: 5.8 s, 16: 6.2 s per worst-case generation)
 
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3
