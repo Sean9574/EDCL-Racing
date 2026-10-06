@@ -1,70 +1,64 @@
-# EC Racing: Design Spec
+# EC Racing: Design Specification
 
-ECDL term project (Prof. Chung, Fall 2026). Written 2026-10-05.
+**Evolutionary and Gradient-Based Search for Neural Network Driving Controllers**\
+ECDL Term Project · Fall 2026 · Version 1.0 · 5 October 2026
 
-## 1. Goal
+## Summary
 
-A top-down 2D racing simulator. Six cars race on procedurally generated tracks, and each car
-is driven by a small neural network that a different method found. Sean watches; the
-algorithms drive.
+This document specifies EC Racing, a top-down two-dimensional racing simulator. It is used to compare
+methods for finding small neural network driving controllers. Six controllers compete on procedurally
+generated tracks.
 
-The paper asks one question: **on tracks none of them has seen, do networks evolved by
-driving (GA, ES) beat networks trained to copy an expert, whose shape was tuned by Keras
-Tuner?**
+- **Imitation learning (four controllers).** These are trained by supervised imitation of a scripted
+  expert driver. One is a hand-designed baseline. In the other three, Keras Tuner selects the
+  architecture using random search, Hyperband or Bayesian optimization.
+- **Neuroevolution (two controllers).** A genetic algorithm (GA) and a (μ+λ) evolution strategy (ES)
+  optimize the network weights directly from driving performance. Both evolve large populations and
+  follow a curriculum of progressively harder tracks.
 
-How it fits the course brief (`../../projects26Fv1.pdf`):
+All controllers are evaluated on held-out tracks for classification accuracy, network size, inference
+time and driving performance. A visualization application shows training in progress and races between
+the final controllers.
 
-- It includes every required model: a baseline, Keras Tuner Random / Hyperband / Bayesian,
-  ES (μ+λ) with the 1/5 rule, and a GA.
-- It maximizes test accuracy and minimizes network size and inference time.
-- Networks are tiny, so nothing takes long to train. The output is a paper.
-- It fits Project 7 ("any research-oriented project using DL, EC, and HPO").
+## 1. Introduction
 
-## 2. What Sean decided vs. what is assumed
+### 1.1 Research question
 
-**Sean decided:**
+On tracks not seen during training, do controllers evolved through simulated driving outperform
+controllers that are trained to imitate an expert and whose architectures are tuned by conventional
+hyperparameter optimization?
 
-- This is the ECDL term project.
-- Each car is a driving network: ray distances in, steering and throttle out. No camera
-  images and no segmentation.
-- Tracks come only from a procedural generator: no real IAC track and no track editor.
-- Spectator only. Nobody drives with the keyboard.
-- The lineup is hybrid. Baseline + 3 Keras Tuner cars learn by copying an expert. ES + GA
-  cars learn by driving, with large populations.
-- Each approach has its own color.
-- There is one top-down camera and no per-car views.
-- Training is not recorded for replay. Instead there is a live training view with
-  play/pause, a population-size setting, a cars-shown setting, and a choice of whole
-  population / best / worst.
-- Curriculum: start on a circle and move to harder tracks as the cars improve. It ends on
-  seeded tracks, where lap time matters more than finishing.
-- Level-up needs 100% of the unmutated (kept) cars to finish, and the mutated (new) cars to
-  finish at or above a threshold.
-- GA mutation strength follows the finish rate. Fewer cars finishing means more mutation,
-  more finishing means less, and all finishing means a very, very small amount (never zero).
-- Each approach levels up independently.
-- Cars collide only with the track edge, never with each other, in every mode.
+### 1.2 Alignment with course requirements
 
-**Assumed by Claude (Sean can change any of these):**
+The project addresses the course project guidelines (*Suggested Term Projects*, version 1.0,
+5 October 2026):
 
-- The Project 7 framing, and using a driving-based test metric alongside test accuracy.
-  This needs a quick check with Prof. Chung (§15).
-- Every number in §14.
-- Kept cars = 50 in both GA and ES.
-- The level-up threshold is 80% of new cars, held for 3 generations in a row.
-- ES uses the 1/5-rule constant 0.82 from HW2.
+- All required models are included:
+  - a baseline model
+  - Keras Tuner with random search, Hyperband and Bayesian optimization
+  - an ES (μ+λ) with the 1/5 success rule
+  - a GA
+- The objectives are to maximize test accuracy and to minimize network size and inference time.
+- All networks are small, so training time stays short.
+- The deliverable is a research paper. The project falls under Project 7 ("any research-oriented
+  project using DL, EC, and HPO").
 
-## 3. Out of scope
+## 2. Scope
 
-- Semantic segmentation and any IAC bag data.
-- Human driving, menus, a track editor, and real-world tracks.
-- Car-to-car collisions.
-- Recording or replaying training runs, and video export.
-- A UI for browsing old generations. Each generation's best network is saved to disk, but
-  v1 has no screen for viewing them.
-- The GPU. These nets are too small for it to help (measured in HW3: CPU wins).
+The following are outside the scope of this project:
 
-## 4. Architecture
+- Camera-based perception, including semantic segmentation.
+- Human-driven cars, menu systems, track editing and real-world track layouts.
+- Collisions between cars.
+- Recording, replay or video export of training runs.
+- A user interface for browsing earlier generations. The best network of each generation is saved to
+  disk but cannot be browsed in the application.
+- GPU acceleration. Preliminary measurements on the target hardware showed CPU execution to be faster
+  for networks of this size.
+
+## 3. System Architecture
+
+### 3.1 Overview
 
 ```
 track_gen ──► tracks (train / validation / test seeds, levels 1–4)
@@ -74,402 +68,528 @@ sim (numpy, every car stepped at once: physics, rays, crash, progress, fitness)
    │                          │                              │
    ▼                          ▼                              ▼
 expert ──► dataset       ga.py / es.py                  app.py (pygame)
-   │                     (population drives in sim,      Train mode: live training view
-   ▼                      curriculum.py levels it up)    Race mode: 6 champions race
+   │                     (population drives in sim,      training view
+   ▼                      curriculum.py sets level)      race view
 imitation.py                  │                              ▲
 (baseline + KT Random/        ▼                              │
- Hyperband/Bayesian)     champion weights ──► Keras copy ────┤
+ Hyperband/Bayesian)     final weights ──► Keras copy ───────┤
    │                                                         │
-   └──► champion Keras models ───────────────────────────────┘
+   └──► final Keras models ──────────────────────────────────┘
                  │
                  ▼
 evaluate.py ──► test tables + figures for the paper
 ```
 
-Everything uses the same `sim`. A car therefore behaves identically in data collection,
-evolution, the live view and the race.
+*Figure 1. Components and data flow.*
 
-### Project layout
+A single simulator is shared by data collection, evolutionary training, the training view and the race
+view. A controller therefore behaves identically in every context.
+
+### 3.2 Module structure
 
 ```
 Project/
 ├── README.md
 ├── racing/
-│   ├── config.py       every default from §14, plus the color table
-│   ├── track_gen.py    levels 1–4, seeds, validation, road grid
-│   ├── sim.py          car physics, rays, crash, progress, fitness (vectorized)
-│   ├── nets.py         action table, batched numpy forward pass, Keras build/export
-│   ├── expert.py       scripted driver + dataset collection
-│   ├── imitation.py    baseline + three Keras Tuner searches + size rule
-│   ├── curriculum.py   level-up rule + GA mutation-strength formula
-│   ├── ga.py           GA loop
-│   ├── es.py           (μ+λ)-ES loop
-│   ├── evaluate.py     champions on test tracks, tables, figures
-│   └── app.py          pygame window: Train mode + Race mode
+│   ├── config.py       default parameters (§13) and color assignments
+│   ├── track_gen.py    curriculum levels, seeds, validation, road grid
+│   ├── sim.py          vehicle dynamics, sensors, collisions, progress, fitness
+│   ├── nets.py         action table, batched numpy forward pass, Keras export
+│   ├── expert.py       scripted expert driver and dataset collection
+│   ├── imitation.py    baseline, three Keras Tuner searches, model selection
+│   ├── curriculum.py   level-advancement rule, GA mutation-strength rule
+│   ├── ga.py           genetic algorithm
+│   ├── es.py           (μ+λ) evolution strategy
+│   ├── evaluate.py     test-track evaluation, tables, figures
+│   └── app.py          pygame application: training view and race view
 ├── notebooks/          01_dataset, 02_imitation, 03_ga, 04_es, 05_evaluate
 ├── tests/
-├── results/            (gitignored) datasets, logs, checkpoints, champions, tables, figures
-└── docs/               design spec and build plan
+├── results/            (excluded from version control) datasets, logs, checkpoints, models, tables, figures
+└── docs/               design specification and implementation plan
 ```
 
-Code style: plain loops and if/elif, readable over clever. Each file has one job. The
-notebooks run the official experiments with fixed settings by calling into `racing/`.
+*Figure 2. Repository layout.*
 
-## 5. Tracks and curriculum
+- Each module has a single responsibility.
+- For readability, the code uses plain loops and explicit conditionals rather than abstraction layers.
+- Notebooks run the reported experiments with fixed settings by calling into the `racing` package.
 
-`make_track(seed, level)` returns a `Track`. A Track holds:
+## 4. Track Generation and Curriculum
 
-- the centerline, resampled every 1 m
-- the width and the left/right edges
-- a 0.5 m road grid, plus a distance-to-wall map built with `scipy.ndimage.distance_transform_edt`
-- the start pose and length
-- the expert's lap time
+### 4.1 Track representation
 
-| Level | Shape | Size | What it teaches |
+The function `make_track(seed, level)` returns a `Track` object containing:
+
+- the centerline, resampled at 1 m intervals
+- the track width and the left and right boundaries
+- a road occupancy grid at 0.5 m resolution
+- a distance-to-boundary map computed with `scipy.ndimage.distance_transform_edt`
+- the start pose and track length
+- the expert driver's lap time
+
+### 4.2 Curriculum levels
+
+The evolutionary controllers train on a curriculum. It begins on a circle and ends on fully varied
+seeded tracks, where lap time dominates the score.
+
+*Table 1. Curriculum levels.*
+
+| Level | Shape | Dimensions | Skill required |
 |---|---|---|---|
-| 1 | Circle | radius 50 m, width 16 m | Hold a steady turn |
-| 2 | Oval: two straights + two half-circles | straights 80–160 m, turn radius 25–40 m, width 14 m | Brake before corners |
-| 3 | Easy seeded loop: 6–8 control points | radius 80–160 m, min corner radius 40 m, width 14 m | Handle a varied layout |
-| 4 | Full seeded loop: 10–16 control points | radius 60–200 m, min corner radius 15 m, width 12 m | Go fast |
+| 1 | Circle | Radius 50 m; width 16 m | Sustained constant-radius turning |
+| 2 | Oval: two straights joined by semicircles | Straights 80–160 m; turn radius 25–40 m; width 14 m | Braking before corners |
+| 3 | Seeded loop with 6–8 control points | Radius 80–160 m; minimum corner radius 40 m; width 14 m | Adapting to varied layouts |
+| 4 | Seeded loop with 10–16 control points | Radius 60–200 m; minimum corner radius 15 m; width 12 m | Minimizing lap time |
 
-Seeded loops place control points at sorted random angles and radii, then join them with a
-periodic cubic spline.
+Seeded loops are built from control points at sorted random angles and radii. The points are
+interpolated with a periodic cubic spline.
 
-**Validation.** A track is rejected if any of these hold:
+### 4.3 Validation
 
-- the road overlaps itself
-- a corner is tighter than the level's minimum radius
-- the expert fails to finish it
+A generated track is rejected if any of the following holds:
 
-A rejected seed retries deterministically with `(seed, attempt)`, so a given seed always
-produces the same track.
+- the road surface overlaps itself
+- any corner is tighter than the level's minimum radius
+- the expert driver cannot complete a lap
 
-**Seeds:**
+A rejected seed is retried deterministically using the pair (seed, attempt), so a given seed always
+yields the same track.
 
-- Training: 0–79, at every level. Level 1 is the same circle for every seed.
-- Validation: 80–99, level 4.
-- Test: 1000–1019, level 4. No approach ever trains on these.
+### 4.4 Seed allocation
 
-## 6. Simulator
+- **Training:** seeds 0–79 at all levels. Level 1 produces the same circle for every seed.
+- **Validation:** seeds 80–99, level 4.
+- **Test:** seeds 1000–1019, level 4. Test tracks are never used for training or model selection.
 
-- **Car model:** a kinematic bicycle model with fixed `dt = 0.05 s` (20 Hz).
-  - State: x, y, heading, speed.
-  - Speed: gas accelerates at 6 m/s², brake slows at 12 m/s², and coasting loses 1 m/s².
-    Top speed is 40 m/s.
-  - Steering: up to 25° on a 3 m wheelbase.
-- **Grip limit:** yaw rate is capped at `a_lat_max / v`, with `a_lat_max = 12 m/s²`. A fast
-  car can't turn tightly, so it has to brake for corners.
-- **Sensors:** 9 rays at −90°, −67.5°, …, +90°. Each returns the distance to the wall, out
-  to 50 m. Rays are cast by sphere tracing on the distance-to-wall map, at most 12 steps.
-  Network inputs are the 9 distances divided by 50, plus speed divided by 40: **10 inputs**.
-- **Crash:** the car's center leaves the road. A crashed car stops where it is.
-- **No car-to-car collision.** Cars are ghosts to each other in every mode.
-- **Progress:** each car tracks its nearest centerline point in a window running from 5 m
-  behind to 30 m ahead. Progress is the furthest arc length reached. Driving backwards
-  earns nothing.
-- **A run ends** when any of these happens:
-  - the car finishes one lap
-  - the car crashes
-  - progress stalls for 5 s
-  - the time limit is reached: 2× the expert's lap time on that track
-- **Fitness on one track:**
-  - Not finished: progress fraction `p` (from 0 up to 1).
-  - Finished: `1 + (1 − lap_time / time_limit)` (between 1 and 2).
+## 5. Simulation Model
 
-  Early on, only completion separates cars. Once they finish, faster laps score higher.
-- **Vectorized:** every per-car value is a numpy array of shape `(n_cars,)`. One step
-  advances the whole population.
-- **Deterministic:** the same weights on the same track always give the same result. Every
-  computation is float64 with no randomness inside `step`. This is what lets the live view
-  re-simulate exactly what training scored.
+### 5.1 Vehicle dynamics
 
-## 7. Shared network interface
+The vehicle is modeled as a kinematic bicycle with a fixed time step of 0.05 s (20 Hz). Its state
+consists of position, heading and speed.
 
-- **10 inputs → 15-way softmax.** Each output class is one (steer, throttle) pair:
+- **Longitudinal:**
+  - acceleration 6 m/s² under throttle
+  - deceleration 12 m/s² under braking
+  - deceleration 1 m/s² when coasting
+  - top speed 40 m/s
+- **Steering:** a maximum steering angle of 25° on a 3 m wheelbase.
+- **Grip limit:** yaw rate is capped at `a_lat_max / v`, with `a_lat_max = 12 m/s²`. At high speed the
+  vehicle cannot turn tightly, so it must brake before corners. This makes throttle a meaningful
+  control decision.
+
+### 5.2 Sensors
+
+Nine rays at −90°, −67.5°, …, +90° relative to the heading measure the distance to the track boundary,
+up to 50 m. Rays are cast by sphere tracing on the distance-to-boundary map, using at most 12 steps.
+
+The input vector has 10 elements: the nine distances divided by 50, plus the speed divided by 40.
+
+### 5.3 Collisions
+
+A car crashes when its center leaves the road surface, and a crashed car stops in place. Cars do not
+interact with each other in any mode.
+
+### 5.4 Progress and termination
+
+Progress is measured along the centerline. Each car tracks its nearest centerline point within a
+window from 5 m behind to 30 m ahead. Its progress is the furthest arc length reached, so reverse
+driving does not increase progress.
+
+A run terminates when any of the following occurs:
+
+- the car completes one lap
+- the car crashes
+- the car makes no progress for 5 s
+- the time limit is reached, equal to twice the expert's lap time on that track
+
+### 5.5 Fitness
+
+The fitness of a run on a single track is:
+
+- `p`, the completed fraction of the lap (0 ≤ p < 1), if the lap is not completed
+- `1 + (1 − t_lap / t_limit)`, a value between 1 and 2, if the lap is completed
+
+Under this definition, completion separates controllers early in training. Once controllers complete
+laps, lap time separates them.
+
+### 5.6 Implementation properties
+
+- **Vectorized:** every per-car quantity is a numpy array of shape `(n_cars,)`, so a single call
+  advances the entire population.
+- **Deterministic:** all computation is in float64, and the step function involves no randomness.
+  Identical weights on an identical track always produce identical results. This lets the training
+  view re-simulate exactly the runs that training scored.
+
+## 6. Controller Network Interface
+
+All controllers share the same input and output definition. This lets any controller be used in the
+simulator, the training view and the race view without changes.
+
+- **Input:** the 10-element vector defined in §5.2.
+- **Output:** a 15-way softmax. Each class is one combination of a steering level and a throttle level:
   - steer ∈ {−1, −0.5, 0, +0.5, +1}
   - throttle ∈ {brake, coast, gas}
-  - `class = 3 * steer_index + throttle_index`
+  - `class = 3 × steer_index + throttle_index`
 
-  The car takes the highest-scoring class.
-- Making it a classification means test accuracy is literal. It also means every car plugs
-  into the race and the viewer the same way.
-- `nets.py` provides:
-  - the action table
-  - a batched numpy forward pass for whole populations (one `einsum` per layer)
-  - `to_keras(weights)`, which builds the same network in Keras and copies the weights in
+  The car executes the class with the highest probability.
 
-  Every champion exists as a `.keras` file, so size and inference time are measured the
-  same way for all six.
-- **The baseline shape**, also used by GA and ES, is 10 → 16 (relu) → 15 softmax:
-  **431 weights**.
+Framing control as classification makes test accuracy directly measurable.
 
-## 8. Expert and dataset
+The module `nets.py` provides:
 
-- **Steering:** pure pursuit toward a centerline point `6 m + 0.4 s × speed` ahead,
-  snapped to the nearest of the 5 steer levels.
-- **Speed:** the target speed is `sqrt(0.85 × a_lat_max / κ)`, capped at top speed, where κ
-  is the sharpest curvature within stopping distance + 15 m. The expert picks gas if more
-  than 0.5 m/s under target, brake if more than 0.5 m/s over, and coast otherwise.
-- **The expert uses the same 15 actions** as the networks, so every label is an action a
-  network can actually take. Its lap time sets each track's time limit.
-- **Recovery data:** every 2–4 s (random), the car executes a random steer level for
-  0.3–0.6 s. The label recorded is always the expert's choice for that state, which teaches
-  networks how to recover after drifting off line.
-- **Rows:** (10 inputs, class label).
-  - Training: level 1 once (it is a single circle), levels 2–3 on seeds 0–19, and level 4
-    on seeds 0–79.
-  - Validation: seeds 80–99, level 4.
-  - Test: seeds 1000–1019, level 4.
+- the action table
+- a batched numpy forward pass for whole populations, using one `einsum` per layer
+- `to_keras(weights)`, which builds the equivalent Keras model and copies the weights into it
 
-  Expected size is about 100k–200k rows in total.
+Every final controller is stored as a `.keras` file, so network size and inference time are measured
+the same way for all six approaches.
 
-## 9. Imitation cars (baseline + Keras Tuner)
+The baseline architecture, which the GA and ES also use, is 10 → 16 (ReLU) → 15 (softmax), for a total
+of 431 trainable parameters.
 
-- **Baseline:** the 431-weight network. Adam, learning rate 1e-3, batch 256, up to 50
-  epochs, early stopping on validation accuracy with patience 5.
-- **Keras Tuner search space** (identical for Random, Hyperband and Bayesian):
+## 7. Expert Driver and Dataset
 
-  | Choice | Range |
-  |---|---|
-  | Hidden layers | 1–3 |
-  | Units per layer | {4, 8, 16, 32, 64} |
-  | Activation | {relu, tanh} |
-  | Dropout | {0.0, 0.1, 0.2} |
-  | Learning rate | log-uniform 1e-4 to 1e-2 |
+### 7.1 Expert driver
 
-  The objective is validation accuracy. Training settings match the baseline.
-- **Budget:**
-  - Random and Bayesian: 30 trials each.
-  - Hyperband: `max_epochs = 50`, `factor = 3`, with `hyperband_iterations` chosen so its
-    total training epochs roughly match the other two.
+- **Steering:** pure pursuit toward a centerline point `6 m + 0.4 s × v` ahead, quantized to the
+  nearest of the five steering levels.
+- **Speed:** the target speed is `sqrt(0.85 × a_lat_max / κ)`, capped at top speed. Here κ is the
+  maximum curvature within the stopping distance plus 15 m. The expert selects gas when more than
+  0.5 m/s below the target, brake when more than 0.5 m/s above it, and coast otherwise.
 
-  Trial counts, epochs and wall time are all reported.
-- **Size rule:** each method's winner is the **smallest network (fewest weights) whose
-  validation accuracy is within 1 percentage point of that method's best**.
+The expert chooses from the same 15 actions as the networks, so every label is an action a network can
+reproduce. The expert's lap time on each track sets that track's time limit (§5.4).
 
-## 10. Evolution cars (GA and ES)
+### 7.2 Recovery data
 
-### Shared by both
+Pure imitation provides no examples of recovering from off-line states. To address this, at random
+intervals of 2–4 s the car executes a random steering level for 0.3–0.6 s. Throughout, the recorded
+label remains the expert's chosen action for the observed state.
 
-- Evolution uses the baseline shape (431 weights), so only the learning method differs.
-  Evolution searches weights, not network size. Each car starts with Glorot-uniform weights.
-- **Each generation:**
-  1. Draw 3 tracks from the current level's training seeds, using the run's RNG.
-  2. Every car drives all 3 tracks. Kept cars are re-scored too, because the tracks are new.
-  3. A car's fitness is its mean over the 3 tracks. A car counts as "finished" only if it
-     finished all 3.
-- **Kept vs. new cars:**
-  - Kept cars are carried over unchanged from the last generation.
-  - New cars are freshly made by mutation (and by crossover, in the GA).
-- **Level-up** (each approach on its own schedule): **100% of kept cars finish AND at least
-  80% of new cars finish, for 3 generations in a row.** The level then goes up by 1, to a
-  maximum of 4. Level 4 runs until the budget is used up.
-- **Fair compute:** each approach gets 200,000 car-evaluations, where one car-evaluation is
-  one car driving its generation's 3 tracks.
-  - GA: 1,000 per generation → 200 generations.
-  - ES: 550 per generation → about 364 generations.
+### 7.3 Dataset composition
 
-  Wall time is reported too.
-- **Logged every generation** (CSV):
-  - level and generation number
-  - best, mean and worst fitness
-  - kept-finish % and new-finish %
-  - GA mutation strength or ES σ
-  - track seeds and wall time
+Each row consists of the 10 inputs and one class label.
 
-  Each generation's best network is also saved as an `.npy` file (about 3.4 KB). After every
-  generation the run is safe on disk, so closing the app or a crash loses nothing.
-- **Champion:** when the budget runs out, the final kept cars each drive the validation
-  tracks (seeds 80–99). The best mean fitness wins and is exported to `.keras`. If a run
-  never reached level 4, its champion is picked the same way and the paper reports the level
-  it reached.
+- **Training:**
+  - level 1 once
+  - levels 2–3 on seeds 0–19
+  - level 4 on seeds 0–79
+- **Validation:** level 4, seeds 80–99.
+- **Test:** level 4, seeds 1000–1019.
 
-### GA
+The expected total is approximately 100,000–200,000 rows.
 
-- Population N = 1000 (adjustable). The **top K = 50 are kept** unchanged.
-- **Each of the other N − K cars:**
-  1. Pick two parents. Each is the winner of a tournament of 5 random cars drawn from the
-     whole population.
-  2. Apply uniform crossover: each weight comes from either parent with probability 0.5.
-  3. Mutate: each weight, with probability 0.1, gets + N(0, s).
-- **Mutation strength s** follows Sean's rule:
+## 8. Imitation-Learning Controllers
+
+### 8.1 Baseline
+
+The baseline is the 431-parameter network from §6, trained with:
+
+- Adam at a learning rate of 1e-3
+- batch size 256
+- sparse categorical cross-entropy
+- at most 50 epochs, with early stopping on validation accuracy (patience 5)
+
+### 8.2 Hyperparameter search
+
+Random search, Hyperband and Bayesian optimization all search the same space.
+
+*Table 2. Keras Tuner search space.*
+
+| Hyperparameter | Range |
+|---|---|
+| Hidden layers | 1–3 |
+| Units per layer | {4, 8, 16, 32, 64} |
+| Activation | {ReLU, tanh} |
+| Dropout | {0.0, 0.1, 0.2} |
+| Learning rate | Log-uniform, 1e-4 to 1e-2 |
+
+The objective is validation accuracy, and training settings match the baseline.
+
+**Search budget:**
+
+- Random search and Bayesian optimization: 30 trials each.
+- Hyperband: `max_epochs = 50` and `factor = 3`, with `hyperband_iterations` chosen so its total
+  training epochs approximately match the other two.
+
+The number of trials, total epochs and wall-clock time are reported for every method.
+
+### 8.3 Model selection
+
+For each method, the selected model is the smallest network (fewest parameters) whose validation
+accuracy is within one percentage point of the best validation accuracy that method achieved. This
+rule expresses both course objectives, accuracy and size, as a single criterion.
+
+## 9. Evolutionary Controllers
+
+### 9.1 Common procedure
+
+Both evolutionary approaches use the baseline architecture (431 weights), so the learning method is
+the only variable. Evolution optimizes the weights, not the network size. Initial weights are drawn
+from a Glorot-uniform distribution.
+
+**Each generation proceeds as follows:**
+
+1. Three tracks are drawn from the current level's training seeds using the run's random number
+   generator.
+2. Every individual drives all three tracks. Kept individuals are re-evaluated, because the tracks
+   change every generation.
+3. An individual's fitness is its mean over the three tracks. It counts as finishing only if it
+   completes all three.
+
+**Individual types:**
+
+- **Kept:** carried over unchanged from the previous generation.
+- **New:** created in the current generation by mutation, and in the GA also by crossover.
+
+**Level advancement:** an approach advances one level when 100% of its kept individuals finish and at
+least 80% of its new individuals finish, for three consecutive generations. Each approach advances
+independently. Level 4 continues until the computational budget is exhausted.
+
+**Computational budget:** each approach receives 200,000 individual evaluations. One evaluation is one
+individual driving its generation's three tracks.
+
+- GA: 1,000 evaluations per generation, or 200 generations.
+- ES: 550 evaluations per generation, or approximately 364 generations.
+
+Wall-clock time is also reported.
+
+**Logging:** each generation is recorded in a CSV file with:
+
+- level and generation number
+- best, mean and worst fitness
+- the finishing percentages of kept and new individuals
+- GA mutation strength or ES step size σ
+- the track seeds used
+- elapsed time
+
+The best network of each generation is saved as an `.npy` file (about 3.4 KB). Results are written
+after every generation, so closing the application or an unexpected failure loses at most the
+generation in progress.
+
+**Final controller selection:** when the budget is exhausted, the final kept individuals are evaluated
+on the validation tracks (seeds 80–99). The individual with the highest mean fitness is selected and
+exported as a `.keras` file. If an approach did not reach level 4, selection proceeds the same way and
+the level reached is reported.
+
+### 9.2 Genetic algorithm
+
+- **Population:** N = 1,000 individuals (configurable). The K = 50 fittest are kept unchanged.
+- **Each of the N − K new individuals is created in three steps:**
+  1. **Selection:** two parents are each chosen by tournament selection, with a tournament size of 5
+     drawn from the whole population.
+  2. **Crossover:** uniform crossover, where each weight is inherited from either parent with
+     probability 0.5.
+  3. **Mutation:** each weight, with probability 0.1, receives an added sample from N(0, s).
+- **Mutation strength** adapts to the finishing rate:
+
   ```
   s = s_min + (s_max − s_min) × (1 − f_new)
   ```
-  `f_new` is the fraction of the previous generation's new cars that finished. Settings:
-  `s_max = 0.5`, `s_min = 0.005` (1% of max), and `s = s_max` in generation 1.
-  - When fewer cars finish, mutation goes up.
-  - When all of them finish, mutation drops to a tiny floor.
-  - After a level-up, `f_new` falls on the harder tracks, so mutation rises again
-    automatically.
 
-### ES: (μ+λ) with the 1/5 rule
+  Here `f_new` is the fraction of the previous generation's new individuals that finished. The
+  settings are `s_max = 0.5` and `s_min = 0.005`, with `s = s_max` in the first generation.
+  - Mutation strength is highest when few new individuals finish.
+  - It falls to the minimum when all of them finish.
+  - After a level advancement, `f_new` drops on the harder tracks, so mutation strength rises again
+    without any special handling.
 
-- **μ = 50 parents** (the kept cars) and **λ = 500 children**. Each child is a random
-  parent with + N(0, σ²) added to every weight. The next parents are the best 50 of
-  parents ∪ children, all scored on this generation's tracks.
-- **1/5 rule, applied every generation.** Let `p_s` be the fraction of children that beat
-  their own parent:
-  - If `p_s > 0.2`: `σ ← σ / 0.82`.
-  - If `p_s < 0.2`: `σ ← σ × 0.82`.
+### 9.3 Evolution strategy
 
-  This is the HW2 constant. σ starts at 0.1 and is clipped to [1e-4, 1.0].
-- **Paper contrast:** the GA uses Sean's finish-rate rule, and the ES uses the textbook
-  1/5 success rule.
+- **Scheme:** (μ+λ), with μ = 50 parents (the kept individuals) and λ = 500 offspring.
+  - Each offspring is a randomly chosen parent with a sample from N(0, σ²) added to every weight.
+  - The next generation's parents are the 50 fittest of parents ∪ offspring.
+- **Step-size control:** the 1/5 success rule is applied every generation. Let `p_s` be the fraction
+  of offspring that outperform their own parent:
+  - if `p_s > 0.2`, then σ ← σ / 0.82
+  - if `p_s < 0.2`, then σ ← σ × 0.82
 
-### Speed
+  The factor 0.82 follows Schwefel. The initial step size is σ₀ = 0.1, and σ is clipped to
+  [1e-4, 1.0].
 
-- The simulator is vectorized over cars, and rays use sphere tracing (§6).
-- **One generation's time is measured in the first build step,** before anything else
-  depends on it.
-- If it's too slow, the levers, in order, are:
-  1. split the population across worker processes (joblib; HW3 showed CPU processes scale
-     well on this laptop)
-  2. fewer sphere-tracing steps
-  3. shorter time limits
+The GA's finish-rate adaptation and the ES's success-rate adaptation are two different step-size
+control strategies. Their behavior is compared in the results.
 
-## 11. App (pygame, one window, one top-down camera)
+### 9.4 Computational performance
 
-### Colors
+The simulation is vectorized over individuals, and rays use sphere tracing (§5.2). The time for one
+generation is measured in the first implementation task, before any other work depends on it.
 
-Based on the Okabe-Ito colorblind-safe palette. The same color is used everywhere: race,
-live view, legend and paper plots.
+If that time is too long, the following measures are applied in order:
+
+1. Distribute the population across worker processes (joblib). Preliminary measurements indicate that
+   CPU processes scale well on the target hardware.
+2. Reduce the number of sphere-tracing steps.
+3. Shorten the time limits.
+
+## 10. Visualization Application
+
+The application is a single pygame window with one top-down camera and two modes. All cars are driven
+by controllers, and the application has no manual driving.
+
+### 10.1 Color assignment
+
+Colors are drawn from the Okabe–Ito palette, which stays distinguishable under common forms of color
+blindness. Each approach keeps the same color in the application, legends and figures.
+
+*Table 3. Color assignment.*
 
 | Approach | Color |
 |---|---|
-| Baseline | gray `#7F7F7F` |
-| KT Random | orange `#E69F00` |
-| KT Hyperband | sky blue `#56B4E9` |
-| KT Bayesian | purple `#CC79A7` |
-| ES | green `#009E73` |
-| GA | vermillion `#D55E00` |
+| Baseline | Gray `#7F7F7F` |
+| Keras Tuner Random | Orange `#E69F00` |
+| Keras Tuner Hyperband | Sky blue `#56B4E9` |
+| Keras Tuner Bayesian | Reddish purple `#CC79A7` |
+| ES | Bluish green `#009E73` |
+| GA | Vermillion `#D55E00` |
 
-### Train mode (live training view)
+### 10.2 Training view
 
-- **Choose an approach, set the population size** (GA and ES, before starting), then press
-  **Play / Pause**.
-- **Training runs in its own process at full speed.** After each generation (or each Keras
-  Tuner trial or baseline epoch), it sends the viewer that generation's weights, fitness,
-  level and track seeds through a `multiprocessing.Queue`. Pause stops training at the next
-  generation boundary.
-- **The viewer re-simulates only the selected cars,** on the generation's first track, at a
-  chosen speed (1×, 2×, 4× or 8×). When a playback ends, it jumps to the latest finished
-  generation and skips any in between. Training is never slowed down by drawing.
-- **Show: All / Best / Worst,** with a **cars-shown slider** (1 up to the population size)
-  that keeps drawing smooth:
-  - All: a fixed random sample of N cars.
-  - Best: the top N.
-  - Worst: the bottom N.
+Training is observed live rather than recorded.
 
-  The best car is outlined, and a toggle draws its rays.
+- **Controls:**
+  - The user selects an approach.
+  - For the GA and ES, the user sets the population size before starting.
+  - Training is started and paused with a play/pause control.
+- **Training process:**
+  - Training runs in a separate process at full speed.
+  - After each generation, completed Keras Tuner trial or baseline epoch, it sends the weights,
+    fitness values, level and track seeds to the view through a `multiprocessing.Queue`.
+  - Pausing halts training at the next generation boundary.
+- **Playback:**
+  - The view re-simulates only the displayed individuals, on the generation's first track, at 1×, 2×,
+    4× or 8× speed.
+  - When playback ends, the view advances to the latest completed generation and skips any in
+    between.
+  - Rendering never slows training.
+- **Display selection:** All, Best or Worst, with a displayed-car count N from 1 to the population size:
+  - All shows a fixed random sample of N individuals.
+  - Best shows the N fittest.
+  - Worst shows the N least fit.
+
+  The fittest displayed individual is outlined, and its sensor rays can be shown.
 - **Side panel:**
-  - the approach, level and generation
-  - kept-finish % and new-finish %
-  - mutation strength or σ
+  - approach, level and generation
+  - finishing percentages of kept and new individuals
+  - mutation strength (GA) or σ (ES)
   - best and mean fitness
-  - a live chart of best and mean fitness per generation, with level-up markers
-- **Keras Tuner cars:** each finished trial counts as one member of the population. It
-  drives validation track 80.
+  - a live plot of best and mean fitness per generation, with level-advancement markers
+- **Keras Tuner approaches:** each completed trial is treated as one individual and is driven on
+  validation track 80.
 
-### Race mode
+### 10.3 Race view
 
-- Loads whichever champions exist in `results/champions/`. Arrow keys choose a test track
-  (seeds 1000–1019).
-- The 6 champions race 3 laps as ghosts, in their colors.
-- **Live leaderboard:** position (by laps + progress), last lap, best lap, and crashed or
-  not. A crashed car stays where it crashed, faded out.
-- Speed control: 1×, 2×, 4× or 8×.
+- **Controllers:** the view loads whichever final controllers exist in `results/champions/`.
+- **Track:** a test track (seeds 1000–1019) is selected with the arrow keys.
+- **Race:** the six controllers race three laps without interacting, each in its assigned color.
+- **Leaderboard:**
+  - position, ranked by laps completed plus progress
+  - last lap time and best lap time
+  - crash status
 
-## 12. Evaluation and paper outputs
+  A crashed car stays where it crashed and is drawn faded.
+- **Playback speed:** 1×, 2×, 4× or 8×.
 
-- **Driving test:** each champion drives one lap on each of the 20 test tracks.
-- **Accuracy test:** each champion's predicted classes are compared with the expert's labels
-  on the test dataset. For evolved cars this measures agreement with the expert. They were
-  never trained on it, which is itself a result.
-- **Inference time:** Keras `predict` on 10,000 test rows, reported per sample and averaged
-  over 5 runs.
+## 11. Evaluation Methodology
+
+- **Driving evaluation:** each final controller drives one lap on each of the 20 test tracks.
+- **Accuracy evaluation:** each controller's predicted classes are compared with the expert labels in
+  the test dataset. For the evolutionary controllers, this measures agreement with an expert they
+  never observed, which is reported as a result in its own right.
+- **Inference time:** Keras `predict` on 10,000 test rows, reported per sample and averaged over five
+  runs.
+
+*Table 4. Results tables.*
 
 | Table | Columns |
 |---|---|
-| Required comparison | Method · test accuracy · weights · inference time · search/training time |
-| Driving | Method · tracks finished /20 · mean lap time (finished tracks) · crashes · level reached |
+| Required comparison | Method; test accuracy; parameters; inference time; search/training time |
+| Driving performance | Method; tracks completed (of 20); mean lap time on completed tracks; crashes; curriculum level reached |
 
 **Figures:**
 
-- Fitness vs. car-evaluations for GA and ES, with level-up markers.
-- GA mutation strength and ES σ over generations.
-- Accuracy vs. weights for every Keras Tuner trial, with each method's chosen winner marked.
+- Fitness against individual evaluations for the GA and ES, with level-advancement markers.
+- GA mutation strength and ES step size σ across generations.
+- Validation accuracy against parameter count for every Keras Tuner trial, with each method's selected
+  model marked.
 
-## 13. Testing (pytest)
+## 12. Verification and Testing
 
-- **Tracks:**
-  - the same seed always gives the same track
+Automated tests use pytest.
+
+- **Track generation:**
+  - a given seed always yields the same track
   - level 1 is a circle of the specified radius
   - generated tracks never overlap themselves
-  - the minimum corner radius holds
-- **Simulator:**
-  - zero steering drives straight
-  - leaving the road is a crash
-  - a full lap is detected
-  - driving backwards earns no progress
-  - the same inputs always give the same outputs
-- **Rays:** distances match hand-calculated values for a car on the level-1 circle.
-- **Expert:** finishes every validated track at every level. Any track it can't finish is
-  rejected, so no car is ever scored on an impossible track.
-- **Nets:** the numpy forward pass and the `to_keras` copy give identical classes on random
-  inputs.
-- **GA and ES operators** solve a simple test function (sphere function) and show the
+  - the minimum corner radius is respected
+- **Simulation:**
+  - zero steering produces straight-line motion
+  - leaving the road registers a crash
+  - a completed lap is detected
+  - reverse driving earns no progress
+  - identical inputs produce identical outputs
+- **Sensors:** ray distances match analytically computed values for a car on the level-1 circle.
+- **Expert driver:** completes every validated track at every level. Tracks it cannot complete are
+  rejected, so no controller is scored on an infeasible track.
+- **Network interface:** the numpy forward pass and the exported Keras model produce identical classes
+  on random inputs.
+- **GA and ES:** the operators solve a standard test function (the sphere function) and show the
   expected step-size behavior.
 - **Curriculum:**
-  - level-up triggers exactly on the 3rd qualifying generation in a row, and resets after a
-    non-qualifying one
-  - the mutation-strength formula gives `s_max` at 0%, the midpoint at 50%, and `s_min` at
-    100%
-- **Replay fidelity:** re-simulating a generation's cars reproduces exactly the fitness that
-  training logged.
+  - level advancement triggers on exactly the third consecutive qualifying generation, and the count
+    resets after a non-qualifying generation
+  - the mutation-strength rule returns `s_max` at 0%, the midpoint at 50% and `s_min` at 100%
+- **Re-simulation fidelity:** re-simulating a logged generation reproduces exactly the fitness values
+  recorded during training.
 
-## 14. Defaults (all in `racing/config.py`)
+## 13. Default Parameters
 
-| Setting | Value |
+All defaults are defined in `racing/config.py`.
+
+*Table 5. Default parameters.*
+
+| Parameter | Value |
 |---|---|
 | Time step | 0.05 s |
-| Top speed / gas / brake / coast drag | 40 m/s / 6 / 12 / 1 m/s² |
-| Max steer / wheelbase / lateral grip | 25° / 3 m / 12 m/s² |
-| Rays | 9, from −90° to +90°, 50 m range |
-| Time limit per lap | 2× expert lap time |
-| Stall timeout | 5 s |
+| Top speed; throttle, brake and coast acceleration | 40 m/s; 6, 12 and 1 m/s² |
+| Maximum steering angle; wheelbase; lateral grip | 25°; 3 m; 12 m/s² |
+| Sensors | 9 rays from −90° to +90°, 50 m range |
+| Time limit per lap | Twice the expert lap time |
+| No-progress timeout | 5 s |
 | Tracks per generation | 3 |
-| Level-up | kept 100%, new ≥ 80%, 3 generations in a row |
-| GA | N = 1000, K = 50, tournament 5, crossover p = 0.5, mutation p = 0.1, s_max = 0.5, s_min = 0.005 |
-| ES | μ = 50, λ = 500, σ₀ = 0.1, 1/5-rule constant 0.82, σ in [1e-4, 1.0] |
-| Budget per evolution approach | 200,000 car-evaluations |
-| Keras training | Adam 1e-3, batch 256, ≤ 50 epochs, patience 5 |
-| Keras Tuner | 30 trials (Random, Bayesian); Hyperband matched on total epochs |
-| Size rule | smallest network within 1 percentage point of the best validation accuracy |
-| Seeds | train 0–79, validation 80–99, test 1000–1019 |
+| Level advancement | Kept 100%, new ≥ 80%, three consecutive generations |
+| GA | N = 1,000; K = 50; tournament size 5; crossover p = 0.5; mutation p = 0.1; s_max = 0.5; s_min = 0.005 |
+| ES | μ = 50; λ = 500; σ₀ = 0.1; adaptation factor 0.82; σ in [1e-4, 1.0] |
+| Evolutionary budget | 200,000 individual evaluations per approach |
+| Keras training | Adam 1e-3; batch 256; at most 50 epochs; patience 5 |
+| Keras Tuner | 30 trials (random search, Bayesian optimization); Hyperband matched on total epochs |
+| Model selection | Smallest network within one percentage point of the best validation accuracy |
+| Seeds | Training 0–79; validation 80–99; test 1000–1019 |
 
-The track, physics and expert numbers are starting values. They get tuned during the build
-until the expert drives every level cleanly.
+The track, vehicle and expert-driver values are initial estimates. They will be calibrated during
+implementation so that the expert completes every curriculum level reliably.
 
-## 15. Risks and open questions
+## 14. Risks and Open Issues
 
-1. **Course fit.** Confirm with Prof. Chung that this counts as Project 7, and that a
-   driving test (tracks finished, lap time) is acceptable alongside test accuracy.
-2. **Evolution speed is unmeasured.** Measuring it is the first build task, and the levers
-   are listed in §10.
-3. **Level-up may stall.** The rule is strict by design. The threshold and the
-   3-in-a-row count are settings, and the live chart shows a stall immediately.
-4. **Copy-the-expert cars may still crash** off-line despite the recovery data. That is a
-   finding for the paper, not a bug.
-5. **Hyperband budget matching** is approximate, because its trial count is set by its
-   bracket schedule. Actual trials, epochs and time are reported for every tuner.
-6. **Five steering levels** might make driving too jerky. This is checked early: the
-   discretized expert must finish level-4 tracks cleanly.
+1. **Course alignment.** Confirmation is needed from the course instructor that the project qualifies
+   as Project 7, and that driving performance is acceptable as an evaluation metric alongside test
+   accuracy.
+2. **Evolutionary runtime.** Runtime has not yet been measured. Mitigations are listed in §9.4.
+3. **Curriculum stalls.** The advancement criterion is strict by design. The threshold and the number
+   of consecutive generations are configurable, and a stall is visible immediately in the training
+   view.
+4. **Generalization of imitation controllers.** Imitation controllers may still fail on unseen tracks
+   despite the recovery data. Any such failure is reported as an experimental result.
+5. **Hyperband budget.** Budget matching for Hyperband is approximate, because its bracket schedule
+   determines the trial count. Actual trials, epochs and time are reported for every method.
+6. **Action resolution.** Five steering levels may cause oscillatory driving. This is checked early by
+   requiring the quantized expert to complete level-4 tracks reliably.
 
-## 16. Environment
+## 15. Software Environment
 
-- Conda `base`: Python 3.13.11, numpy 2.4.1, scipy 1.17.1, TensorFlow 2.21 / Keras 3.13.2,
-  matplotlib, pandas.
-- **To install:** `keras-tuner`, `pygame`, `pytest`.
-- CPU only. Worker processes call `tf.config.set_visible_devices([], 'GPU')`.
-- `results/` is gitignored.
+- **Installed:** Python 3.13.11 (Conda base environment), numpy 2.4.1, scipy 1.17.1, TensorFlow 2.21,
+  Keras 3.13.2, matplotlib and pandas.
+- **To be installed:** keras-tuner, pygame and pytest.
+- **Execution:** CPU only. Worker processes call `tf.config.set_visible_devices([], 'GPU')`.
+- **Version control:** the `results/` directory is excluded.
