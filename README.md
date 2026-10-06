@@ -19,9 +19,14 @@ The project uses the Conda base environment (Python 3.13, TensorFlow 2.21, Keras
 ~/miniconda3/bin/python -m pip install keras-tuner pygame pytest
 ```
 
+Only these three packages are installed on top of the environment. numpy, scipy, matplotlib, pandas, joblib and
+IPython come from the Conda base environment.
+
 ## Running the experiments
 
-Run the notebooks in `notebooks/` in order:
+Run the notebooks in `notebooks/` in order, with the Conda base environment as the kernel. Jupyter must be
+started in `notebooks/` (the notebook's working directory must be `notebooks/`): the first cell of every notebook
+adds the parent directory to `sys.path` so that the `racing` package can be imported.
 
 | Notebook | Purpose |
 |---|---|
@@ -48,8 +53,8 @@ Results are written to `results/`, which is not under version control:
 ```
 
 - **Training view:** select an approach, set the population size, and press Play (or Space). The view shows the
-  latest completed generation. Training started from the viewer writes to `results/app_runs/` and never replaces
-  the final controllers.
+  latest completed generation. Training started from the viewer writes to `results/app_runs/` (including a dataset
+  of its own if `results/dataset.npz` does not exist) and never replaces the final controllers or the dataset.
 - **Race view:** the final controllers race three laps on a held-out test track. Select the track with the arrow
   keys.
 
