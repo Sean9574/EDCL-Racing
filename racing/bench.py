@@ -5,6 +5,7 @@ Run with:  ~/miniconda3/bin/python -m racing.bench
 """
 import time
 
+import numpy as np
 from joblib import Parallel, delayed
 
 from racing import config, expert, sim
@@ -21,16 +22,31 @@ def time_full_laps(seed, n):
     return time.perf_counter() - start
 
 
-def estimate(pop, jobs):
-    """Wall time for one generation of `pop` cars on three tracks, split across `jobs` processes."""
+def estimate(pop, jobs, repeats=3):
+    """Wall time for one generation of `pop` cars on three tracks, split across `jobs` processes.
+
+    For multi-process runs: times are measured after an untimed warm-up pass to pre-cache
+    all three level-4 tracks in each worker. joblib dispatch and pickling overhead is included;
+    one-time track construction is excluded (happens in warm-up). Times are reported as the
+    minimum of `repeats` timed runs to account for system load variation."""
     if jobs == 1:
         return sum(time_full_laps(seed, pop) for seed in SEEDS)
-    chunk = max(pop // jobs, 1)
-    tasks = [delayed(time_full_laps)(seed, chunk) for seed in SEEDS for _ in range(jobs)]
-    Parallel(n_jobs=jobs)(tasks[:jobs])                    # warm-up: each worker builds its tracks
-    start = time.perf_counter()
+
+    # Distribute pop evenly across jobs (no truncation)
+    chunks = np.array_split(np.arange(pop), jobs)
+    tasks = [delayed(time_full_laps)(seed, len(chunk)) for seed in SEEDS for chunk in chunks]
+
+    # Warm-up: untimed run to cache all tracks in each worker
     Parallel(n_jobs=jobs)(tasks)
-    return time.perf_counter() - start
+
+    # Timed runs: measure steady state after warm-up
+    times = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        Parallel(n_jobs=jobs)(tasks)
+        times.append(time.perf_counter() - start)
+
+    return min(times)
 
 
 def main():

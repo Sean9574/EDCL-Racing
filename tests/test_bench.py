@@ -8,7 +8,7 @@ def test_time_full_laps_runs_on_a_small_batch():
 
 
 def test_estimate_with_two_processes():
-    assert bench.estimate(8, 2) > 0.0
+    assert bench.estimate(8, 2, repeats=1) > 0.0
 
 
 def test_evaluate_population_multiprocess_consistency():
