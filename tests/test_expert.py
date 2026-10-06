@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from racing import config, expert, sim, tracks
+from racing.actions import class_to_controls, controls_to_class
 
 
 def test_expert_finishes_the_circle(circle_track):
@@ -30,7 +31,7 @@ def test_expert_drives_generated_tracks(level):
 
 
 def test_collect_rows_shapes_and_labels(circle_track):
-    x, y = expert.collect_rows(circle_track, np.random.default_rng(0))
+    x, y, _ = expert.collect_rows(circle_track, np.random.default_rng(0))
     assert x.shape[1] == config.N_INPUTS and len(x) == len(y) > 100
     assert y.min() >= 0 and y.max() < config.N_ACTIONS
     assert len(np.unique(y)) >= 3          # disturbances produce corrections, not one repeated action
@@ -38,11 +39,79 @@ def test_collect_rows_shapes_and_labels(circle_track):
 
 def test_collect_dataset_writes_all_splits(tmp_path):
     path = tmp_path / "data.npz"
-    data = expert.collect_dataset(path, splits={"train": [(0, 1)], "val": [(0, 2)], "test": [(1, 2)]})
-    assert path.exists()
+    data, summary = expert.collect_dataset(path, splits={"train": [(0, 1)], "val": [(0, 2)], "test": [(1, 2)]})
+    assert [p.name for p in tmp_path.iterdir()] == ["data.npz"]        # no temporary file left behind
     for split in ("train", "val", "test"):
         assert data[f"X_{split}"].dtype == np.float32 and data[f"y_{split}"].dtype == np.int64
         assert len(data[f"X_{split}"]) == len(data[f"y_{split}"]) > 0
+        assert summary[split]["rows"] == len(data[f"y_{split}"]) and summary[split]["tracks"] == 1
+        assert summary[split]["respawns"] >= 0
+
+
+def test_collect_dataset_keeps_the_old_file_if_writing_fails(monkeypatch, tmp_path, circle_track):
+    monkeypatch.setattr(expert, "get_track", lambda seed, level: circle_track)
+    path = tmp_path / "data.npz"
+    path.write_bytes(b"old")
+
+    def broken(file, **arrays):
+        file.write(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(np, "savez_compressed", broken)
+    with pytest.raises(OSError, match="disk full"):
+        expert.collect_dataset(path, splits={"train": [(0, 1)]})
+    assert path.read_bytes() == b"old" and [p.name for p in tmp_path.iterdir()] == ["data.npz"]
+
+
+def test_a_crash_does_not_end_collection(monkeypatch, circle_track):
+    real_step, calls, last = sim.step, [0], {}
+
+    def step(track, cars, steer, throttle, time_limit):
+        calls[0] += 1
+        if calls[0] == 100:
+            cars.x[0] = 1e4                                 # off the map: the car crashes in this step
+        real_step(track, cars, steer, throttle, time_limit)
+        last["cars"] = cars
+
+    monkeypatch.setattr(sim, "step", step)
+    x, y, respawns = expert.collect_rows(circle_track, np.random.default_rng(0))
+    cars = last["cars"]
+    assert respawns >= 1 and len(y) == calls[0] > 100
+    assert cars.finished[0] and not cars.crashed[0]               # a full lap of progress was covered
+
+
+def test_respawn_puts_the_car_back_on_the_centerline(circle_track):
+    cars = sim.start_cars(circle_track, 1)
+    cars.index[:] = 3 * len(circle_track.centerline) + 40       # unwrapped index on the fourth lap
+    cars.x[:], cars.speed[:] = 1e4, 0.0
+    cars.crashed[:], cars.done[:] = True, True
+    assert expert.respawn(circle_track, cars) == 1
+    assert np.allclose([cars.x[0], cars.y[0]], circle_track.centerline[40])
+    t = circle_track.tangent[40]
+    assert np.isclose(cars.heading[0], np.arctan2(t[1], t[0]))
+    assert np.isclose(cars.speed[0], expert.target_speed(circle_track, np.array([40]))[0])
+    assert not cars.crashed[0] and not cars.done[0]
+
+
+def test_collect_rows_is_deterministic(circle_track):
+    first = expert.collect_rows(circle_track, np.random.default_rng(7))
+    second = expert.collect_rows(circle_track, np.random.default_rng(7))
+    assert np.array_equal(first[0], second[0]) and np.array_equal(first[1], second[1]) and first[2] == second[2]
+
+
+def test_labels_are_the_expert_choice_during_kicks(monkeypatch, circle_track):
+    real_step, expected, driven = sim.step, [], []
+
+    def step(track, cars, steer, throttle, time_limit):
+        expected.append(int(controls_to_class(*expert.expert_controls(track, cars))[0]))
+        driven.append(float(steer[0]))
+        real_step(track, cars, steer, throttle, time_limit)
+
+    monkeypatch.setattr(sim, "step", step)
+    _, y, _ = expert.collect_rows(circle_track, np.random.default_rng(0))
+    assert list(y) == expected
+    label_steer = class_to_controls(y)[0]
+    assert np.any(label_steer != np.array(driven))                # some steps were driven by a kick
 
 
 @pytest.mark.slow

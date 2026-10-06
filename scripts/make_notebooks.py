@@ -12,8 +12,8 @@ NOTEBOOKS = {
     "01_dataset.ipynb": [
         ("markdown", "# 1. Expert dataset\nCollects the imitation-learning dataset (design specification §7)."),
         ("code", SETUP),
-        ("code", "from racing.expert import collect_dataset\n\ndata = collect_dataset()\n"
-                 "{key: value.shape for key, value in data.items()}"),
+        ("code", "import pandas as pd\n\nfrom racing.expert import collect_dataset\n\n"
+                 "data, summary = collect_dataset()\npd.DataFrame(summary).T"),
     ],
     "02_imitation.ipynb": [
         ("markdown", "# 2. Imitation-learning controllers\nBaseline and Keras Tuner searches (design specification §8)."),

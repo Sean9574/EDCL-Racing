@@ -8,8 +8,8 @@ from racing import es, evaluate, expert, ga, imitation
 @pytest.mark.slow
 def test_pipeline_end_to_end(tmp_path):
     runs, champions = tmp_path / "runs", tmp_path / "champions"
-    data = expert.collect_dataset(tmp_path / "dataset.npz",
-                                  splits={"train": [(0, 1), (0, 2)], "val": [(80, 4)], "test": [(1000, 4)]})
+    data, _ = expert.collect_dataset(tmp_path / "dataset.npz",
+                                     splits={"train": [(0, 1), (0, 2)], "val": [(80, 4)], "test": [(1000, 4)]})
     imitation.train_baseline(data, out_dir=runs / "baseline", champion_dir=champions, epochs=2)
     ga.run_ga(pop_size=20, kept=5, budget=40, out_dir=runs / "ga", champion_dir=champions)
     es.run_es(mu=4, lam=16, budget=40, out_dir=runs / "es", champion_dir=champions)

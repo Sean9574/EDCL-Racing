@@ -295,6 +295,12 @@ Pure imitation provides no examples of recovering from off-line states. To addre
 intervals of 2–4 s the car executes a random steering level for 0.3–0.6 s. Throughout, the recorded
 label remains the expert's chosen action for the observed state.
 
+A disturbance at full grip can make the car leave the road. In that case the car is placed back on
+the centerline at its last matched centerline point, heading along the track at the expert's target
+speed for that point, and collection continues. Collection on a track ends when one full lap of
+progress has been covered, so every track contributes rows from its whole length rather than only
+from the section before the first crash.
+
 ### 7.3 Dataset composition
 
 Each row consists of the 10 inputs and one class label.
