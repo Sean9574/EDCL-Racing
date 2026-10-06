@@ -21,6 +21,12 @@ def select_parents(population, fitness, mu):
     return population[np.argsort(-fitness, kind="stable")[:mu]]
 
 
+def success_fraction(child_fitness, parent_fitness):
+    """Fraction of offspring that beat their own parent; a tie with the parent counts as half a success."""
+    return float(np.mean(np.where(child_fitness > parent_fitness, 1.0,
+                                  np.where(child_fitness == parent_fitness, 0.5, 0.0))))
+
+
 def one_fifth_rule(sigma, success_rate):
     """Grow σ when more than 1/5 of offspring beat their parent, shrink it when fewer do."""
     if success_rate > 0.2:
@@ -57,7 +63,9 @@ def run_es(mu=config.ES_MU, lam=config.ES_LAMBDA, budget=config.EVAL_BUDGET, see
         logger.log(report)
         if on_generation is not None:
             on_generation(report)
-        sigma = one_fifth_rule(sigma, float(np.mean(fitness[mu:] > fitness[:mu][parent_of])))
+        sigma = one_fifth_rule(sigma, success_fraction(fitness[mu:], fitness[:mu][parent_of]))
+        if leveled_up:
+            sigma = config.ES_SIGMA0                        # restart the step size on the harder tracks
         parents = select_parents(individuals, fitness, mu)
         generation += 1
     result = {"approach": "es", "generations": generation, "evals": evals, "level_reached": tracker.level,

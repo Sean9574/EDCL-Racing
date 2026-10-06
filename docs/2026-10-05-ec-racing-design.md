@@ -429,12 +429,23 @@ the level reached is reported.
   - Each offspring is a randomly chosen parent with a sample from N(0, σ²) added to every weight.
   - The next generation's parents are the 50 fittest of parents ∪ offspring.
 - **Step-size control:** the 1/5 success rule is applied every generation. Let `p_s` be the fraction
-  of offspring that outperform their own parent:
+  of offspring that outperform their own parent, where an offspring whose fitness equals its parent's
+  counts as half a success:
   - if `p_s > 0.2`, then σ ← σ / 0.82
   - if `p_s < 0.2`, then σ ← σ × 0.82
 
   The factor 0.82 follows Schwefel. The initial step size is σ₀ = 0.1, and σ is clipped to
   [1e-4, 1.0].
+- **Ties:** fitness is deterministic and the actions are discrete, so on a fitness plateau many
+  offspring score exactly the same as their parent, for example when every parent crashes before
+  covering any distance and scores 0. If ties counted as failures, `p_s` would be close to zero on
+  such a plateau, and σ would shrink to its lower bound, where the search can no longer leave the
+  plateau. Counting a tie as half a success gives `p_s` = 0.5 on a complete plateau, so σ grows. With
+  continuously varying fitness, ties are rare and the rule is unchanged.
+- **Level advancement:** σ is reset to σ₀ whenever the ES advances a level, starting with the
+  offspring of the next generation. While the population refines its driving on one level, σ
+  shrinks, and the tracks of the next level require exploration again. The reset mirrors the GA,
+  whose mutation strength rises automatically after a level advancement.
 
 The GA's finish-rate adaptation and the ES's success-rate adaptation are two different step-size
 control strategies. Their behavior is compared in the results.
