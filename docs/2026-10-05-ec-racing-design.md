@@ -165,25 +165,37 @@ yields the same track.
 
 ### 5.1 Vehicle dynamics
 
-The vehicle is modeled as a kinematic bicycle with a fixed time step of 0.05 s (20 Hz). Its state
-consists of position, heading and speed.
+The vehicle is modeled as a point mass with a heading, integrated with a fixed time step of 0.05 s
+(20 Hz). Its state consists of position, heading and speed.
 
-- **Longitudinal:**
-  - acceleration 6 m/s² under throttle
-  - deceleration 12 m/s² under braking
-  - deceleration 1 m/s² when coasting
-  - top speed 40 m/s
-- **Steering:** a maximum steering angle of 25° on a 3 m wheelbase.
-- **Grip limit:** yaw rate is capped at `a_lat_max / v`, with `a_lat_max = 12 m/s²`. At high speed the
-  vehicle cannot turn tightly, so it must brake before corners. This makes throttle a meaningful
-  control decision.
+The only physical constraint is tire grip. The model imposes no top speed, no steering-angle limit and
+no fixed acceleration or braking rates. How fast to drive, when to brake and how sharply to turn must
+all be learned by the controllers.
+
+- **Controls as grip fractions:** each control requests a share of the available grip, μg = 12 m/s².
+  - Steering `u_s ∈ [−1, 1]` requests a lateral acceleration `a_lat = u_s × μg`.
+  - Throttle `u_t ∈ [−1, 1]` requests a longitudinal acceleration `a_long = u_t × μg`. Negative
+    values brake.
+- **Friction circle:** if the combined request exceeds the grip limit, that is
+  `sqrt(a_lat² + a_long²) > μg`, both components are scaled down proportionally so that the total
+  equals μg. Braking or accelerating hard therefore leaves less grip for turning, and the reverse.
+- **Motion:**
+  - Speed changes by `a_long × dt` and cannot fall below zero.
+  - Heading changes at the yaw rate `a_lat / v`. Below 1 m/s, a speed of 1 m/s is used in this
+    calculation to avoid division by zero.
+- **Consequences:**
+  - The minimum turning radius is `v² / μg`, so a fast car cannot take a tight corner and must brake
+    before it.
+  - With no top speed, safe speed on a straight is bounded by how early the walls ahead can be seen.
+    Stopping within the 50 m sensor range requires a speed below about 35 m/s.
 
 ### 5.2 Sensors
 
 Nine rays at −90°, −67.5°, …, +90° relative to the heading measure the distance to the track boundary,
 up to 50 m. Rays are cast by sphere tracing on the distance-to-boundary map, using at most 12 steps.
 
-The input vector has 10 elements: the nine distances divided by 50, plus the speed divided by 40.
+The input vector has 10 elements: the nine distances divided by 50, plus the speed divided by a
+reference speed of 40 m/s. The reference speed only scales the input and does not limit the vehicle.
 
 ### 5.3 Collisions
 
@@ -228,8 +240,8 @@ simulator, the training view and the race view without changes.
 
 - **Input:** the 10-element vector defined in §5.2.
 - **Output:** a 15-way softmax. Each class is one combination of a steering level and a throttle level:
-  - steer ∈ {−1, −0.5, 0, +0.5, +1}
-  - throttle ∈ {brake, coast, gas}
+  - steering fraction `u_s` ∈ {−1, −0.5, 0, +0.5, +1}
+  - throttle fraction `u_t` ∈ {−1 (brake), 0 (coast), +1 (gas)}
   - `class = 3 × steer_index + throttle_index`
 
   The car executes the class with the highest probability.
@@ -252,11 +264,20 @@ of 431 trainable parameters.
 
 ### 7.1 Expert driver
 
-- **Steering:** pure pursuit toward a centerline point `6 m + 0.4 s × v` ahead, quantized to the
-  nearest of the five steering levels.
-- **Speed:** the target speed is `sqrt(0.85 × a_lat_max / κ)`, capped at top speed. Here κ is the
-  maximum curvature within the stopping distance plus 15 m. The expert selects gas when more than
-  0.5 m/s below the target, brake when more than 0.5 m/s above it, and coast otherwise.
+- **Steering:**
+  1. Pure pursuit toward a centerline point `6 m + 0.4 s × v` ahead gives a path curvature κ_p.
+  2. The required lateral acceleration `v² × κ_p` is divided by μg and clipped to [−1, 1], giving a
+     steering fraction.
+  3. The fraction is quantized to the nearest of the five steering levels.
+- **Speed:** the expert uses only track geometry within the 50 m sensor range, so it never relies on
+  information the networks cannot obtain. Its target speed is the lower of two values:
+  - `sqrt(0.85 × μg / κ)`, where κ is the maximum curvature within the next 50 m
+  - `sqrt(2 × 0.85 × μg × 50 m)`, about 32 m/s, the highest speed from which it can stop within
+    sight
+
+  The expert selects gas when more than 0.5 m/s below the target, brake when more than 0.5 m/s above
+  it, and coast otherwise. These targets govern the expert only. The networks are free to drive
+  faster or slower.
 
 The expert chooses from the same 15 actions as the networks, so every label is an action a network can
 reproduce. The expert's lap time on each track sets that track's time limit (§5.4).
@@ -525,6 +546,7 @@ Automated tests use pytest.
   - the minimum corner radius is respected
 - **Simulation:**
   - zero steering produces straight-line motion
+  - combined steering and throttle never exceed the grip limit
   - leaving the road registers a crash
   - a completed lap is detected
   - reverse driving earns no progress
@@ -545,15 +567,13 @@ Automated tests use pytest.
 
 ## 13. Default Parameters
 
-All defaults are defined in `racing/config.py`.
-
-*Table 5. Default parameters.*
+*Table 5. Default parameters, as defined in `racing/config.py`.*
 
 | Parameter | Value |
 |---|---|
 | Time step | 0.05 s |
-| Top speed; throttle, brake and coast acceleration | 40 m/s; 6, 12 and 1 m/s² |
-| Maximum steering angle; wheelbase; lateral grip | 25°; 3 m; 12 m/s² |
+| Grip limit μg (friction circle) | 12 m/s² |
+| Speed input scaling | 40 m/s (normalization only) |
 | Sensors | 9 rays from −90° to +90°, 50 m range |
 | Time limit per lap | Twice the expert lap time |
 | No-progress timeout | 5 s |
@@ -583,8 +603,10 @@ implementation so that the expert completes every curriculum level reliably.
    despite the recovery data. Any such failure is reported as an experimental result.
 5. **Hyperband budget.** Budget matching for Hyperband is approximate, because its bracket schedule
    determines the trial count. Actual trials, epochs and time are reported for every method.
-6. **Action resolution.** Five steering levels may cause oscillatory driving. This is checked early by
-   requiring the quantized expert to complete level-4 tracks reliably.
+6. **Action resolution.** Five steering levels may cause oscillatory driving. Each level is a fixed
+   fraction of grip, so the turning radius it produces scales with the square of speed, and steering
+   is coarsest at low speed. This is checked early by requiring the quantized expert to complete
+   level-4 tracks reliably.
 
 ## 15. Software Environment
 
