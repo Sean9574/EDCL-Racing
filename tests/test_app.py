@@ -1,4 +1,5 @@
 import queue
+import threading
 
 import numpy as np
 import pygame
@@ -108,4 +109,150 @@ def test_leaderboard_orders_by_distance(circle_track):
     playback.cars.progress[:] = [10.0, 50.0]
     playback.cars.crashed[0] = True
     rows = viewer.leaderboard(playback, ["baseline", "ga"])
-    assert [r[0] for r in rows] == ["ga", "baseline"] and rows[1][4] == "crashed"
+    assert [r[1] for r in rows] == ["ga", "baseline"] and rows[1][5] == "crashed"
+    assert [r[0] for r in rows] == [1, 2]
+
+
+class FakeQueue:
+    """Stands in for a multiprocessing queue."""
+
+    def __init__(self, items=()):
+        self.items = list(items)
+        self.closed = False
+
+    def get_nowait(self):
+        if not self.items:
+            raise queue.Empty
+        return self.items.pop(0)
+
+    def cancel_join_thread(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def test_switching_approach_discards_stale_reports(window):
+    old = FakeQueue([ga_report(0)])
+    window.reports = old
+    window.select_approach("es")
+    window.update(1 / 60)
+    assert old.closed and window.reports is None and window.latest is None and window.history == []
+
+
+def test_finished_training_discards_the_queue(window):
+    class Done:
+        exitcode = 0
+
+        def is_alive(self):
+            return False
+
+    window.process, window.reports = Done(), FakeQueue()
+    window.poll_reports()
+    assert window.reports is None and "finished" in window.status.lower()
+
+
+def test_reports_are_drained_in_race_mode(window, tmp_path):
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    window.reports = FakeQueue([ga_report(0), ga_report(1)])
+    window.update(1 / 60)
+    assert window.reports.items == [] and window.latest["generation"] == 1
+
+
+def test_step_burst_is_capped_and_budget_dropped(window):
+    window.mode = "race"
+    window.race = viewer.Playback(viewer.get_track(0, 1), lambda o, c: np.full(len(c.x), 8), 1)
+    window.update(10.0)
+    assert abs(window.race.cars.time - config.MAX_STEPS_PER_FRAME * config.DT) < 1e-9 and window.step_budget == 0.0
+
+
+def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, tmp_path):
+    from racing import es, ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    calls = {}
+
+    def fake_ga(**kwargs):
+        calls["ga"] = kwargs
+        kwargs["on_generation"](ga_report(0))
+
+    def fake_es(**kwargs):
+        calls["es"] = kwargs
+
+    monkeypatch.setattr(ga, "run_ga", fake_ga)
+    monkeypatch.setattr(es, "run_es", fake_es)
+    reports, running = queue.Queue(), threading.Event()
+    running.set()
+    viewer.trainer_main("ga", 30, reports, running)
+    viewer.trainer_main("es", 12, reports, running)
+    assert calls["ga"]["champion_dir"] is None and calls["ga"]["pop_size"] == 30
+    assert calls["es"]["champion_dir"] is None and calls["es"]["lam"] == 12
+    assert calls["ga"]["out_dir"] == tmp_path / "ga" and calls["es"]["out_dir"] == tmp_path / "es"
+    assert reports.get_nowait()["generation"] == 0 and reports.empty()
+
+
+def test_pause_and_resume_toggle_the_running_event(window):
+    class Alive:
+        def is_alive(self):
+            return True
+
+    window.process, window.running = Alive(), threading.Event()
+    window.running.set()
+    window.toggle_play()
+    assert not window.running.is_set()
+    window.toggle_play()
+    assert window.running.is_set()
+
+
+def stub_champions(window):
+    rng = np.random.default_rng(0)
+    flat = nets.init_population(rng, 2)
+    window.race_names = ["ga", "es"]
+    window.race_nets = [nets.from_flat(flat[0]), nets.from_flat(flat[1])]
+
+
+def test_race_runs_and_draws_a_leaderboard(window):
+    stub_champions(window)
+    window.set_mode("race")
+    window.start_race()
+    for _ in range(30):
+        window.update(1 / 60)
+        window.draw()
+    rows = viewer.leaderboard(window.race, window.race_names)
+    assert sorted(r[0] for r in rows) == [1, 2] and window.race.cars.time > 0
+
+
+def test_champions_saved_later_are_picked_up(window, tmp_path, monkeypatch):
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    assert "No trained controllers" in window.status
+    window.set_mode("train")
+    assert "No trained controllers" not in window.status
+    stub = {"ga": object()}
+    monkeypatch.setattr(nets, "load_champions", lambda directory: stub)
+    monkeypatch.setattr(nets, "from_keras", lambda model: "net")
+    window.set_mode("race")
+    assert window.race_names == ["ga"] and window.race_nets == ["net"]
+
+
+def click(pos):
+    return pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos)
+
+
+def test_handle_clicks_a_button(window):
+    window.draw()
+    rays = window.rays
+    target = next(r for r, a in window.buttons if a == window.toggle_rays)
+    window.handle(click(target.center))
+    assert window.rays != rays
+
+
+def test_handle_slider_sets_cars_shown(window):
+    window.receive(ga_report(n=30))
+    window.draw()
+    window.handle(click((window.slider.left, window.slider.centery)))
+    assert window.shown == 1 and window.dragging
+    window.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=(window.slider.right, window.slider.centery), rel=(0, 0), buttons=(1, 0, 0)))
+    assert window.shown == 30
+    window.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(0, 0)))
+    assert not window.dragging

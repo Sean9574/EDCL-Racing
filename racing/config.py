@@ -108,6 +108,7 @@ PANEL_WIDTH = 380
 FPS = 60
 POPULATION_PRESETS = (100, 250, 500, 1000, 2000)
 SPEEDS = (1, 2, 4, 8)
+MAX_STEPS_PER_FRAME = 10     # simulation steps per drawn frame; a stalled frame cannot trigger a burst
 DEFAULT_SHOWN = 100
 KT_VIEW_SEED = 80
 RACE_LAPS = 3

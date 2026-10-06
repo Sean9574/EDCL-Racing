@@ -117,12 +117,12 @@ def report_policy(report, indices):
 
 
 def leaderboard(playback, names):
-    """Rows (name, laps completed, last lap, best lap, status), ordered by distance covered."""
+    """Rows (position, name, laps completed, last lap, best lap, status), ordered by distance covered."""
     if playback is None:
-        return [(name, 0, float("nan"), float("nan"), "ready") for name in names]
+        return [(k + 1, name, 0, float("nan"), float("nan"), "ready") for k, name in enumerate(names)]
     cars = playback.cars
     rows = []
-    for i in np.argsort(-cars.progress, kind="stable"):
+    for position, i in enumerate(np.argsort(-cars.progress, kind="stable")):
         if cars.crashed[i]:
             status = "crashed"
         elif cars.finished[i]:
@@ -131,7 +131,7 @@ def leaderboard(playback, names):
             status = "stopped"
         else:
             status = "racing"
-        rows.append((names[i], int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]), status))
+        rows.append((position + 1, names[i], int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]), status))
     return rows
 
 
@@ -251,6 +251,14 @@ class App:
             self.process.terminate()
             self.process.join(timeout=2)
         self.process = None
+        self.discard_reports()
+
+    def discard_reports(self):
+        """Drop the report queue so reports from a stopped trainer never reach a new view."""
+        if self.reports is not None and hasattr(self.reports, "cancel_join_thread"):
+            self.reports.cancel_join_thread()
+            self.reports.close()
+        self.reports = None
 
     def poll_reports(self):
         if self.reports is not None:
@@ -263,6 +271,7 @@ class App:
             code = self.process.exitcode
             self.status = "Training finished." if code == 0 else f"Training stopped (exit code {code})."
             self.process = None
+            self.discard_reports()
 
     def receive(self, report):
         self.latest = report
@@ -306,8 +315,10 @@ class App:
     def set_mode(self, mode):
         self.mode = mode
         self.step_budget = 0.0
-        if mode == "race" and self.race_nets is None:
+        if mode == "race" and not self.race_names:
             self.load_race()
+        elif mode == "train" and self.status.startswith("No trained controllers"):
+            self.status = "Training view."
 
     # ----- playback -----
     def start_playback(self, report):
@@ -323,7 +334,9 @@ class App:
         models = nets.load_champions(self.champions_dir)
         self.race_names = list(models)
         self.race_nets = [nets.from_keras(model) for model in models.values()]
-        if not self.race_names:
+        if self.race_names:
+            self.status = "Race view."
+        else:
             self.status = f"No trained controllers found in {self.champions_dir}."
 
     def start_race(self):
@@ -338,8 +351,8 @@ class App:
         self.race = None
 
     def update(self, dt):
+        self.poll_reports()
         if self.mode == "train":
-            self.poll_reports()
             if self.latest is not None and (self.playback is None or self.playback.over):
                 self.start_playback(self.latest)
             active = self.playback
@@ -348,7 +361,8 @@ class App:
         if active is not None:
             self.step_budget += self.speed * dt / config.DT
             steps = int(self.step_budget)
-            self.step_budget -= steps
+            self.step_budget = 0.0 if steps > config.MAX_STEPS_PER_FRAME else self.step_budget - steps
+            steps = min(steps, config.MAX_STEPS_PER_FRAME)
             active.advance(steps)
 
     # ----- input -----
@@ -556,9 +570,9 @@ class App:
         y += 46
         y = self.draw_speed_buttons(x, y, w)
         y = self.text(f"Leaderboard ({config.RACE_LAPS} laps)", x, y, self.small, MUTED)
-        for name, laps, last, best, status in leaderboard(self.race, self.race_names):
+        for position, name, laps, last, best, status in leaderboard(self.race, self.race_names):
             pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[name]), pygame.Rect(x, y + 3, 10, 10))
-            y = self.text(f"{config.LABELS[name]:<13} lap {laps}  last {number(last)}  best {number(best)}  {status}",
+            y = self.text(f"{position}. {config.LABELS[name]:<13} lap {laps}  last {number(last)}  best {number(best)}  {status}",
                           x + 16, y, self.small)
 
 
