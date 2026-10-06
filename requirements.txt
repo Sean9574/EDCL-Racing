@@ -1,0 +1,10 @@
+numpy
+scipy
+tensorflow
+keras
+keras-tuner
+pygame
+pytest
+pandas
+matplotlib
+joblib

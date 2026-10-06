@@ -1,0 +1,11 @@
+[project]
+name = "ec-racing"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["slow: tests that take more than about ten seconds"]
+addopts = "-m 'not slow' -p no:launch_testing -p no:launch_ros -p no:ament_copyright -p no:ament_flake8 -p no:ament_lint -p no:ament_pep257 -p no:ament_xmllint"
+filterwarnings = ["ignore:pkg_resources is deprecated:UserWarning"]
