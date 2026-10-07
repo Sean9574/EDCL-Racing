@@ -4,9 +4,10 @@ import functools
 from racing import config
 
 
-@functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=config.TRACK_CACHE_SIZE)
 def get_track(seed, level):
-    """The track for (seed, level). Cached; callers must not modify it."""
+    """The track for (seed, level). The most recent config.TRACK_CACHE_SIZE tracks are cached, so fresh maps every
+    generation do not accumulate (revision 3 §3.4); callers must not modify a track."""
     from racing import expert, track_gen
     for attempt in range(config.MAX_TRACK_ATTEMPTS):
         track = track_gen.candidate_track(seed, level, attempt)

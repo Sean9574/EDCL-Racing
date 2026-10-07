@@ -28,13 +28,19 @@ OVERLAP_MARGIN = 6.0         # m of grass required between separate parts of the
 MAX_TRACK_ATTEMPTS = 200
 PROGRESS_BACK = 5.0          # m behind the last matched centerline point
 PROGRESS_AHEAD = 30.0        # m ahead of the last matched centerline point
-LEVELS = {
-    1: {"kind": "circle", "radius": 50.0, "width": 16.0},
-    2: {"kind": "oval", "straight": (80.0, 160.0), "radius": (25.0, 40.0), "width": 14.0},
-    3: {"kind": "loop", "points": (6, 8), "radius": (80.0, 160.0), "min_corner": 40.0, "width": 14.0},
-    4: {"kind": "loop", "points": (10, 16), "radius": (60.0, 200.0), "min_corner": 15.0, "width": 12.0},
+LEVELS = {                   # revision 3 Table 1: Easy loops, circuits with F1-style features above it
+    1: {"kind": "loop", "points": (4, 6), "radius": (60.0, 110.0), "min_corner": 45.0, "width": 16.0},
+    2: {"kind": "circuit", "points": (6, 8), "radius": (60.0, 170.0), "slow": (25.0, 45.0), "fast": (50.0, 80.0),
+        "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 24.0, "width": 14.0},
+    3: {"kind": "circuit", "points": (9, 12), "radius": (70.0, 220.0), "slow": (16.0, 35.0), "fast": (45.0, 90.0),
+        "main": 170.0, "hairpins": 1, "chicanes": (0, 1), "esses": (0, 1), "min_corner": 14.0, "width": 12.0},
+    4: {"kind": "circuit", "points": (13, 17), "radius": (80.0, 260.0), "slow": (10.0, 30.0), "fast": (45.0, 100.0),
+        "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0, "width": 10.0},
 }
 MAX_LEVEL = 4
+CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (revision 3 §3.2)
+DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (revision 3 §3.3)
+TRACK_CACHE_SIZE = 64        # built tracks kept per process; training maps are fresh every generation
 
 # --- Network interface (spec §6) ---
 N_INPUTS = N_RAYS + 1
