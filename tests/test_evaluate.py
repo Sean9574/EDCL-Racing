@@ -124,6 +124,33 @@ def test_figures_per_seed(tmp_path):
     assert [p.name for p in written] == ["fitness_curves.png", "step_sizes.png"]
 
 
+def export_search(runs, approach, flats):
+    """A search directory with one exported model per trial, as run_tuner writes it."""
+    search = paths.search_dir(approach, runs)
+    (search / "models").mkdir(parents=True)
+    ids = [f"{i:02d}" for i in range(len(flats))]
+    for trial_id, flat in zip(ids, flats):
+        nets.to_keras(flat).save(search / "models" / f"{trial_id}.keras")
+    pd.DataFrame({"trial_id": ids, "config_id": ids, "val_accuracy": np.linspace(0.5, 0.6, len(ids)),
+                  "params": 431, "epochs": 3}).to_csv(search / "trials.csv", index=False)
+    return ids
+
+
+def test_driving_selected_picks_the_best_validation_driver(fake_tracks, tmp_path):
+    flats = nets.init_population(np.random.default_rng(8), 4)
+    ids = export_search(tmp_path, "kt_random", flats)
+    table = evaluate.driving_selected_table(tmp_path, val_seeds=[80, 81], test_seeds=[1000])
+    keras_drivers = {("kt_random", i): nets.from_keras(nets.to_keras(f)) for i, f in zip(ids, flats)}
+    validation = evaluate.driving_results(keras_drivers, [80, 81])
+    expected = validation.groupby("run_seed")["fitness"].mean().idxmax()
+    assert list(table["Method"]) == ["KT Random"] and table.loc[0, "Trial"] == expected
+    assert table.loc[0, "Parameters"] == 431
+
+
+def test_driving_selected_without_exported_models(tmp_path):
+    assert evaluate.driving_selected_table(tmp_path, val_seeds=[80], test_seeds=[1000]).empty
+
+
 def test_chosen_trial_star_with_zero_padded_ids(monkeypatch, tmp_path):
     import matplotlib.pyplot as plt
     runs = tmp_path / "runs"
@@ -164,5 +191,5 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
                             out_dir=tmp_path / "out", test_seeds=[1000], val_seeds=[80], latency_calls=5)
     assert list(results["comparison"]["Method"]) == ["ES", "GA"]
     assert json.loads((champions / "best_seeds.json").read_text()).keys() == {"ga", "es"}
-    for name in ("comparison", "driving", "search_cost", "dataset"):
+    for name in ("comparison", "driving", "search_cost", "driving_selected", "dataset"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()

@@ -174,6 +174,34 @@ def search_cost_table(runs_dir):
     return pd.DataFrame(rows)
 
 
+def driving_selected_table(runs_dir=None, val_seeds=config.VAL_SEEDS, test_seeds=config.TEST_SEEDS, n_jobs=1):
+    """Secondary analysis (spec §8.3): for each Keras Tuner method, the exported model (the most-trained of each
+    configuration) with the highest mean validation fitness, and its driving on the test tracks."""
+    from racing.backend import keras_cpu
+    keras = keras_cpu()
+    rows = []
+    for approach in config.TUNER_APPROACHES:
+        search = paths.search_dir(approach, runs_dir)
+        exported = sorted((search / "models").glob("*.keras"))
+        if not exported or not (search / "trials.csv").exists():
+            continue
+        trials = pd.read_csv(search / "trials.csv", dtype={"trial_id": str, "config_id": str})
+        drivers = {(approach, path.stem): nets.from_keras(keras.models.load_model(path)) for path in exported}
+        validation = driving_results(drivers, val_seeds, n_jobs=n_jobs)
+        means = validation.groupby("run_seed")["fitness"].mean()
+        trial_id = str(means.idxmax())
+        test = driving_results({(approach, trial_id): drivers[(approach, trial_id)]}, test_seeds, n_jobs=n_jobs)
+        record = trials[trials["trial_id"] == trial_id].iloc[0]
+        done = test[test["finished"].astype(bool)]
+        rows.append({"Method": config.LABELS[approach], "Trial": trial_id, "Parameters": int(record["params"]),
+                     "Validation accuracy": round(float(record["val_accuracy"]), 4),
+                     "Mean validation fitness": round(float(means.max()), 3),
+                     f"Tracks completed (of {len(list(test_seeds))})": int(test["finished"].sum()),
+                     "Mean lap time (s)": round(float(done["lap_time"].mean()), 2) if len(done) else float("nan"),
+                     "Crashes": int(test["crashed"].sum())})
+    return pd.DataFrame(rows)
+
+
 def dataset_table(data_path):
     """Dataset size and collection time, a cost shared by the imitation methods and the seeded ES (spec §7.3)."""
     data_path = Path(data_path)
@@ -295,11 +323,13 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
     validation = driving_results(drivers, val_seeds, n_jobs=n_jobs)
     best = best_seeds(validation)
     paths.best_seeds_path(champions_dir).write_text(json.dumps(best, indent=2))
+    selected = driving_selected_table(runs_dir, val_seeds, test_seeds, n_jobs=n_jobs)
     with np.load(data_path) as d:
         data = {key: d[key] for key in d.files}
     metrics = metrics_per_seed(models, data, runs_dir, latency_calls)     # timed after all parallel work
     tables = {"comparison": comparison_table(metrics), "driving": driving_table(per_track, metrics),
-              "search_cost": search_cost_table(runs_dir), "dataset": dataset_table(data_path)}
+              "search_cost": search_cost_table(runs_dir), "driving_selected": selected,
+              "dataset": dataset_table(data_path)}
     folder = out_dir / "tables"
     folder.mkdir(parents=True, exist_ok=True)
     per_track.to_csv(folder / "driving_per_track.csv", index=False)
