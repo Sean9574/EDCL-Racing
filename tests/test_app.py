@@ -1018,6 +1018,19 @@ def test_imitation_shows_the_latest_member(net):
     assert message["graph"] == viewer.netwindow.netfig.network_graph(members[-1]) and " epoch 2 " in message["title"]
 
 
+def test_an_unchanged_report_builds_no_driver_and_the_title_uses_the_report_seed(net, monkeypatch):
+    report = ga_report(0, seed=7)
+    calls = []
+    original = report["population"].driver
+    monkeypatch.setattr(report["population"], "driver", lambda i: calls.append(i) or original(i))
+    net.toggle_network_window()
+    net.receive(report)
+    net.run_seed = 99                                           # the selector changed after the run started
+    for _ in range(5):
+        net.update(1 / 60)
+    assert len(calls) == 1 and len(sent(net)) == 1 and " · seed 7 · " in sent(net)[0]["title"]
+
+
 def test_a_reopened_window_gets_the_current_network(net):
     net.receive(ga_report(0))
     net.toggle_network_window()

@@ -485,13 +485,17 @@ class App:
             if report is None:
                 return None
             approach, generation = report["approach"], report["generation"]
+            seed = report.get("seed", self.run_seed)
+            identity = ("train", approach, seed, generation)
+            if identity == self.net_sent:
+                return identity, None, None            # unchanged: build nothing
             if "population" in report:
                 driver, unit = report["population"].driver(int(np.argmax(report["fitness"]))), "generation"
             else:
                 driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
-            title = (f"{config.LABELS[approach]} · seed {self.run_seed} · {unit} {generation} · "
+            title = (f"{config.LABELS[approach]} · seed {seed} · {unit} {generation} · "
                      f"{driver.n_params:,} parameters")
-            return ("train", approach, self.run_seed, generation), driver, title
+            return identity, driver, title
         car = self.selected_car()
         if car is None:
             return None
