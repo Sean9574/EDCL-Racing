@@ -114,3 +114,18 @@ def test_mixed_policy_drives_each_car_with_its_own_network():
     obs = rng.random((3, config.N_INPUTS))
     actions = nets.mixed_policy(drivers)(obs, None)
     assert list(actions) == [drivers[i].act(obs[i:i + 1])[0] for i in range(3)]
+
+
+def test_dense_population_subset_policy_and_driver_agree():
+    weights = nets.init_population(np.random.default_rng(7), 5, (6,))
+    cars = nets.DensePopulation(weights, (6,), "tanh")
+    part = cars.subset([4, 1])
+    assert len(cars) == 5 and len(part) == 2 and part.hidden == (6,) and part.activation == "tanh"
+    obs = np.random.default_rng(8).random((2, config.N_INPUTS))
+    assert np.array_equal(part.policy()(obs, None), nets.act(weights[[4, 1]], obs, (6,), "tanh"))
+    assert np.array_equal(cars.driver(4).act(obs[:1]), part.policy()(obs, None)[:1])
+
+
+def test_dense_spec_reads_hidden_sizes_and_activation():
+    model = nets.to_keras(nets.init_population(np.random.default_rng(9), 1, (8, 4))[0], (8, 4), "tanh")
+    assert nets.dense_spec(model) == ((8, 4), "tanh")

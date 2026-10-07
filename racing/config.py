@@ -73,6 +73,7 @@ TRACKS_PER_GEN = 3
 LEVEL_UP_FRACTION = 0.5     # share of the whole generation that must finish at pace to count toward a level-up
 LEVEL_UP_STREAK = 3
 PACE_FACTOR = 1.3            # at pace: time for the LAPS laps ≤ PACE_FACTOR × LAPS × expert lap time
+TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LAPS expert laps (revision 3 §4.1)
 
 # --- Genetic algorithm (spec §9.2) ---
 GA_POP = 1000

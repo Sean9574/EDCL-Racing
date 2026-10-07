@@ -1,6 +1,6 @@
 import numpy as np
 
-from racing import bench, nets, population
+from racing import bench, config, nets, population
 
 
 def test_time_full_laps_runs_on_a_small_batch():
@@ -30,9 +30,9 @@ def test_keras_epoch_time_on_toy_data():
 
 
 def test_evaluate_population_multiprocess_consistency():
-    """Multi-process evaluation must match single-process on a real level-1 track."""
-    weights = nets.init_population(np.random.default_rng(0), 8)
-    single = population.evaluate_population(weights, [0, 1], 1)
-    multi = population.evaluate_population(weights, [0, 1], 1, n_jobs=2)
-    for a, b in zip(single, multi):
-        assert np.array_equal(a, b)
+    """Multi-process evaluation must match single-process on a real level-1 map."""
+    cars = nets.DensePopulation(nets.init_population(np.random.default_rng(0), 8))
+    single = population.evaluate_population(cars, [0, 1], 1, config.TARGET_FACTOR)
+    multi = population.evaluate_population(cars, [0, 1], 1, config.TARGET_FACTOR, n_jobs=2)
+    for field in ("fitness", "success", "laps"):
+        assert np.array_equal(getattr(single, field), getattr(multi, field))

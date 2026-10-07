@@ -1,6 +1,6 @@
 import numpy as np
 
-from racing import config, sim
+from racing import config, expert, sim
 from racing.actions import class_to_controls, controls_to_class
 
 
@@ -126,3 +126,14 @@ def test_time_limit_requires_expert_time(circle_track):
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_simulate_reports_laps_done(circle_track):
+    result = sim.simulate(circle_track, expert.expert_policy(circle_track), 2, laps=2)
+    assert result.finished.all() and list(result.laps_done) == [2, 2]
+    assert sim.simulate(circle_track, constant_policy(0.0, 1.0), 1).laps_done[0] == 0
+
+
+def test_target_time_is_a_factor_of_the_expert_laps(circle_track):
+    assert np.isclose(sim.target_time(circle_track, 1.3), 1.3 * 20.0 * config.LAPS)
+    assert sim.target_time(circle_track, 1.0, laps=1) == 20.0

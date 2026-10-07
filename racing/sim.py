@@ -38,6 +38,7 @@ class RunResult:
     progress: np.ndarray            # fraction of the run completed, 0 to 1
     finish_time: np.ndarray
     steps: int
+    laps_done: np.ndarray           # laps completed when the run ended (revision 3 §4.1)
 
 
 def start_cars(track, n, laps=1):
@@ -152,6 +153,13 @@ def time_limit_for(track, laps=1):
     return config.TIME_LIMIT_FACTOR * track.expert_lap_time * laps
 
 
+def target_time(track, factor, laps=config.LAPS):
+    """Target time of a time trial (revision 3 §4.1): factor × the expert's time for `laps` laps."""
+    if np.isnan(track.expert_lap_time):
+        raise ValueError("track has no expert lap time")
+    return factor * track.expert_lap_time * laps
+
+
 def simulate(track, policy, n, time_limit=None, laps=1):
     """Drive n cars from the start line until every car is done. policy(obs, cars) returns action classes."""
     if time_limit is None:
@@ -164,4 +172,4 @@ def simulate(track, policy, n, time_limit=None, laps=1):
         steps += 1
     return RunResult(fitness=fitness(cars, track, time_limit), finished=cars.finished.copy(),
                      crashed=cars.crashed.copy(), progress=np.minimum(cars.progress / (track.length * laps), 1.0),
-                     finish_time=cars.finish_time.copy(), steps=steps)
+                     finish_time=cars.finish_time.copy(), steps=steps, laps_done=cars.laps_done.copy())

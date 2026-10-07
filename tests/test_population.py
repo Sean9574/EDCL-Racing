@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from racing import config, nets, population, sim
+from racing import config, expert, nets, population, sim
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def fake_tracks(monkeypatch, circle_track):
 
 def test_evaluate_population_shapes(fake_tracks):
     w = nets.init_population(np.random.default_rng(0), 6)
-    fitness, finished, at_pace = population.evaluate_population(w, [0, 1], 1)
+    fitness, finished, at_pace = population.evaluate_weights(w, [0, 1], 1)
     assert fitness.shape == finished.shape == at_pace.shape == (6,)
     assert finished.dtype == bool and at_pace.dtype == bool and not np.any(at_pace & ~finished)
     assert np.all((fitness >= 0) & (fitness < 2))
@@ -41,8 +41,8 @@ def test_split_tasks_never_makes_empty_chunks():
 
 def test_parallel_evaluation_matches_serial(fake_tracks):
     w = nets.init_population(np.random.default_rng(1), 9)
-    serial = population.evaluate_population(w, [0, 1, 2], 1)
-    threaded = population.evaluate_population(w, [0, 1, 2], 1, n_jobs=6, backend="threading")
+    serial = population.evaluate_weights(w, [0, 1, 2], 1)
+    threaded = population.evaluate_weights(w, [0, 1, 2], 1, n_jobs=6, backend="threading")
     for a, b in zip(serial, threaded):
         assert np.array_equal(a, b)
 
@@ -63,14 +63,14 @@ def worker_pids(n_jobs=2):
 def test_fresh_workers_start_new_processes_and_clear_the_track_cache():
     from racing import tracks
     weights = nets.init_population(np.random.default_rng(5), 4)
-    population.evaluate_population(weights, [0], 1, n_jobs=2)
+    population.evaluate_weights(weights, [0], 1, n_jobs=2)
     first = worker_pids()
-    population.evaluate_population(weights, [0], 1, n_jobs=2)
+    population.evaluate_weights(weights, [0], 1, n_jobs=2)
     assert len(first) == 2 and worker_pids() == first          # without the helper, the workers are reused
     tracks.get_track(0, 1)
     population.fresh_workers(2)
     assert tracks.get_track.cache_info().currsize == 0
-    population.evaluate_population(weights, [0], 1, n_jobs=2)
+    population.evaluate_weights(weights, [0], 1, n_jobs=2)
     second = worker_pids()
     assert len(second) == 2 and second.isdisjoint(first)
 
@@ -86,8 +86,8 @@ def test_fresh_workers_with_one_job_only_clears_the_track_cache(monkeypatch):
 
 def test_resimulating_a_subset_reproduces_logged_fitness(fake_tracks):
     w = nets.init_population(np.random.default_rng(2), 10)
-    full, _, _ = population.evaluate_population(w, [0], 1)
-    part, _, _ = population.evaluate_population(w[[1, 7]], [0], 1)
+    full, _, _ = population.evaluate_weights(w, [0], 1)
+    part, _, _ = population.evaluate_weights(w[[1, 7]], [0], 1)
     assert np.array_equal(full[[1, 7]], part)
 
 
@@ -99,11 +99,12 @@ def test_at_pace_requires_finishing_within_the_pace_factor(monkeypatch, fake_tra
         seen.append(laps)
         return sim.RunResult(fitness=np.array([1.5, 1.2, 0.4]), finished=np.array([True, True, False]),
                              crashed=np.array([False, False, True]), progress=np.array([1.0, 1.0, 0.4]),
-                             finish_time=np.array([limit - 1.0, limit + 1.0, np.nan]), steps=10)
+                             finish_time=np.array([limit - 1.0, limit + 1.0, np.nan]), steps=10,
+                             laps_done=np.array([3, 3, 1]))
 
     monkeypatch.setattr(population.sim, "simulate", fake_simulate)
     w = nets.init_population(np.random.default_rng(0), 3)
-    _, finished, at_pace = population.evaluate_population(w, [0], 1)
+    _, finished, at_pace = population.evaluate_weights(w, [0], 1)
     assert seen == [config.LAPS]
     assert list(finished) == [True, True, False] and list(at_pace) == [True, False, False]
 
@@ -135,7 +136,7 @@ def test_logger_removes_a_stale_summary(tmp_path):
 
 def test_select_champion_picks_highest_validation_fitness(monkeypatch):
     candidates = np.arange(12.0).reshape(4, 3)
-    monkeypatch.setattr(population, "evaluate_population",
+    monkeypatch.setattr(population, "evaluate_weights",
                         lambda w, seeds, level, n_jobs=1: (np.array([0.2, 1.4, 0.9, 1.1]), np.ones(4, bool),
                                                            np.ones(4, bool)))
     best, value = population.select_champion(candidates)
@@ -188,3 +189,122 @@ def test_logger_removes_stale_best_networks(tmp_path):
     (tmp_path / "notes.txt").write_text("kept")
     population.RunLogger(tmp_path)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["log.csv", "notes.txt"]
+
+
+# ----- revision 3 time trials (revision 3 §4.1, §4.6) -----
+
+def dense(n, seed=0):
+    return nets.DensePopulation(nets.init_population(np.random.default_rng(seed), n))
+
+
+class ExpertCars:
+    """n cars all driven by the expert; any object with len(), subset() and policy() can be evaluated."""
+
+    def __init__(self, track, n):
+        self.track, self.n = track, n
+
+    def __len__(self):
+        return self.n
+
+    def subset(self, indices):
+        return ExpertCars(self.track, len(indices))
+
+    def policy(self):
+        return expert.expert_policy(self.track)
+
+
+def test_time_trial_shapes(fake_tracks):
+    result = population.evaluate_population(dense(6), [0, 1], 1, config.TARGET_FACTOR)
+    assert result.fitness.shape == (6,)
+    assert result.success.shape == result.laps.shape == result.finish_time.shape == (2, 6)
+    assert result.success.dtype == bool and np.all((result.laps >= 0) & (result.laps <= config.LAPS))
+    assert np.all(np.isnan(result.finish_time[~result.success]))
+    assert np.all((result.fitness >= 0) & (result.fitness < 2))
+
+
+def test_trial_result_properties():
+    success = np.array([[True, True, False, False], [True, False, True, False]])
+    laps = np.array([[3, 3, 2, 0], [3, 1, 3, 0]])
+    r = population.TrialResult(fitness=np.zeros(4), success=success, laps=laps,
+                               finish_time=np.where(success, 60.0, np.nan))
+    assert list(r.all_success) == [True, False, False, False]
+    assert np.allclose(r.lap_share, [1.0, 4 / 6, 5 / 6, 0.0])
+    assert np.allclose(r.map_shares, [0.5, 0.5]) and r.min_share == 0.5
+    assert np.allclose(r.lap_times[success], 60.0 / config.LAPS)
+
+
+def test_time_trial_ends_at_the_target_time(monkeypatch, fake_tracks):
+    target = config.TARGET_FACTOR * fake_tracks.expert_lap_time * config.LAPS
+    seen = []
+
+    def fake_simulate(track, policy, n, time_limit=None, laps=1):
+        seen.append((time_limit, laps))
+        return sim.RunResult(fitness=np.array([1.5, 0.6, 0.2]), finished=np.array([True, False, False]),
+                             crashed=np.array([False, False, True]), progress=np.array([1.0, 0.67, 0.2]),
+                             finish_time=np.array([target - 1.0, np.nan, np.nan]), steps=10,
+                             laps_done=np.array([3, 2, 0]))
+
+    monkeypatch.setattr(population.sim, "simulate", fake_simulate)
+    result = population.evaluate_population(dense(3), [0], 1, config.TARGET_FACTOR)
+    assert seen == [(pytest.approx(target), config.LAPS)]
+    assert list(result.success[0]) == [True, False, False] and list(result.laps[0]) == [3, 2, 0]
+    assert result.finish_time[0, 0] == target - 1.0 and np.isnan(result.finish_time[0, 1])
+
+
+def test_expert_succeeds_at_the_target_and_counts_laps_when_too_slow(fake_tracks):
+    cars = ExpertCars(fake_tracks, 2)
+    easy = population.evaluate_population(cars, [0], 1, config.TARGET_FACTOR)
+    assert easy.success.all() and np.all(easy.laps == config.LAPS) and np.all(easy.fitness > 1)
+    tight = population.evaluate_population(cars, [0], 1, 0.4)                   # 24 s for three laps
+    assert not tight.success.any() and np.all((tight.laps >= 1) & (tight.laps < config.LAPS))
+    assert np.all(tight.fitness < 1)
+
+
+def test_time_trials_do_not_depend_on_n_jobs(fake_tracks):
+    cars = dense(9, seed=1)
+    serial = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR)
+    threaded = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=6,
+                                              backend="threading")
+    for field in ("fitness", "success", "laps"):
+        assert np.array_equal(getattr(serial, field), getattr(threaded, field))
+    assert np.array_equal(serial.finish_time, threaded.finish_time, equal_nan=True)
+
+
+def test_a_subset_reproduces_its_cars_results(fake_tracks):
+    cars = dense(10, seed=2)
+    full = population.evaluate_population(cars, [0], 1, config.TARGET_FACTOR)
+    part = population.evaluate_population(cars.subset([1, 7]), [0], 1, config.TARGET_FACTOR)
+    assert np.array_equal(full.fitness[[1, 7]], part.fitness) and np.array_equal(full.laps[:, [1, 7]], part.laps)
+
+
+def test_select_final_prefers_successes_then_fitness(monkeypatch):
+    def fake(cars, seeds, level, factor, n_jobs=1):
+        assert len(cars) == 4 and seeds == list(config.VAL_SEEDS) and level == config.MAX_LEVEL and factor == 1.1
+        success = np.zeros((len(seeds), 4), dtype=bool)
+        success[0, :3] = True
+        success[1, 1:3] = True
+        return population.TrialResult(fitness=np.array([1.9, 1.2, 1.5, 0.3]), success=success,
+                                      laps=np.zeros((len(seeds), 4), dtype=np.int64),
+                                      finish_time=np.full((len(seeds), 4), np.nan))
+
+    monkeypatch.setattr(population, "evaluate_population", fake)
+    assert population.select_final(dense(6), [5, 0, 3, 2], 1.1) == (3, 2, 1.5)
+
+
+def test_dense_champion_keeps_its_architecture(tmp_path):
+    weights = nets.init_population(np.random.default_rng(3), 2, (8, 4))
+    cars = nets.DensePopulation(weights, (8, 4), "tanh")
+    path = population.save_dense_champion("baseline", 1, cars, 1, tmp_path)
+    assert path == tmp_path / "baseline" / "seed1.keras" and path.exists()
+    saved = np.load(tmp_path / "baseline" / "seed1.npy")
+    assert saved.dtype == np.float64 and np.array_equal(saved, weights[1])
+    _, driver = nets.load_champion("baseline", 1, tmp_path)
+    obs = np.random.default_rng(4).random((50, config.N_INPUTS))
+    assert np.array_equal(driver.act(obs), cars.driver(1).act(obs))
+
+
+def test_clear_champion_removes_every_file(tmp_path):
+    population.save_dense_champion("es", 0, dense(1, seed=4), 0, tmp_path)
+    assert sorted(p.suffix for p in (tmp_path / "es").iterdir()) == [".keras", ".npy"]
+    population.clear_champion("es", 0, tmp_path)
+    assert list((tmp_path / "es").iterdir()) == []

@@ -7,8 +7,9 @@ import numpy as np
 
 from racing import config, nets, paths
 from racing.curriculum import LevelTracker, draw_seeds
-from racing.population import (RunLogger, clear_champion, evaluate_population, finish_fractions, fresh_workers,
-                               make_report, save_champion, select_champion)
+from racing.population import (RunLogger, clear_champion, finish_fractions, fresh_workers, make_report,
+                               save_champion, select_champion)
+from racing.population import evaluate_weights as evaluate_population   # revision 2.0 evaluation until plan Task 6
 
 
 def make_offspring(rng, parents, sigma, lam):

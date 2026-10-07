@@ -77,6 +77,28 @@ def population_policy(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
     return policy
 
 
+class DensePopulation:
+    """Dense networks of one architecture, one flat weight vector per car (revision 3 §5). Like every population
+    type, it offers len(), subset(indices), policy() and driver(i)."""
+
+    def __init__(self, weights, hidden=config.BASELINE_HIDDEN, activation="relu"):
+        self.weights = np.asarray(weights, dtype=float)
+        self.hidden = tuple(int(units) for units in hidden)
+        self.activation = activation
+
+    def __len__(self):
+        return len(self.weights)
+
+    def subset(self, indices):
+        return DensePopulation(self.weights[np.asarray(indices, dtype=np.int64)], self.hidden, self.activation)
+
+    def policy(self):
+        return population_policy(self.weights, self.hidden, self.activation)
+
+    def driver(self, i):
+        return from_flat(self.weights[int(i)], self.hidden, self.activation)
+
+
 class DenseNet:
     """A plain stack of dense layers in numpy. Drives a car with any trained controller."""
 
@@ -115,6 +137,15 @@ def from_keras(model):
             layers.append((w, b))
             activations.append(layer.get_config()["activation"])
     return DenseNet(layers, activations[:-1])     # the output softmax does not change the argmax
+
+
+def dense_spec(model):
+    """(hidden sizes, hidden activation) of a dense Keras model; dropout layers are ignored."""
+    keras = keras_cpu()
+    dense = [layer for layer in model.layers if isinstance(layer, keras.layers.Dense)]
+    hidden = tuple(int(layer.units) for layer in dense[:-1])
+    activation = dense[0].get_config()["activation"] if hidden else "relu"
+    return hidden, activation
 
 
 def to_keras(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
@@ -165,10 +196,11 @@ def champion_seeds(directory=None):
 
 
 def load_champion(approach, seed, directory=None):
-    """(Keras model, DenseNet driver) of one final controller. Evolutionary controllers drive with the float64
-    weights saved next to the Keras file (spec §6)."""
+    """(Keras model, driver) of one final controller. Evolved dense controllers drive with the float64 weights saved
+    next to the Keras file (spec §6), in the architecture of that Keras file (revision 3 §6.4)."""
     keras_path = paths.champion_path(approach, seed, champion_dir=directory)
     model = keras_cpu().models.load_model(keras_path)
     flat_path = paths.champion_path(approach, seed, ".npy", directory)
-    driver = from_flat(np.load(flat_path)) if flat_path.exists() else from_keras(model)
-    return model, driver
+    if flat_path.exists():
+        return model, from_flat(np.load(flat_path), *dense_spec(model))
+    return model, from_keras(model)

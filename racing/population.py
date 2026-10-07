@@ -1,6 +1,8 @@
-"""Shared helpers for the evolutionary approaches (spec §9.1): evaluation, reports, logging, final selection."""
+"""Shared helpers for the evolutionary approaches (spec §9.1, revision 3 §4): time-trial evaluation, final selection
+and saved controllers, and the revision 2.0 logging helpers still used by ga.py and es.py until Task 6."""
 import csv
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +29,102 @@ def split_tasks(n, seeds, n_jobs):
     return [(k, seed, part) for k, seed in enumerate(seeds) for part in parts]
 
 
+@dataclass(eq=False)
+class TrialResult:
+    """One generation's time trials (revision 3 §4.1): one row per map, one column per car."""
+    fitness: np.ndarray        # (n,) mean fitness over the maps, with the target time as the time limit
+    success: np.ndarray        # (maps, n) three laps within the target time
+    laps: np.ndarray           # (maps, n) laps completed within the target time
+    finish_time: np.ndarray    # (maps, n) s, nan unless success
+
+    @property
+    def all_success(self):
+        return self.success.all(axis=0)
+
+    @property
+    def lap_share(self):
+        return self.laps.sum(axis=0) / (config.LAPS * self.laps.shape[0])
+
+    @property
+    def map_shares(self):
+        return self.success.mean(axis=1)
+
+    @property
+    def min_share(self):
+        return float(self.map_shares.min())
+
+    @property
+    def lap_times(self):
+        return self.finish_time / config.LAPS
+
+
+def _time_trial(population, seed, level, factor):
+    """Fitness, success, laps in time and finish time of every car over config.LAPS laps of one map, ending at the
+    target time (revision 3 §4.1)."""
+    track = get_track(seed, level)
+    result = sim.simulate(track, population.policy(), len(population), time_limit=sim.target_time(track, factor),
+                          laps=config.LAPS)
+    return (result.fitness, result.finished, np.minimum(result.laps_done, config.LAPS),
+            np.where(result.finished, result.finish_time, np.nan))
+
+
+def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="loky"):
+    """Time trials of every car on every map (revision 3 §4.1). The per-map results are combined in map order, so
+    the result does not depend on n_jobs."""
+    n = len(population)
+    tasks = split_tasks(n, seeds, n_jobs)
+    if n_jobs == 1 or len(tasks) == 1:
+        parts = [_time_trial(population.subset(idx), seed, level, factor) for _, seed, idx in tasks]
+    else:
+        from joblib import Parallel, delayed
+        parts = Parallel(n_jobs=n_jobs, backend=backend)(
+            delayed(_time_trial)(population.subset(idx), seed, level, factor) for _, seed, idx in tasks)
+    maps = len(seeds)
+    per_map = np.zeros((maps, n))
+    success = np.zeros((maps, n), dtype=bool)
+    laps = np.zeros((maps, n), dtype=np.int64)
+    finish_time = np.full((maps, n), np.nan)
+    for (k, _, idx), (fitness, done, laps_done, times) in zip(tasks, parts):
+        per_map[k, idx] = fitness
+        success[k, idx] = done
+        laps[k, idx] = laps_done
+        finish_time[k, idx] = times
+    total = np.zeros(n)
+    for k in range(maps):
+        total += per_map[k]
+    return TrialResult(fitness=total / maps, success=success, laps=laps, finish_time=finish_time)
+
+
+def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEEDS):
+    """The final controller (revision 3 §4.6): of the candidate indices, the car with the most successes on the
+    validation maps at target factor `factor`, then the highest mean fitness, then the earliest candidate. Returns
+    (index into population, validation successes, mean validation fitness)."""
+    candidates = np.asarray(candidates, dtype=np.int64)
+    result = evaluate_population(population.subset(candidates), list(seeds), config.MAX_LEVEL, factor, n_jobs=n_jobs)
+    successes = result.success.sum(axis=0)
+    best = int(np.lexsort((-result.fitness, -successes))[0])
+    return int(candidates[best]), int(successes[best]), float(result.fitness[best])
+
+
+def save_dense_champion(approach, seed, population, index, champion_dir=config.CHAMPIONS_DIR):
+    """Final dense controller (spec §6, revision 3 §6.4): a Keras file and the float64 weights (.npy); the
+    architecture is the Keras file's. Returns the Keras file's path."""
+    path = paths.champion_path(approach, seed, champion_dir=champion_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flat = population.weights[int(index)]
+    nets.to_keras(flat, population.hidden, population.activation).save(path)
+    np.save(paths.champion_path(approach, seed, ".npy", champion_dir), np.asarray(flat, dtype=float))
+    return path
+
+
+def clear_champion(approach, seed, champion_dir=config.CHAMPIONS_DIR):
+    """Remove a final controller left by an earlier run (.keras, .npy and a NEAT genome's .json), so an interrupted
+    run leaves none behind."""
+    paths.remove(*(paths.champion_path(approach, seed, suffix, champion_dir) for suffix in (".keras", ".npy", ".json")))
+
+
+# ----- revision 2.0 helpers, used by ga.py and es.py until the evolution engine replaces them (plan Task 6) -----
+
 def _evaluate_track(weights, seed, level):
     """Fitness, finishing and finishing at pace (spec §9.1) of every network over config.LAPS laps of one track."""
     track = get_track(seed, level)
@@ -36,7 +134,7 @@ def _evaluate_track(weights, seed, level):
     return result.fitness, result.finished, at_pace
 
 
-def evaluate_population(weights, seeds, level, n_jobs=1, backend="loky"):
+def evaluate_weights(weights, seeds, level, n_jobs=1, backend="loky"):
     """Mean fitness over the tracks, whether each individual finished all of them, and whether it finished all of
     them at pace. The per-track results are combined in track order, so the result does not depend on n_jobs."""
     n = len(weights)
@@ -110,7 +208,7 @@ class RunLogger:
 
 def select_champion(candidates, n_jobs=1, seeds=config.VAL_SEEDS):
     """The candidate with the highest mean fitness on the validation tracks (level 4)."""
-    fitness, _, _ = evaluate_population(candidates, list(seeds), config.MAX_LEVEL, n_jobs=n_jobs)
+    fitness, _, _ = evaluate_weights(candidates, list(seeds), config.MAX_LEVEL, n_jobs=n_jobs)
     best = int(np.argmax(fitness))
     return candidates[best], float(fitness[best])
 
@@ -122,9 +220,3 @@ def save_champion(approach, seed, flat, champion_dir=config.CHAMPIONS_DIR):
     nets.to_keras(flat).save(path)
     np.save(paths.champion_path(approach, seed, ".npy", champion_dir), np.asarray(flat, dtype=float))
     return path
-
-
-def clear_champion(approach, seed, champion_dir=config.CHAMPIONS_DIR):
-    """Remove a final controller left by an earlier run, so an interrupted run leaves none behind."""
-    paths.remove(paths.champion_path(approach, seed, champion_dir=champion_dir),
-                 paths.champion_path(approach, seed, ".npy", champion_dir))
