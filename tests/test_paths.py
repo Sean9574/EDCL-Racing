@@ -27,7 +27,7 @@ def test_remove_files_directories_and_missing(tmp_path):
 
 
 def test_seeded_es_is_an_approach_with_its_own_color():
-    assert config.APPROACHES[-1] == "es_seeded"
+    assert config.APPROACHES[-1] == "neat"
     assert config.LABELS["es_seeded"] == "Seeded ES" and config.COLORS["es_seeded"] == "#0072B2"
     assert set(config.TUNER_APPROACHES) | set(config.EVOLUTION_APPROACHES) | {"baseline"} == set(config.APPROACHES)
 

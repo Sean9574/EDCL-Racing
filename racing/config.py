@@ -96,6 +96,26 @@ ES_FACTOR = 0.82
 ES_SIGMA_MIN = 1e-4
 ES_SIGMA_MAX = 1.0
 
+# --- NEAT (revision 3 §5.4) ---
+NEAT_POP = 1000
+NEAT_CROSSOVER = 0.75        # share of children produced by crossover; the rest are mutated copies
+NEAT_TOURNAMENT = 3          # parents are the winners of tournaments within their species
+NEAT_DISABLE_INHERIT = 0.75  # a gene disabled in either parent is disabled in the child with this probability
+NEAT_PERTURB = 0.8           # per weight and bias: perturbation by N(0, σ²)
+NEAT_REPLACE = 0.05          # per weight and bias: replacement by a standard normal value
+NEAT_ADD_CONN = 0.05         # per child: one new connection
+NEAT_ADD_NODE = 0.03         # per child: one connection split by a new hidden node
+NEAT_TOGGLE = 0.01           # per child: one connection's enabled flag toggled
+NEAT_SIGMA0 = 0.5            # weights start standard normal, so the step size starts larger than the ES's
+NEAT_C1 = 1.0                # compatibility distance δ = C1·E/N + C2·D/N + C3·W̄
+NEAT_C2 = 1.0
+NEAT_C3 = 0.4
+NEAT_SMALL_GENOME = 20       # N = 1 when both genomes have fewer genes than this
+NEAT_THRESHOLD0 = 3.0        # initial compatibility threshold
+NEAT_THRESHOLD_STEP = 0.1    # threshold change per generation, towards NEAT_TARGET_SPECIES species
+NEAT_TARGET_SPECIES = 20
+NEAT_STAGNATION = 20         # generations without improvement after which a species receives no children
+
 # --- Parallelism ---
 N_JOBS = 6                   # worker processes; racing/bench.py, worst-case generation: 1: 6.87 s, 3: 2.61 s, 6: 1.88 s, 9: 3.12 s, 12: 2.94 s, 15: 2.74 s
 
@@ -117,15 +137,16 @@ DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and check
 DAGGER_STREAK = 3            # consecutive rounds that must reach the goal
 
 # --- Approaches and colors (spec §10.1) ---
-APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga", "es_seeded")
+APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga", "es_seeded", "neat")
 TUNER_APPROACHES = ("kt_random", "kt_hyperband", "kt_bayesian")
-EVOLUTION_APPROACHES = ("ga", "es", "es_seeded")
+EVOLUTION_APPROACHES = ("ga", "es", "es_seeded", "neat")
 IMITATION_APPROACHES = ("baseline", *TUNER_APPROACHES)
 RUN_ORDER = tuple((a, s) for a in (*IMITATION_APPROACHES, *EVOLUTION_APPROACHES) for s in RUN_SEEDS)  # revision 3 §8.3
 LABELS = {"baseline": "Baseline", "kt_random": "KT Random", "kt_hyperband": "KT Hyperband",
-          "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA", "es_seeded": "Seeded ES"}
+          "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA", "es_seeded": "Seeded ES", "neat": "NEAT"}
 COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E9",
-          "kt_bayesian": "#CC79A7", "es": "#009E73", "ga": "#D55E00", "es_seeded": "#0072B2"}
+          "kt_bayesian": "#CC79A7", "es": "#009E73", "ga": "#D55E00", "es_seeded": "#0072B2",
+          "neat": "#F0E442"}         # the remaining Okabe-Ito color (revision 3 §9)
 
 # --- Application (spec §10) ---
 WINDOW_SIZE = (1280, 800)
