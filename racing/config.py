@@ -86,7 +86,7 @@ ES_SIGMA_MAX = 1.0
 
 # --- Budget and parallelism ---
 EVAL_BUDGET = 200_000
-N_JOBS = 8                   # worker processes for population evaluation; measured with racing/bench.py (1: 14.6 s, 4: 5.9 s, 8: 5.7 s, 12: 5.8 s, 16: 6.2 s per worst-case generation)
+N_JOBS = 6                   # worker processes; racing/bench.py, worst-case generation: 1: 6.87 s, 3: 2.61 s, 6: 1.88 s, 9: 3.12 s, 12: 2.94 s, 15: 2.74 s
 
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3
@@ -98,8 +98,8 @@ KT_BAYES_INITIAL = 10        # random trials before Bayesian optimization uses i
 HYPERBAND_FACTOR = 3
 HYPERBAND_ITERATIONS = 1
 SIZE_RULE_TOLERANCE = 0.01
-STEPS_PER_EXECUTION = 1      # batches per call into the compiled training function; set from racing/bench.py
-JIT_COMPILE = True           # XLA compilation; set from racing/bench.py
+STEPS_PER_EXECUTION = 64     # batches per training-function call; racing/bench.py, s/epoch with XLA: 1: 0.367, 4: 0.201, 16: 0.134, 64: 0.128
+JIT_COMPILE = True           # XLA compilation; racing/bench.py: faster than without at every steps_per_execution (64: 0.128 vs 0.144 s)
 
 # --- Approaches and colors (spec §10.1) ---
 APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga", "es_seeded")
