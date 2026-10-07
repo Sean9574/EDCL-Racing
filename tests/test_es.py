@@ -126,21 +126,6 @@ def test_run_es_any_architecture_round_trips_its_champion(monkeypatch, tmp_path)
     assert nets.dense_spec(model) == ((8, 4), "tanh") and summary["approach"] == "kt_random"
 
 
-def test_trained_baseline_reads_the_baseline_controller(tmp_path):
-    from racing import imitation
-    model = imitation.build_baseline()
-    path = paths.champion_path("baseline", 1, champion_dir=tmp_path)
-    path.parent.mkdir(parents=True)
-    model.save(path)
-    flat = es.trained_baseline(1, champion_dir=tmp_path)
-    assert flat.shape == (431,) and np.array_equal(flat, nets.to_flat(model))
-
-
-def test_trained_baseline_missing(tmp_path):
-    with pytest.raises(FileNotFoundError, match="notebook 02"):
-        es.trained_baseline(0, champion_dir=tmp_path)
-
-
 def test_dagger_baseline_reads_the_refined_baseline(tmp_path):
     from racing import imitation
     model = imitation.build_baseline()

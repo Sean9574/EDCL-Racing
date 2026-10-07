@@ -86,15 +86,6 @@ class ES(evolution.DenseMethod):
         self.step = StepSize.from_state(state["step"])
 
 
-def trained_baseline(seed, champion_dir=config.CHAMPIONS_DIR):
-    """Flat float64 weights of the baseline controller trained with `seed` (spec §9.4)."""
-    from racing.backend import keras_cpu
-    path = paths.champion_path("baseline", seed, champion_dir=champion_dir)
-    if not path.exists():
-        raise FileNotFoundError(f"no baseline controller for seed {seed} at {path}; run notebook 02 first")
-    return nets.to_flat(keras_cpu().models.load_model(path))
-
-
 def dagger_baseline(seed, runs_dir=None):
     """Flat float64 weights of the baseline after its DAgger refinement, the start of the seeded ES (revision 3
     §5.3)."""
