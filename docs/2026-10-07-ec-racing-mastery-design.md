@@ -250,9 +250,9 @@ together like the other methods.
 **Genome.** A genome consists of node genes and connection genes. Every genome has the 10 input nodes
 and the 15 output nodes of the common interface. Hidden nodes are added by mutation. Each node except
 the inputs carries a bias. Each connection gene holds its source and target nodes, a weight, an enabled
-flag and an innovation number. Innovation numbers are global within a run: a structural mutation that
-recurs in the same generation receives the existing number, so that the genes of two parents can be
-aligned. Networks are feed-forward. A connection that would create a cycle is never added, so NEAT
+flag and an innovation number. The run keeps a record of structural mutations: a connection between
+the same two nodes, or a split of the same connection, receives the same innovation number or node in
+every genome in which it occurs, so that the genes of two parents can be aligned. Networks are feed-forward. A connection that would create a cycle is never added, so NEAT
 networks, like all others, have no memory.
 
 **Initial population.** Every input is connected to every output: 150 connections and 15 output biases.
