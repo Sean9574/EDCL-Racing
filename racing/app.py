@@ -107,11 +107,10 @@ class Playback:
 
 
 def report_policy(report, indices):
-    """Policy for the chosen members of a training report."""
+    """Policy for the chosen members of a training report: an evolutionary population (dense or NEAT, revision 3
+    §9) or the networks of an imitation report."""
     if "population" in report:
         return report["population"].subset(indices).policy()
-    if "weights" in report:
-        return nets.population_policy(report["weights"][indices], tuple(report["hidden"]), report["activation"])
     return nets.mixed_policy([report["nets"][i] for i in indices])
 
 
@@ -138,9 +137,10 @@ def leaderboard(playback, count):
 
 def trainer_main(approach, size, seed, level, reports, running):
     """Training process: trains one approach with run seed `seed`, starting at curriculum level `level`, and sends a
-    report after every generation, trial or epoch. Writes to config.APP_RUNS_DIR and never saves final
-    controllers (spec §10.2)."""
-    from racing import es, ga, imitation
+    report after every generation, trial or epoch. Every Play starts a new run: the approach's folder in
+    config.APP_RUNS_DIR is removed first, since evolutionary runs resume from a checkpoint they find there. Writes
+    only to config.APP_RUNS_DIR, never saves final controllers and trains until stopped (revision 3 §9)."""
+    from racing import es, ga, imitation, neat
     from racing.expert import collect_dataset
 
     def send(report):
@@ -148,16 +148,18 @@ def trainer_main(approach, size, seed, level, reports, running):
         running.wait()                      # training holds here while the viewer is paused
 
     out_dir = config.APP_RUNS_DIR / approach / f"seed{seed}"
-    if approach in config.EVOLUTION_APPROACHES:
-        paths.remove(out_dir)              # a viewer run always starts afresh, never from an old checkpoint
+    paths.remove(out_dir)
+    common = dict(seed=seed, pop_size=size, start_level=level, out_dir=out_dir, on_generation=send,
+                  champion_dir=None, n_jobs=config.N_JOBS, max_generations=None)
     if approach == "ga":
-        ga.run_ga(pop_size=size, seed=seed, start_level=level, out_dir=out_dir, on_generation=send,
-                  champion_dir=None, n_jobs=config.N_JOBS)
+        ga.run_ga(**common)
         return
     if approach in ("es", "es_seeded"):
-        initial = es.trained_baseline(seed) if approach == "es_seeded" else None
-        es.run_es(pop_size=size, seed=seed, start_level=level, initial=initial, approach=approach, out_dir=out_dir,
-                  on_generation=send, champion_dir=None, n_jobs=config.N_JOBS)
+        initial = es.dagger_baseline(seed) if approach == "es_seeded" else None
+        es.run_es(**common, initial=initial, approach=approach)
+        return
+    if approach == "neat":
+        neat.run_neat(**common)
         return
     path = config.DATASET_PATH
     if not path.exists():
@@ -171,13 +173,12 @@ def trainer_main(approach, size, seed, level, reports, running):
         members.append(nets.from_keras(model))
         scores.append(val_accuracy)
         fitness = np.array(scores)
-        nan = float("nan")
         send({"approach": approach, "generation": int(number), "level": level,
               "seeds": [config.KT_VIEW_SEED], "nets": list(members), "fitness": fitness,
-              "kept_finish": nan, "new_finish": nan, "step_size": nan, "best": float(fitness.max()),
-              "mean": float(fitness.mean()), "worst": float(fitness.min()), "leveled_up": False})
+              "best": float(fitness.max()), "mean": float(fitness.mean()), "worst": float(fitness.min()),
+              "leveled_up": False})
 
-    if approach == "baseline":
+    if approach == "baseline":                         # resume=False: always train live, never skip (revision 3 §9)
         imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
     else:
@@ -215,17 +216,31 @@ def number(value):
     return "–" if np.isnan(value) else f"{value:.4g}"
 
 
+def share_text(shares):
+    """Success shares of the generation's maps, e.g. '84% 92% 95%'."""
+    return " ".join(percent(float(s)) for s in shares)
+
+
 def stats_lines(report, approach):
-    """Training panel stats lines from a report."""
-    nan = float("nan")
-    unit = "Trial" if approach.startswith("kt") else ("Epoch" if approach == "baseline" else "Generation")
+    """Training panel stats lines (revision 3 §9). Evolutionary reports: difficulty and generation, each map's
+    success share against the 90% requirement, the streak and the target cut mastered, the step size and the kept
+    cars, the fitness (and NEAT's species). Imitation reports: the epoch or trial and the validation accuracy."""
+    if "min_share" not in report:
+        unit = "Trial" if approach.startswith("kt") else "Epoch"
+        return (f"{unit} {report['generation']}",
+                f"Validation accuracy: best {report['best']:.3f}  mean {report['mean']:.3f}")
+    level = config.DIFFICULTIES.get(report["level"], f"Level {report['level']}")
+    reduction = float(report.get("target_reduction", float("nan")))
+    mastered = "–" if np.isnan(reduction) else f"−{100 * reduction:.1f}%"
     size_name = "Mutation strength" if approach == "ga" else "σ"
-    return (f"Level {report['level']}    {unit} {report['generation']}",
-            f"Finished: kept {percent(report.get('kept_finish', report.get('kept_success', nan)))}   new {percent(report.get('new_finish', report.get('child_success', nan)))}",
-            f"At pace: all {percent(report.get('whole_pace', nan))}  kept {percent(report.get('kept_pace', nan))}  "
-            f"new {percent(report.get('new_pace', nan))}",
-            f"{size_name}: {number(report['step_size'])}",
-            f"Best {report['best']:.3f}    Mean {report['mean']:.3f}")
+    last = f"Best {report['best']:.3f}    Mean {report['mean']:.3f}"
+    if "species" in report:
+        last += f"    Species {report['species']}"
+    return (f"{level}    Generation {report['generation']}",
+            f"Maps succeeded: {share_text(report['map_shares'])}  (need {percent(config.MASTERY_FRACTION)})",
+            f"Streak {report['streak']}/{config.MASTERY_STREAK}    Target cut mastered: {mastered}",
+            f"{size_name}: {number(report['step_size'])}    Kept {int(np.sum(report['is_kept']))}",
+            last)
 
 
 class App:
@@ -254,7 +269,9 @@ class App:
         self.approach = "ga"
         self.run_seed = config.RUN_SEEDS[0]
         self.difficulty = 1
-        self.population = {"ga": config.GA_POP, "es": config.ES_POP, "es_seeded": config.ES_POP}
+        self.population = {"ga": config.GA_POP, "es": config.ES_POP, "es_seeded": config.ES_POP,
+                           "neat": config.NEAT_POP}
+        self.runs_dir = config.RUNS_DIR     # where the seeded ES finds the DAgger-refined baseline
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
@@ -306,9 +323,9 @@ class App:
 
     # ----- training process -----
     def start_training(self):
-        if self.approach == "es_seeded" and not paths.champion_path("baseline", self.run_seed,
-                                                                   champion_dir=self.champions_dir).exists():
-            self.status = "Seeded ES needs the baseline controller: run notebook 02 first."
+        if self.approach == "es_seeded" and not paths.stage_path("baseline", self.run_seed, "dagger",
+                                                                 self.runs_dir).exists():
+            self.status = "Seeded ES needs the DAgger baseline: run notebook 03."
             return
         context = mp.get_context("spawn")
         self.reports = context.Queue()
@@ -377,8 +394,14 @@ class App:
             self.discard_reports()
 
     def receive(self, report):
+        """Show a report; the plot follows the lowest map success share (evolution, with level advancements, the
+        mastery goal and target cuts marked) or the validation accuracy (imitation)."""
         self.latest = report
-        self.history.append((report["generation"], report["best"], report["mean"], report.get("leveled_up", report.get("event") in ("level_up", "goal"))))
+        if "min_share" in report:
+            marked = report.get("event") in ("level_up", "goal", "tightened")
+            self.history.append((report["generation"], float(report["min_share"]), float("nan"), marked))
+        else:
+            self.history.append((report["generation"], report["best"], report["mean"], report["leveled_up"]))
 
     # ----- settings (changeable only while no training runs) -----
     def select_approach(self, approach):
@@ -743,7 +766,7 @@ class App:
         y += 36
         y = self.draw_difficulty(x, y, w, self.difficulty, self.set_difficulty, idle)
         if self.approach in self.population:
-            self.text("Population" if self.approach == "ga" else "Population (λ)", x, y + 5, self.small, MUTED)
+            self.text("Population", x, y + 5, self.small, MUTED)
             self.button(pygame.Rect(x + 110, y, 30, 28), "−", lambda: self.change_population(-1), enabled=idle)
             self.text(str(self.population[self.approach]), x + 152, y + 5)
             self.button(pygame.Rect(x + 210, y, 30, 28), "+", lambda: self.change_population(1), enabled=idle)
@@ -787,13 +810,20 @@ class App:
     def draw_plot(self, rect):
         pygame.draw.rect(self.screen, (255, 255, 255), rect)
         pygame.draw.rect(self.screen, BUTTON, rect, 1)
-        self.text(f"Best and mean fitness, {len(self.history)} reports", rect.left + 6, rect.top + 4, self.small, MUTED)
+        shares = self.latest is not None and "min_share" in self.latest
+        title = (f"Lowest map success share, {len(self.history)} generations" if shares
+                 else f"Best and mean validation accuracy, {len(self.history)} reports")
+        self.text(title, rect.left + 6, rect.top + 4, self.small, MUTED)
         if len(self.history) < 2:
             return
         gens = np.array([h[0] for h in self.history], dtype=float)
-        best = np.array([h[1] for h in self.history])
-        mean = np.array([h[2] for h in self.history])
-        lo, hi = min(best.min(), mean.min()), max(best.max(), mean.max())
+        main = np.array([h[1] for h in self.history], dtype=float)
+        second = np.array([h[2] for h in self.history], dtype=float)
+        if shares:
+            lo, hi = 0.0, 1.0
+        else:
+            values = np.concatenate([main, second[~np.isnan(second)]])
+            lo, hi = float(values.min()), float(values.max())
         span = hi - lo if hi > lo else 1.0
         width = max(gens[-1] - gens[0], 1.0)
 
@@ -801,13 +831,17 @@ class App:
             return (rect.left + 6 + (g - gens[0]) / width * (rect.width - 12),
                     rect.bottom - 6 - (v - lo) / span * (rect.height - 30))
 
-        for g, _, _, leveled_up in self.history:
-            if leveled_up:
+        for g, _, _, marked in self.history:
+            if marked:
                 px = point(g, lo)[0]
                 pygame.draw.line(self.screen, MUTED, (px, rect.top + 22), (px, rect.bottom - 2), 1)
-        pygame.draw.lines(self.screen, MUTED, False, [point(g, v) for g, v in zip(gens, mean)], 1)
+        if shares:                                          # the 90% requirement
+            y = point(gens[0], config.MASTERY_FRACTION)[1]
+            pygame.draw.line(self.screen, BUTTON_ACTIVE, (rect.left + 6, y), (rect.right - 6, y), 1)
+        if not np.isnan(second).all():
+            pygame.draw.lines(self.screen, MUTED, False, [point(g, v) for g, v in zip(gens, second)], 1)
         pygame.draw.lines(self.screen, hex_to_rgb(config.COLORS[self.approach]), False,
-                          [point(g, v) for g, v in zip(gens, best)], 2)
+                          [point(g, v) for g, v in zip(gens, main)], 2)
 
     def draw_race_panel(self, x, y, w):
         if not self.race_available:

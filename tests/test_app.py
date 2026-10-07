@@ -10,7 +10,7 @@ import pygame
 import pytest
 
 from racing import app as viewer
-from racing import config, nets, paths, population
+from racing import config, neat, nets, paths, population
 
 
 @pytest.fixture
@@ -26,16 +26,28 @@ def window(monkeypatch, circle_track):
     pygame.quit()
 
 
-def ga_report(generation=0, n=30):
+def ga_report(generation=0, n=30, approach="ga", population_=None, **extra):
+    """A training report as the evolution engine sends it (revision 3 §9)."""
     rng = np.random.default_rng(generation)
     fitness = rng.random(n)
-    return {"approach": "ga", "generation": generation, "level": 1, "seeds": [0, 1, 2],
-            "weights": nets.init_population(rng, n), "hidden": [16], "activation": "relu",
-            "fitness": fitness, "finished": np.zeros(n, dtype=bool), "is_kept": np.zeros(n, dtype=bool),
-            "kept_finish": float("nan"), "new_finish": 0.0, "kept_pace": float("nan"), "new_pace": 0.0, "whole_pace": 0.0,
-            "step_size": 0.5, "best": float(fitness.max()),
-            "mean": float(fitness.mean()), "worst": float(fitness.min()), "evals": n, "elapsed": 1.0,
-            "leveled_up": False}
+    if population_ is None:
+        population_ = nets.DensePopulation(nets.init_population(rng, n))
+    shares = np.array([0.84, 0.92, 0.95])
+    report = {"approach": approach, "seed": 0, "generation": generation, "level": 1,
+              "factor": config.TARGET_FACTOR, "target_reduction": float("nan"), "streak": 1, "seeds": [0, 1, 2],
+              "population": population_, "fitness": fitness, "all_success": np.zeros(n, dtype=bool),
+              "is_kept": np.zeros(n, dtype=bool), "map_shares": shares, "min_share": float(shares.min()),
+              "kept_success": float("nan"), "child_success": 0.0, "median_lap": float("nan"), "step_size": 0.5,
+              "best": float(fitness.max()), "mean": float(fitness.mean()), "worst": float(fitness.min()),
+              "evals": n, "elapsed": 1.0, "event": None}
+    report.update(extra)
+    return report
+
+
+def neat_report(generation=0, n=20):
+    rng, innovations = np.random.default_rng(generation), neat.Innovations()
+    genomes = [neat.initial_genome(rng, innovations) for _ in range(n)]
+    return ga_report(generation, n, approach="neat", population_=neat.NeatPopulation(genomes), species=3)
 
 
 def test_select_indices_modes():
@@ -67,14 +79,29 @@ def test_training_playback_drives_all_laps(window):
 
 
 def test_training_stats_fit_the_panel(window):
-    report = ga_report()
-    report["whole_pace"] = 1.0
-    report["kept_pace"] = 1.0
-    report["new_pace"] = 1.0
-    window.receive(report)
+    window.receive(ga_report())
     window.update(1 / 60)
-    for line in viewer.stats_lines(report, report["approach"]):
-        assert window.small.size(line)[0] <= window.panel.width - 32, line
+    widest = dict(level=4, generation=123456, map_shares=np.ones(3), min_share=1.0, streak=3, target_reduction=0.185,
+                  step_size=0.0505, best=1.5843, mean=1.2329, species=20, is_kept=np.ones(1000, dtype=bool))
+    for approach in config.EVOLUTION_APPROACHES:
+        report = ga_report(approach=approach, **widest)
+        for line in viewer.stats_lines(report, approach):
+            assert window.small.size(line)[0] <= window.panel.width - 32, line
+    imitation = {"generation": 149, "best": 0.7046, "mean": 0.6123, "level": 4}
+    for approach in config.IMITATION_APPROACHES:
+        for line in viewer.stats_lines(imitation, approach):
+            assert window.small.size(line)[0] <= window.panel.width - 32, line
+
+
+def test_stats_lines_show_maps_streak_and_target():
+    lines = viewer.stats_lines(ga_report(level=4, generation=412, streak=1, target_reduction=0.143,
+                                         map_shares=np.array([0.84, 0.92, 0.95])), "ga")
+    assert lines[0] == "Extra hard    Generation 412"
+    assert lines[1] == "Maps succeeded: 84% 92% 95%  (need 90%)"
+    assert lines[2] == "Streak 1/3    Target cut mastered: −14.3%"
+    assert lines[3].startswith("Mutation strength: 0.5")
+    assert viewer.stats_lines(ga_report(), "es")[2].endswith("mastered: –")
+    assert viewer.stats_lines(neat_report(), "neat")[4].endswith("Species 3")
 
 
 def test_app_plays_a_report(window):
@@ -83,6 +110,23 @@ def test_app_plays_a_report(window):
         window.update(1 / 60)
         window.draw()
     assert window.playback is not None and window.playback_generation == 0
+
+
+def test_neat_report_plays_in_the_training_view(window):
+    window.approach = "neat"
+    window.receive(neat_report())
+    for _ in range(60):
+        window.update(1 / 60)
+        window.draw()
+    assert window.playback is not None and window.playback.cars.laps == config.LAPS
+
+
+def test_history_marks_level_ups_and_target_cuts(window):
+    for generation, event in enumerate((None, "level_up", None, "goal", "tightened", "end_speed")):
+        window.receive(ga_report(generation, event=event))
+    assert [h[3] for h in window.history] == [False, True, False, True, True, False]
+    assert [h[1] for h in window.history] == [0.84] * 6
+    window.draw()                                        # the success-share plot draws with markers
 
 
 def test_playback_advances_the_simulation(circle_track):
@@ -180,23 +224,28 @@ def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, t
     monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
     calls = {}
 
-    def fake_ga(**kwargs):
-        calls["ga"] = kwargs
-        kwargs["on_generation"](ga_report(0))
+    def fake(name):
+        def run(**kwargs):
+            calls[name] = dict(kwargs, existed=(kwargs["out_dir"] / "checkpoint.pkl").exists())
+            kwargs["on_generation"](ga_report(0))
+        return run
 
-    def fake_es(**kwargs):
-        calls["es"] = kwargs
-
-    monkeypatch.setattr(ga, "run_ga", fake_ga)
-    monkeypatch.setattr(es, "run_es", fake_es)
+    monkeypatch.setattr(ga, "run_ga", fake("ga"))
+    monkeypatch.setattr(es, "run_es", fake("es"))
+    monkeypatch.setattr(neat, "run_neat", fake("neat"))
+    stale = tmp_path / "ga" / "seed0" / "checkpoint.pkl"          # left by an earlier Play
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old")
     reports, running = queue.Queue(), threading.Event()
     running.set()
     viewer.trainer_main("ga", 30, 0, 1, reports, running)
     viewer.trainer_main("es", 12, 0, 1, reports, running)
-    assert calls["ga"]["champion_dir"] is None and calls["ga"]["pop_size"] == 30
-    assert calls["es"]["champion_dir"] is None and calls["es"]["pop_size"] == 12
-    assert calls["ga"]["out_dir"] == tmp_path / "ga" / "seed0" and calls["es"]["out_dir"] == tmp_path / "es" / "seed0"
-    assert reports.get_nowait()["generation"] == 0 and reports.empty()
+    viewer.trainer_main("neat", 100, 0, 1, reports, running)
+    for name, size in (("ga", 30), ("es", 12), ("neat", 100)):
+        assert calls[name]["champion_dir"] is None and calls[name]["pop_size"] == size
+        assert calls[name]["max_generations"] is None and calls[name]["out_dir"] == tmp_path / name / "seed0"
+    assert not calls["ga"]["existed"]                              # every Play starts a new run
+    assert [reports.get_nowait()["generation"] for _ in range(3)] == [0, 0, 0] and reports.empty()
 
 
 def test_pause_and_resume_toggle_the_running_event(window):
@@ -217,10 +266,14 @@ def test_pause_and_resume_toggle_the_running_event(window):
     assert window.running.is_set()
 
 
-def save_race_champions(directory, best=None):
+def save_race_champions(directory, best=None, approaches=(("es", 0), ("ga", 0), ("ga", 1))):
     rng = np.random.default_rng(0)
-    for approach, seed in (("es", 0), ("ga", 0), ("ga", 1)):
-        population.save_dense_champion(approach, seed, nets.DensePopulation(nets.init_population(rng, 1)), 0, directory)
+    for approach, seed in approaches:
+        if approach == "neat":
+            neat.save_neat_champion(approach, seed, neat.initial_genome(rng, neat.Innovations()), directory)
+        else:
+            population.save_dense_champion(approach, seed, nets.DensePopulation(nets.init_population(rng, 1)), 0,
+                                           directory)
     if best is not None:
         (directory / "best_seeds.json").write_text(json.dumps(best))
 
@@ -448,13 +501,28 @@ def test_trainer_main_trains_imitation_afresh_and_saves_no_final_controller(monk
     assert options[0]["out_dir"] == tmp_path / "app_runs" / "baseline" / "seed0"
 
 
+def test_viewer_imitation_training_never_resumes(monkeypatch, tmp_path):
+    from racing import imitation
+    fake_imitation(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(imitation, "train_baseline",
+                        lambda data, **kwargs: calls.append(("baseline", kwargs["resume"], kwargs.get("champion_dir"))))
+    monkeypatch.setattr(imitation, "run_tuner",
+                        lambda approach, data, **kwargs: calls.append((approach, kwargs["resume"], None)))
+    running = threading.Event()
+    running.set()
+    viewer.trainer_main("baseline", 0, 0, 1, queue.Queue(), running)
+    viewer.trainer_main("kt_random", 0, 0, 1, queue.Queue(), running)
+    assert calls == [("baseline", False, None), ("kt_random", False, None)]
+
+
 def test_trainer_main_passes_seed_level_and_seeded_start(monkeypatch, tmp_path):
     from racing import es, ga
     monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
     calls = {}
     monkeypatch.setattr(ga, "run_ga", lambda **kwargs: calls.setdefault("ga", kwargs))
     monkeypatch.setattr(es, "run_es", lambda **kwargs: calls.setdefault("es", kwargs))
-    monkeypatch.setattr(es, "trained_baseline", lambda seed: f"baseline seed {seed}")
+    monkeypatch.setattr(es, "dagger_baseline", lambda seed: f"baseline seed {seed}")
     reports, running = queue.Queue(), threading.Event()
     running.set()
     viewer.trainer_main("ga", 30, 2, 3, reports, running)
@@ -573,6 +641,29 @@ def test_race_panel_text_fits_the_panel(window, tmp_path, monkeypatch):
         assert x + font.size(string)[0] <= window.panel.right - 16, string
 
 
+def test_a_race_of_every_method_fits_the_panel(window, tmp_path, monkeypatch):
+    save_race_champions(tmp_path, approaches=[(approach, 0) for approach in config.APPROACHES])
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    window.update(1 / 60)
+    window.start_race()
+    window.update(1 / 60)
+    assert [approach for approach, _ in window.lineup] == list(config.APPROACHES)
+    drawn, text = [], window.text
+
+    def recording_text(string, x, y, font=None, color=viewer.INK):
+        drawn.append((string, y, font or window.font))
+        return text(string, x, y, font, color)
+
+    monkeypatch.setattr(window, "text", recording_text)
+    window.buttons = []
+    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
+    assert sum(string.startswith(f"{k}. ") for string, _, _ in drawn for k in range(1, 9)) == 8
+    for string, y, font in drawn:
+        assert y + font.get_linesize() <= window.panel.bottom - 30, string
+    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
+
+
 def test_settings_are_locked_while_training(window):
     class Alive:
         pid = 0
@@ -592,11 +683,45 @@ def test_settings_are_locked_while_training(window):
     assert window.population["ga"] == config.GA_POP
 
 
-def test_seeded_es_without_baseline_shows_a_message(window, tmp_path):
-    window.champions_dir = tmp_path
+def test_seeded_es_without_the_dagger_baseline_shows_a_message(window, tmp_path):
+    window.runs_dir = tmp_path
+    window.champions_dir = tmp_path                      # the old check never finds a controller: no real process
     window.select_approach("es_seeded")
     window.start_training()
-    assert window.process is None and "notebook 02" in window.status
+    assert window.process is None and "notebook 03" in window.status and len(window.status) <= 56
+
+
+def test_seeded_es_starts_with_the_dagger_baseline(window, tmp_path, monkeypatch):
+    created = {}
+
+    class FakeProcess:
+        def __init__(self, target, args, daemon):
+            created.update(args=args)
+            self.pid = 0
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+    class FakeContext:
+        Process = FakeProcess
+
+        def Queue(self):
+            return FakeQueue()
+
+        def Event(self):
+            return threading.Event()
+
+    monkeypatch.setattr(viewer.mp, "get_context", lambda method: FakeContext())
+    stage = paths.stage_path("baseline", config.RUN_SEEDS[0], "dagger", tmp_path)
+    stage.parent.mkdir(parents=True)
+    stage.write_bytes(b"")
+    window.runs_dir = tmp_path
+    window.select_approach("es_seeded")
+    window.start_training()
+    assert created["args"][:2] == ("es_seeded", config.ES_POP)
 
 
 def test_final_report_of_a_finished_trainer_is_shown(window):
@@ -730,14 +855,6 @@ def test_a_failed_background_build_is_reported_and_retried(monkeypatch, circle_t
         assert app.request_track(0, 1) is circle_track
     finally:
         pygame.quit()
-
-
-def test_a_report_with_a_population_plays_back(window):
-    report = ga_report()
-    report["population"] = nets.DensePopulation(report.pop("weights"))
-    window.receive(report)
-    window.update(1 / 60)
-    assert window.playback is not None and window.playback.cars.laps == config.LAPS
 
 
 def test_trainer_main_starts_each_viewer_run_afresh(monkeypatch, tmp_path):
