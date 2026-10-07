@@ -18,7 +18,8 @@ each direction, so that evolution can explore far-sighted or short-sighted cars 
 carry no cost: the only measures of a setup are the success rate and the lap times it produces.
 
 The revision also adds a grip selector to the visualization application, so that the same cars can be watched under
-normal grip and under a much higher grip.
+normal grip and under a much higher grip, and keeps training started in the application: it can be resumed, and its best
+car can race.
 
 ## 1. Objectives
 
@@ -116,6 +117,25 @@ stage files. The evaluation, the network figure and the application drive every 
 - **Rays.** When the sensor rays are shown, each car's rays are drawn to its own sensor length.
 - **Status.** The training panel shows the population's mean sensor length and steering sensitivity.
 
+### 6.1 Saved application training
+
+Training started in the application is kept, separately from the reported results.
+
+- **One saved run per method and seed.** Each application run lives in `results/app_runs/<method>/seed<k>/` and is
+  checkpointed after every generation, like a reported run. The reported results never read these folders, and
+  `--fresh` keeps them.
+- **Resume.** For the evolutionary methods (GA, ES, seeded ES, NEAT), **Play** continues the saved run of the selected
+  method and seed where it stopped, at its own level and target; the difficulty and population settings apply only when
+  a run starts. A **New run** button deletes that method and seed's saved run and starts afresh with the current
+  settings. If a saved run was recorded with different settings (for example after a code update), the panel says so and
+  **New run** is needed.
+- **Imitation methods in the application** (baseline and Keras Tuner) are not resumed: Play starts their training
+  afresh, as before.
+- **Raceable car.** After every generation (evolutionary methods) or at the end of training (imitation methods), the
+  run's current best car is saved with its setup in `results/app_runs/champions/<method>/seed<k>.*`, the same files as a
+  final controller. In the race view these cars appear in their own group, labelled for example **GA (app) s1**; each is
+  off by default and can be switched on to race next to the reported controllers.
+
 ## 7. Settings and Execution
 
 - The setup ranges, the initial-setup rule, the mutation probability and the mutation size are recorded settings, so a
@@ -135,7 +155,9 @@ stage files. The evaluation, the network figure and the application drive every 
   sizes tested statistically); values stay within range; checkpoints restore setups exactly; results do not depend on the
   worker count.
 - **Saved controllers.** `<seed>.setup.json` round trip; a missing file means the revision 3 setup.
-- **Evaluation and application.** Setup columns and figure; grip selector applied to display simulations only.
+- **Evaluation and application.** Setup columns and figure; grip selector applied to display simulations only;
+  an application run resumes after Stop and Play, New run starts afresh, a settings mismatch is reported, and the saved
+  best car appears in the race view's application group (switched off by default).
 - **Regression.** A simulation in which every car has L = 50 m and k = 1 produces exactly the revision 3 inputs,
   controls, trajectories and results.
 
@@ -174,5 +196,5 @@ stage files. The evaluation, the network figure and the application drive every 
 | `racing/ga.py`, `racing/es.py`, `racing/neat.py` | Setup inheritance and mutation in each method |
 | `racing/dagger.py` | Speed push starts at the revision 3 setup |
 | `racing/evaluate.py`, `racing/netfig.py`, `racing/netwindow.py` | Setup columns, setup figure, titles |
-| `racing/app.py` | Grip selector, per-car rays, setup in the training panel |
+| `racing/app.py` | Grip selector, per-car rays, setup in the training panel; saved application runs (resume, New run, raceable app cars) |
 | `scripts/pilots.py`, `README.md`, `docs/2026-10-05-ec-racing-design.md` | Pilots, viewer notes, design specification 3.1 |
