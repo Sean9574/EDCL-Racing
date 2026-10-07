@@ -79,6 +79,9 @@ NOTEBOOKS = {
 }
 
 
+OBSOLETE = ("05_evaluate.ipynb",)      # the evaluation notebook before specification 2.0; other files are kept
+
+
 def cell(kind, source, index):
     lines = source.splitlines(keepends=True)
     if kind == "markdown":
@@ -89,9 +92,8 @@ def cell(kind, source, index):
 
 def main():
     FOLDER.mkdir(exist_ok=True)
-    for stale in FOLDER.glob("*.ipynb"):
-        if stale.name not in NOTEBOOKS:
-            stale.unlink()
+    for name in OBSOLETE:
+        (FOLDER / name).unlink(missing_ok=True)
     for name, cells in NOTEBOOKS.items():
         notebook = {"cells": [cell(kind, source, k) for k, (kind, source) in enumerate(cells)],
                     "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},

@@ -2,8 +2,9 @@
 
 Run with:      ~/miniconda3/bin/python scripts/run_notebooks.py
 Resume:        ~/miniconda3/bin/python scripts/run_notebooks.py --from 03
-In background: nohup ~/miniconda3/bin/python scripts/run_notebooks.py > /dev/null 2>&1 &
-Progress:      tail -f results/run_log.txt
+In background: mkdir -p results
+               nohup ~/miniconda3/bin/python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
+Progress:      tail -f results/run_log.txt (each evolutionary run: results/runs/<method>/seed<k>/log.csv)
 """
 import argparse
 import json
@@ -23,6 +24,8 @@ from racing import config  # noqa: E402
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
+SETTINGS = ("N_JOBS", "STEPS_PER_EXECUTION", "JIT_COMPILE", "GA_S_MAX", "GA_S_MIN", "PACE_FACTOR",
+            "LEVEL_UP_NEW_FRACTION", "MAX_EPOCHS", "RUN_SEEDS", "EVAL_BUDGET")
 
 
 def now():
@@ -65,6 +68,28 @@ def versions():
     return found
 
 
+def settings():
+    """The configuration values that shape the reported run."""
+    return {name: getattr(config, name) for name in SETTINGS}
+
+
+def git(*args):
+    """Output of a git command in the project, or None without git or outside a repository."""
+    try:
+        result = subprocess.run(["git", *args], cwd=PROJECT, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def code_version():
+    """The commit the run starts from, and whether tracked files differ from it ("unknown" without git)."""
+    commit = git("rev-parse", "HEAD")
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {"git_commit": commit.strip() if commit else "unknown",
+            "git_dirty": bool(status.strip()) if status is not None else "unknown"}
+
+
 def notebook_names(folder, start=None):
     """Experiment notebooks (named NN_*.ipynb) in order, from notebook `start` on."""
     names = sorted(p.name for p in Path(folder).glob("[0-9][0-9]_*.ipynb"))
@@ -86,6 +111,8 @@ def execute(path, kernel_dir):
         client.execute()
     finally:
         nbformat.write(notebook, path)
+        if manager.is_alive():
+            manager.shutdown_kernel(now=True)          # a finished notebook's kernel does not stay resident
 
 
 def write_info(info, path):
@@ -102,7 +129,8 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     if start is not None and Path(info_path).exists():
         info = json.loads(Path(info_path).read_text())
     info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
-                 "power_profile": power_profile(), "versions": versions()})
+                 "power_profile": power_profile(), "versions": versions(), "settings": settings(),
+                 **code_version()})
     info.setdefault("notebooks", [])
     info.setdefault("runs", []).append({"started": now(), "from": start})
     names = notebook_names(notebook_dir, start)
@@ -131,11 +159,17 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     return 0
 
 
-def main(argv=None):
+def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH):
     parser = argparse.ArgumentParser(description="Run the EC Racing experiment notebooks in order.")
     parser.add_argument("--from", dest="start", help="number of the first notebook to run, for example 03")
     args = parser.parse_args(argv)
-    return run(start=args.start)
+    if args.start is not None:
+        prefixes = sorted({name[:2] for name in notebook_names(notebook_dir)})
+        if args.start not in prefixes:
+            print(f"error: --from must be the number of an existing notebook: {', '.join(prefixes)}",
+                  file=sys.stderr)
+            return 2
+    return run(notebook_dir, args.start, log_path, info_path)
 
 
 if __name__ == "__main__":

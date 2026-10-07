@@ -27,6 +27,73 @@ def test_notebook_order_and_start(runner, tmp_path):
     assert runner.notebook_names(tmp_path, "02") == ["02_b.ipynb", "10_c.ipynb"]
 
 
+def three_notebooks(tmp_path):
+    folder = tmp_path / "notebooks"
+    folder.mkdir()
+    for name in ("01_a.ipynb", "02_b.ipynb", "03_c.ipynb"):
+        write_notebook(folder / name, "1")
+    return folder
+
+
+def run_main(runner, tmp_path, argv):
+    return runner.main(argv, notebook_dir=tmp_path / "notebooks", log_path=tmp_path / "log.txt",
+                       info_path=tmp_path / "info.json")
+
+
+@pytest.mark.parametrize("start", ["3", "07", "03_c", "03_c.ipynb"])
+def test_from_must_name_an_existing_notebook(runner, tmp_path, monkeypatch, capsys, start):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    assert run_main(runner, tmp_path, ["--from", start]) == 2
+    assert "01, 02, 03" in capsys.readouterr().err
+    assert not (tmp_path / "info.json").exists() and not (tmp_path / "log.txt").exists()
+
+
+def test_from_an_existing_notebook_runs_it_and_the_later_ones(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    executed = []
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: executed.append(path.name))
+    assert run_main(runner, tmp_path, ["--from", "02"]) == 0
+    assert executed == ["02_b.ipynb", "03_c.ipynb"]
+    info = json.loads((tmp_path / "info.json").read_text())
+    assert [e["notebook"] for e in info["notebooks"]] == ["02_b.ipynb", "03_c.ipynb"]
+    assert info["runs"][-1]["from"] == "02"
+
+
+def test_run_record_holds_the_settings_and_code_version(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    assert run_main(runner, tmp_path, []) == 0
+    info = json.loads((tmp_path / "info.json").read_text())
+    assert list(info["settings"]) == ["N_JOBS", "STEPS_PER_EXECUTION", "JIT_COMPILE", "GA_S_MAX", "GA_S_MIN",
+                                      "PACE_FACTOR", "LEVEL_UP_NEW_FRACTION", "MAX_EPOCHS", "RUN_SEEDS",
+                                      "EVAL_BUDGET"]
+    assert info["settings"]["RUN_SEEDS"] == list(runner.config.RUN_SEEDS)
+    assert info["settings"]["N_JOBS"] == runner.config.N_JOBS
+    assert len(info["git_commit"]) == 40 and int(info["git_commit"], 16) >= 0
+    assert isinstance(info["git_dirty"], bool)
+
+
+def test_code_version_without_git_is_unknown(runner, monkeypatch):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(runner.subprocess, "run", missing)
+    assert runner.code_version() == {"git_commit": "unknown", "git_dirty": "unknown"}
+
+
+def test_make_notebooks_removes_only_the_obsolete_notebook(tmp_path, monkeypatch):
+    path = SCRIPT.parent / "make_notebooks.py"
+    spec = importlib.util.spec_from_file_location("make_notebooks", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "FOLDER", tmp_path)
+    for name in ("05_evaluate.ipynb", "07_extra.ipynb", "notes.ipynb"):
+        write_notebook(tmp_path / name, "1")
+    module.main()
+    assert sorted(p.name for p in tmp_path.glob("*.ipynb")) == sorted([*module.NOTEBOOKS, "07_extra.ipynb",
+                                                                       "notes.ipynb"])
+
+
 @pytest.mark.slow
 def test_runs_notebooks_in_order_and_records_the_run(runner, tmp_path):
     folder = tmp_path / "notebooks"
@@ -53,6 +120,16 @@ def test_resume_keeps_earlier_record_entries(runner, tmp_path):
     runner.run(folder, start="02", log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json")
     info = json.loads((tmp_path / "info.json").read_text())
     assert [e["notebook"] for e in info["notebooks"]] == ["01_a.ipynb", "02_b.ipynb"]
+
+
+@pytest.mark.slow
+def test_each_notebook_kernel_is_shut_down(runner, tmp_path):
+    folder = tmp_path / "notebooks"
+    folder.mkdir()
+    write_notebook(folder / "01_a.ipynb", "import os\nprint(os.getpid())")
+    assert runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json") == 0
+    pid = int(nbformat.read(folder / "01_a.ipynb", as_version=4).cells[0].outputs[0]["text"])
+    assert not Path(f"/proc/{pid}").exists()
 
 
 @pytest.mark.slow
