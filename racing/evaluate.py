@@ -29,7 +29,7 @@ def _drive_track(drivers, track_seed, level):
 
 
 def driving_results(drivers, track_seeds, level=config.MAX_LEVEL, n_jobs=1, backend="loky"):
-    """One lap per controller per track. drivers: {(approach, run seed or trial id): DenseNet}. The tracks are
+    """config.LAPS laps per controller per track. drivers: {(approach, run seed or trial id): DenseNet}. The tracks are
     distributed across worker processes; the result does not depend on n_jobs."""
     track_seeds = list(track_seeds)
     if not drivers:
@@ -150,7 +150,7 @@ def comparison_table(metrics):
 
 def driving_table(per_track, metrics):
     """Spec Table 5, driving performance: per seed, then mean ± std across seeds. A seed that completed no track
-    has no lap time; the lap-time cell then states how many seeds it covers."""
+    has no lap time; the lap-time cell then states how many seeds it covers. Lap time is race time divided by config.LAPS."""
     rows = []
     n_tracks = per_track["track"].nunique()
     for approach in config.APPROACHES:

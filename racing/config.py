@@ -9,7 +9,7 @@ GRIP = 12.0                  # m/s², friction-circle limit μg; the only vehicl
 YAW_MIN_SPEED = 1.0          # m/s, speed floor used only in the yaw-rate formula
 SPEED_SCALE = 40.0           # m/s, input normalization only; not a speed limit
 STALL_TIME = 5.0             # s without progress ends a run
-TIME_LIMIT_FACTOR = 2.0      # lap time limit = factor × expert lap time
+TIME_LIMIT_FACTOR = 2.0      # time limit per lap = factor × expert lap time
 LAPS = 3                     # laps per run in training and evaluation (spec §5.4)
 TIME_EPS = 1e-9              # tolerance for comparisons of accumulated simulation time
 
@@ -66,7 +66,7 @@ SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 TRACKS_PER_GEN = 3
 LEVEL_UP_FRACTION = 0.5     # share of the whole generation that must finish at pace to count toward a level-up
 LEVEL_UP_STREAK = 3
-PACE_FACTOR = 1.3            # finishing at pace: lap time ≤ PACE_FACTOR × expert lap time; confirmed by pilots
+PACE_FACTOR = 1.3            # at pace: time for the LAPS laps ≤ PACE_FACTOR × LAPS × expert lap time
 
 # --- Genetic algorithm (spec §9.2) ---
 GA_POP = 1000
@@ -122,7 +122,7 @@ PLAYBACK_BASE = 2.0          # simulated seconds per real second at 1× playback
 MAX_STEPS_PER_FRAME = 10     # simulation steps per drawn frame; a stalled frame cannot trigger a burst
 DEFAULT_SHOWN = 100
 KT_VIEW_SEED = 80
-RACE_LAPS = 3
+RACE_LAPS = LAPS
 DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
 
 # --- Paths ---

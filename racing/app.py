@@ -210,6 +210,19 @@ def number(value):
     return "–" if np.isnan(value) else f"{value:.4g}"
 
 
+def stats_lines(report, approach):
+    """Training panel stats lines from a report."""
+    nan = float("nan")
+    unit = "Trial" if approach.startswith("kt") else ("Epoch" if approach == "baseline" else "Generation")
+    size_name = "Mutation strength" if approach == "ga" else "σ"
+    return (f"Level {report['level']}    {unit} {report['generation']}",
+            f"Finished: kept {percent(report['kept_finish'])}   new {percent(report['new_finish'])}",
+            f"At pace: all {percent(report.get('whole_pace', nan))}  kept {percent(report.get('kept_pace', nan))}  "
+            f"new {percent(report.get('new_pace', nan))}",
+            f"{size_name}: {number(report['step_size'])}",
+            f"Best {report['best']:.3f}    Mean {report['mean']:.3f}")
+
+
 class App:
     """The viewer window: training view and race view."""
 
@@ -417,7 +430,7 @@ class App:
         fitness = np.asarray(report["fitness"], dtype=float)
         self.indices = select_indices(fitness, self.show, self.shown, sample_seed=report["generation"])
         self.playback = Playback(track, report_policy(report, self.indices), len(self.indices),
-                             laps=config.LAPS)
+                                 laps=config.LAPS)
         self.best_slot = int(np.argmax(fitness[self.indices]))
         self.playback_generation = report["generation"]
         self.step_budget = 0.0
@@ -762,15 +775,7 @@ class App:
         r = self.latest
         if r is None:
             return self.text("No generation completed yet.", x, y, self.small, MUTED)
-        nan = float("nan")
-        unit = "Trial" if r["approach"].startswith("kt") else ("Epoch" if r["approach"] == "baseline" else "Generation")
-        size_name = "Mutation strength" if r["approach"] == "ga" else "σ"
-        for line in (f"Level {r['level']}    {unit} {r['generation']}",
-                     f"Finished: kept {percent(r['kept_finish'])}   new {percent(r['new_finish'])}",
-                     f"At pace: all {percent(r.get('whole_pace', nan))}  kept {percent(r.get('kept_pace', nan))}  "
-                     f"new {percent(r.get('new_pace', nan))}",
-                     f"{size_name}: {number(r['step_size'])}",
-                     f"Best {r['best']:.3f}    Mean {r['mean']:.3f}"):
+        for line in stats_lines(r, r["approach"]):
             y = self.text(line, x, y, self.small)
         return y
 

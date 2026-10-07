@@ -66,6 +66,17 @@ def test_training_playback_drives_all_laps(window):
     assert window.playback.cars.laps == config.LAPS
 
 
+def test_training_stats_fit_the_panel(window):
+    report = ga_report()
+    report["whole_pace"] = 1.0
+    report["kept_pace"] = 1.0
+    report["new_pace"] = 1.0
+    window.receive(report)
+    window.update(1 / 60)
+    for line in viewer.stats_lines(report, report["approach"]):
+        assert window.small.size(line)[0] <= window.panel.width - 32, line
+
+
 def test_app_plays_a_report(window):
     window.receive(ga_report())
     for _ in range(120):
