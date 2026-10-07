@@ -3,7 +3,7 @@ Gaussian noise of size σ, with the two-phase step-size rule. Started from a tra
 (revision 3 §5.3) or the speed push of an imitation method (revision 3 §6.4)."""
 import numpy as np
 
-from racing import config, evolution, nets, paths, population
+from racing import config, evolution, nets, paths
 from racing.curriculum import StepSize, success_fraction
 from racing.nets import DensePopulation
 
@@ -14,24 +14,18 @@ def seeded_population(rng, flat, n, sigma):
     return np.vstack([flat, flat + rng.normal(0.0, sigma, (n - 1, len(flat)))])
 
 
-class ES:
+class ES(evolution.DenseMethod):
     """The ES as a method of the evolution loop (racing/evolution.py). Every car has an id; a child records its
     parent's id, so the 1/5 rule compares each child with its own parent."""
 
     def __init__(self, approach="es", pop_size=config.ES_POP, parents=config.ES_MU, hidden=config.BASELINE_HIDDEN,
                  activation="relu", initial=None, sigma0=config.ES_SIGMA0):
-        if pop_size < 2:
-            raise ValueError(f"population size ({pop_size}) must be at least 2")
+        super().__init__(pop_size, hidden, activation)
         self.approach = approach
-        self.pop_size = pop_size
         self.parents = parents
-        self.hidden = tuple(hidden)
-        self.activation = activation
         self.initial = None if initial is None else np.asarray(initial, dtype=float)
         self.sigma0 = sigma0
         self.step = StepSize(sigma0)
-        self.population = None
-        self.is_kept = None
         self.ids = None
         self.parent_ids = None
         self.next_id = 0
@@ -67,19 +61,17 @@ class ES:
         weights = self.population.weights
         n, p = weights.shape
         top = np.argsort(-result.fitness, kind="stable")[:min(self.parents, n)]
-        children_before = ~self.is_kept
-        child_success = float(result.all_success[children_before].mean()) if children_before.any() else float("nan")
+        child_success = evolution.children_success(result, self.is_kept)
         self.step.update(float(result.all_success[top].mean()), child_success, self.success_rate(result.fitness))
         if event == "level_up":
             self.step.reset()                           # restart the step size on the harder maps
         n_new = n - len(kept)
         chosen = top[rng.integers(0, len(top), n_new)]
         children = weights[chosen] + rng.normal(0.0, self.step.sigma, (n_new, p))
-        self.population = DensePopulation(np.concatenate([weights[kept], children]), self.hidden, self.activation)
+        self.assemble(weights[kept], children)
         self.parent_ids = np.concatenate([self.parent_ids[kept], self.ids[chosen]])
         self.ids = np.concatenate([self.ids[kept], np.arange(self.next_id, self.next_id + n_new)])
         self.next_id += n_new
-        self.is_kept = np.arange(n) < len(kept)
 
     def state(self):
         return {"weights": self.population.weights, "is_kept": self.is_kept, "ids": self.ids,
@@ -92,12 +84,6 @@ class ES:
         self.is_kept, self.ids, self.parent_ids = state["is_kept"], state["ids"], state["parent_ids"]
         self.next_id = state["next_id"]
         self.step = StepSize.from_state(state["step"])
-
-    def save_champion(self, index, seed, champion_dir):
-        return population.save_dense_champion(self.approach, seed, self.population, index, champion_dir)
-
-    def log_fields(self):
-        return {}
 
 
 def trained_baseline(seed, champion_dir=config.CHAMPIONS_DIR):

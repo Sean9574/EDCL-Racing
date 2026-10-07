@@ -2,7 +2,7 @@
 Gaussian mutation whose strength follows the share of the previous generation's children that succeeded."""
 import numpy as np
 
-from racing import config, evolution, nets, paths, population
+from racing import config, evolution, nets, paths
 from racing.curriculum import mutation_strength
 from racing.nets import DensePopulation
 
@@ -13,19 +13,13 @@ def tournament(rng, fitness, count, size=config.GA_TOURNAMENT):
     return entrants[np.arange(count), np.argmax(fitness[entrants], axis=1)]
 
 
-class GA:
+class GA(evolution.DenseMethod):
     """The GA as a method of the evolution loop (racing/evolution.py)."""
     approach = "ga"
 
     def __init__(self, pop_size=config.GA_POP, hidden=config.BASELINE_HIDDEN, activation="relu", s_max=config.GA_S_MAX):
-        if pop_size < 2:
-            raise ValueError(f"population size ({pop_size}) must be at least 2")
-        self.pop_size = pop_size
-        self.hidden = tuple(hidden)
-        self.activation = activation
+        super().__init__(pop_size, hidden, activation)
         self.s_max = s_max
-        self.population = None
-        self.is_kept = None
         self.step_size = float("nan")
 
     def initialize(self, rng):
@@ -38,17 +32,15 @@ class GA:
         """Survivors first and unchanged, then children by tournament, uniform crossover and Gaussian mutation."""
         weights = self.population.weights
         n, p = weights.shape
-        children_before = ~self.is_kept
-        child_success = float(result.all_success[children_before].mean()) if children_before.any() else float("nan")
-        self.step_size = mutation_strength(child_success, self.s_max, self.s_max / 100)
+        child_success = evolution.children_success(result, self.is_kept)
+        self.step_size = mutation_strength(child_success, self.s_max, self.s_max * config.GA_S_MIN / config.GA_S_MAX)
         n_new = n - len(kept)
         mother = weights[tournament(rng, result.fitness, n_new)]
         father = weights[tournament(rng, result.fitness, n_new)]
         children = np.where(rng.random((n_new, p)) < config.GA_CROSSOVER_P, mother, father)
         mutate = rng.random((n_new, p)) < config.GA_MUTATION_P
         children = children + mutate * rng.normal(0.0, self.step_size, (n_new, p))
-        self.population = DensePopulation(np.concatenate([weights[kept], children]), self.hidden, self.activation)
-        self.is_kept = np.arange(n) < len(kept)
+        self.assemble(weights[kept], children)
 
     def state(self):
         return {"weights": self.population.weights, "is_kept": self.is_kept, "step_size": self.step_size,
@@ -59,12 +51,6 @@ class GA:
         self.population = DensePopulation(state["weights"], self.hidden, self.activation)
         self.is_kept = state["is_kept"]
         self.step_size = state["step_size"]
-
-    def save_champion(self, index, seed, champion_dir):
-        return population.save_dense_champion(self.approach, seed, self.population, index, champion_dir)
-
-    def log_fields(self):
-        return {}
 
 
 def run_ga(seed=0, pop_size=config.GA_POP, out_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1,

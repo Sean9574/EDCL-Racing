@@ -13,6 +13,7 @@ import numpy as np
 
 from racing import checkpoint, config, population, progress
 from racing.curriculum import MasteryTracker, SeedSource, survivors
+from racing.nets import DensePopulation
 
 LOG_NAME = "log.csv"
 SUMMARY_NAME = "summary.json"
@@ -39,6 +40,38 @@ class Method(Protocol):
 def share(mask):
     """Fraction of True values; nan for an empty selection."""
     return float(np.mean(mask)) if len(mask) else float("nan")
+
+
+def children_success(result, is_kept):
+    """Share of this generation's new children (the cars not carried over) that succeeded on every map; nan if
+    there are none."""
+    return share(result.all_success[~is_kept])
+
+
+class DenseMethod:
+    """What GA and ES share: a dense population of at least two cars, survivors first and unchanged, saving the
+    final controller through population.save_dense_champion."""
+    approach = None
+
+    def __init__(self, pop_size, hidden, activation):
+        if pop_size < 2:
+            raise ValueError(f"population size ({pop_size}) must be at least 2")
+        self.pop_size = pop_size
+        self.hidden = tuple(hidden)
+        self.activation = activation
+        self.population = None
+        self.is_kept = None
+
+    def assemble(self, kept_weights, children):
+        """The next population: the kept cars first, then the children; marks the kept cars."""
+        self.population = DensePopulation(np.concatenate([kept_weights, children]), self.hidden, self.activation)
+        self.is_kept = np.arange(len(self.population)) < len(kept_weights)
+
+    def save_champion(self, index, seed, champion_dir):
+        return population.save_dense_champion(self.approach, seed, self.population, index, champion_dir)
+
+    def log_fields(self):
+        return {}
 
 
 def median_lap(result):
@@ -184,7 +217,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                   "all_success": result.all_success, "is_kept": method.is_kept, "map_shares": result.map_shares,
                   "min_share": result.min_share, "n_kept": len(kept),
                   "kept_success": share(result.all_success[method.is_kept]),
-                  "child_success": share(result.all_success[~method.is_kept]), "median_lap": median_lap(result),
+                  "child_success": children_success(result, method.is_kept), "median_lap": median_lap(result),
                   "step_size": float(method.step_size), "best": float(result.fitness.max()),
                   "mean": float(result.fitness.mean()), "worst": float(result.fitness.min()), "evals": evals,
                   "elapsed": now, "event": event, **method.log_fields()}

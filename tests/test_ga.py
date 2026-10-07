@@ -109,3 +109,10 @@ def test_run_ga_returns_a_completed_run(monkeypatch, tmp_path):
     again = ga.run_ga(pop_size=20, max_generations=1, out_dir=tmp_path, champion_dir=None,
                       on_generation=lambda report: pytest.fail("trained again"))
     assert again["generations"] == first["generations"] == 1
+
+
+def test_strength_floor_follows_the_configured_ratio(monkeypatch):
+    monkeypatch.setattr(config, "GA_S_MIN", config.GA_S_MAX / 10)
+    method = started(pop_size=20, s_max=0.2)
+    method.advance(np.random.default_rng(4), result(np.arange(20.0), np.ones(20, dtype=bool)), np.arange(10), None)
+    assert math.isclose(method.step_size, 0.02)               # every child succeeded: the floor, s_max / 10
