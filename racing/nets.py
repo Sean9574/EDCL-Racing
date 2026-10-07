@@ -1,5 +1,6 @@
 """Controller networks (spec §6): flat weight vectors for populations, a batched numpy forward pass,
 and conversion to and from Keras models."""
+import re
 from pathlib import Path
 
 import numpy as np
@@ -149,13 +150,17 @@ def mixed_policy(drivers):
 
 def champion_seeds(directory=None):
     """{approach: [run seeds]} of the final controllers saved as <directory>/<approach>/seed<k>.keras, in the
-    order of config.APPROACHES. Approaches without controllers are left out."""
+    order of config.APPROACHES. Approaches without controllers are left out; other file names are ignored."""
     directory = Path(config.CHAMPIONS_DIR if directory is None else directory)
     found = {}
     for approach in config.APPROACHES:
-        seeds = sorted(int(p.stem[len("seed"):]) for p in (directory / approach).glob("seed*.keras"))
+        seeds = []
+        for path in (directory / approach).glob("seed*.keras"):
+            match = re.fullmatch(r"seed(\d+)\.keras", path.name)
+            if match:
+                seeds.append(int(match.group(1)))
         if seeds:
-            found[approach] = seeds
+            found[approach] = sorted(seeds)
     return found
 
 

@@ -85,6 +85,13 @@ def test_champion_seeds_in_standard_order(tmp_path):
     assert nets.champion_seeds(tmp_path / "missing") == {}
 
 
+def test_champion_seeds_ignores_other_file_names(tmp_path):
+    (tmp_path / "ga").mkdir()
+    for name in ("seed1.keras", "seed0_backup.keras", "seed.keras", "seed2.keras.tmp", "seedx.keras"):
+        (tmp_path / "ga" / name).write_bytes(b"")
+    assert nets.champion_seeds(tmp_path) == {"ga": [1]}
+
+
 def test_load_champion_drives_with_float64_weights(tmp_path):
     flat = nets.init_population(np.random.default_rng(5), 1)[0]
     population.save_champion("es", 0, flat, tmp_path)

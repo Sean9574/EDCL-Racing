@@ -169,7 +169,7 @@ def trial_records(tuner, max_epochs):
         while "tuner/trial_id" in trials[config_id].hyperparameters.values:
             config_id = trials[config_id].hyperparameters.values["tuner/trial_id"]
         searched = {k: v for k, v in values.items() if not k.startswith("tuner/")}
-        epochs = int(tuner.trained_epochs.get(trial.trial_id, 0))
+        epochs = int(tuner.trained_epochs[trial.trial_id])
         last_epoch = int(values.get("tuner/initial_epoch", 0)) + epochs
         records.append({"trial_id": trial.trial_id, "config_id": config_id, "val_accuracy": float(trial.score),
                         "params": nets.n_params(tuple(architecture(searched))), "epochs": epochs,
