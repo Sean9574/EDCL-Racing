@@ -129,9 +129,20 @@ def format_status(status):
     return " · ".join(parts)
 
 
+def stale_note(status, now=None):
+    """' (no update for N min)' when the status was written more than config.STATUS_STALE_AFTER seconds ago, as a
+    run that stopped without finishing leaves it; '' otherwise or when the time it was written is unknown."""
+    try:
+        age = ((now or datetime.now()) - datetime.fromisoformat(status["updated"])).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return f" (no update for {int(age // 60)} min)" if age > config.STATUS_STALE_AFTER else ""
+
+
 class Monitor:
     """Shows the run log's new lines and the status line (revision 3 §8.3). In a terminal the status line is
-    updated in place; otherwise, as under nohup, it is printed as a whole line at most once per `period` seconds."""
+    updated in place; otherwise, as under nohup, it is printed as a whole line at most once per `period` seconds. A
+    status that has not been updated for config.STATUS_STALE_AFTER seconds says so."""
 
     def __init__(self, status_path=None, log_path=None, out=None, interval=1.0, live=None, period=60.0):
         self.status_path = status_path
@@ -169,7 +180,7 @@ class Monitor:
         with self.lock:
             lines = self.new_log_lines()
             status = read_status(self.status_path)
-            text = WAITING if status is None else format_status(status)
+            text = WAITING if status is None else format_status(status) + stale_note(status)
             if self.live:
                 if lines and self.shown:
                     self.out.write("\r" + " " * self.shown + "\r")

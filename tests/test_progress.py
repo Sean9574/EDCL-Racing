@@ -1,6 +1,8 @@
 import io
+import json
 import math
 import time
+from datetime import datetime, timedelta
 
 import numpy as np
 import pytest
@@ -196,3 +198,28 @@ def test_main_shows_recent_milestones_then_the_status_until_interrupted(tmp_path
     printed = capsys.readouterr().out
     assert "line 4\n" not in printed and "line 5\n" in printed and "line 14\n" in printed
     assert progress.format_status(status()) in printed
+
+
+def written_ago(tmp_path, minutes):
+    """A status file last written `minutes` ago, as a run that stopped leaves it."""
+    written = status(updated=(datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds"))
+    (tmp_path / "status.json").write_text(json.dumps(written))
+    return written
+
+
+@pytest.mark.parametrize("live", [True, False])
+def test_a_status_without_updates_for_a_while_says_so(tmp_path, order, live):
+    """A run that died leaves its last status behind; the monitor must not show it as running."""
+    written = written_ago(tmp_path, 25)
+    monitor, out = make_monitor(tmp_path, live=live, period=0.0)
+    monitor.poll()
+    assert progress.format_status(written) + " (no update for 25 min)" in out.getvalue()
+
+
+def test_a_recent_status_has_no_note(tmp_path, order):
+    written = written_ago(tmp_path, config.STATUS_STALE_AFTER / 60 - 2)
+    monitor, out = make_monitor(tmp_path, live=False, period=0.0)
+    monitor.poll()
+    assert out.getvalue() == progress.format_status(written) + "\n"
+    assert progress.stale_note({}) == progress.stale_note({"updated": "not a time"}) == ""
+

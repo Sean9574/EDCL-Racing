@@ -192,3 +192,4 @@ PILOTS_DIR = RESULTS_DIR / "pilots"
 RUN_INFO_PATH = RESULTS_DIR / "run_info.json"
 RUN_LOG_PATH = RESULTS_DIR / "run_log.txt"
 STATUS_PATH = RESULTS_DIR / "status.json"
+STATUS_STALE_AFTER = 600.0   # s; the monitor marks an older status as not updated, as a stopped run leaves it

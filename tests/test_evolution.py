@@ -342,8 +342,10 @@ def test_a_methods_extra_fields_are_log_columns_also_after_resuming(evaluation, 
 
 @pytest.mark.slow
 def test_results_do_not_depend_on_the_number_of_workers(tmp_path):
-    for jobs in (1, 2):
+    workers = 6                                         # splits each map's cars into two tasks
+    assert len(population.split_tasks(12, range(config.TRACKS_PER_GEN), workers)) == 2 * config.TRACKS_PER_GEN
+    for jobs in (1, workers):
         evolution.run(ga.GA(pop_size=12), 0, tmp_path / f"jobs{jobs}", champion_dir=None, n_jobs=jobs,
                       max_generations=2)
     pd.testing.assert_frame_equal(comparable(tmp_path / "jobs1" / "log.csv"),
-                                  comparable(tmp_path / "jobs2" / "log.csv"))
+                                  comparable(tmp_path / f"jobs{workers}" / "log.csv"))
