@@ -97,12 +97,14 @@ def save(path, state):
 
 def write_json(path, data):
     """Write `data` as JSON through a temporary file in the same folder that is synced to disk before it replaces
-    `path`, so neither an interruption nor a reboot leaves a partial or empty record (revision 3 §8.2)."""
+    `path`, so neither an interruption nor a reboot leaves a partial or empty record (revision 3 §8.2). Everything
+    written before the record, such as the final controller or stage file it vouches for, reaches the disk first."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         text = json.dumps(data, indent=2)
+        os.sync()                                      # a record never reaches the disk before what it describes
         with open(temporary, "w") as f:
             f.write(text)
             f.flush()

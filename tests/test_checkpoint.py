@@ -117,15 +117,17 @@ def test_checkpoints_are_plain_pickles(tmp_path):
 
 
 def test_write_json_syncs_the_temporary_file_before_replacing(tmp_path, monkeypatch):
-    """A record is on disk before it replaces the old one, so a reboot cannot leave it empty (revision 3 §8.2)."""
-    calls, real_fsync, real_replace = [], checkpoint.os.fsync, checkpoint.os.replace
+    """A record is on disk before it replaces the old one, so a reboot cannot leave it empty, and so is everything
+    written before it, such as the final controller the record vouches for (revision 3 §8.2)."""
+    calls, real_sync, real_fsync, real_replace = [], checkpoint.os.sync, checkpoint.os.fsync, checkpoint.os.replace
+    monkeypatch.setattr(checkpoint.os, "sync", lambda: calls.append("sync") or real_sync())
     monkeypatch.setattr(checkpoint.os, "fsync", lambda fd: calls.append("fsync") or real_fsync(fd))
     monkeypatch.setattr(checkpoint.os, "replace", lambda a, b: calls.append(("replace", Path(a).parent, Path(b)))
                         or real_replace(a, b))
     path = tmp_path / "run" / "summary.json"
     checkpoint.write_json(path, {"generations": 3, "levels": [{"level": 1}]})
     assert json.loads(path.read_text()) == {"generations": 3, "levels": [{"level": 1}]}
-    assert calls == ["fsync", ("replace", path.parent, path)]       # synced first; the temporary is a sibling
+    assert calls == ["sync", "fsync", ("replace", path.parent, path)]   # the temporary is a sibling
     assert [p.name for p in path.parent.iterdir()] == ["summary.json"]
 
 
