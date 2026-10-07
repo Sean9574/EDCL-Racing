@@ -3,7 +3,6 @@ and makes the children (racing/ga.py, racing/es.py, racing/neat.py); this loop d
 applies the survival rule, follows the mastery levels and the speed push, logs every generation, saves a checkpoint
 after each one, reports progress and selects the final controller."""
 import csv
-import json
 import os
 import time
 from pathlib import Path
@@ -109,28 +108,33 @@ def append_log(path, report, fields=LOG_FIELDS):
         row.append(value)
     with open(path, "a", newline="") as f:
         csv.writer(f).writerow(row)
+        f.flush()
+        os.fsync(f.fileno())           # on disk before the generation's checkpoint, which covers it (revision 3 §8.2)
+
+
+def complete_row(row, header, generation):
+    """Whether a log row is whole and belongs to a generation before `generation`: a crash can cut the last row
+    short or, after a reboot, leave zero bytes in its place."""
+    return len(row) == len(header) and row[0].isascii() and row[0].isdigit() and int(row[0]) < generation
 
 
 def truncate_log(path, generation, fields=LOG_FIELDS):
-    """Keep the header and the rows of the generations before `generation`. A row written after the last checkpoint
-    belongs to a generation that runs again when the run resumes (revision 3 §8.2). A missing log is started with the
-    columns `fields`."""
+    """Keep the header and the whole rows of the generations before `generation`. A row written after the last
+    checkpoint belongs to a generation that runs again when the run resumes, and a damaged row is dropped
+    (revision 3 §8.2). A missing log is started with the columns `fields`."""
     path = Path(path)
     if not path.exists():
         start_log(path, fields)
         return
-    with open(path, newline="") as f:
+    with open(path, newline="", errors="replace") as f:
         rows = list(csv.reader(f))
-    kept = (rows[:1] or [list(fields)]) + [row for row in rows[1:] if row and int(row[0]) < generation]
+    header = rows[0] if rows and rows[0][:1] == fields[:1] else list(fields)
+    kept = [header] + [row for row in rows[1:] if complete_row(row, header, generation)]
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(temporary, "w", newline="") as f:
         csv.writer(f).writerows(kept)
-    os.replace(temporary, path)
-
-
-def write_json(path, data):
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(data, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(temporary, path)
 
 
@@ -261,7 +265,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         summary.update(val_successes=int(successes), val_fitness=float(fitness),
                        champion_path=str(method.save_champion(index, seed, champion_dir)))
     summary["wall_time"] = active()                                # includes the final selection (spec §9.1)
-    write_json(out_dir / SUMMARY_NAME, summary)
+    checkpoint.write_json(out_dir / SUMMARY_NAME, summary)
     if reporting:
         found = "" if summary["val_successes"] is None else (
             f", final controller succeeds on {summary['val_successes']} of {len(config.VAL_SEEDS)} validation maps")

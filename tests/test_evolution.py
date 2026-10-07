@@ -1,5 +1,7 @@
 import json
 import math
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -186,6 +188,33 @@ def test_a_completed_run_is_returned_without_training(evaluation, tmp_path):
     assert len(pd.read_csv(tmp_path / "run" / "log.csv")) == 2
 
 
+def synced_writes(monkeypatch):
+    """Names of the files written through checkpoint.write_json, which syncs them to disk."""
+    written, real = [], checkpoint.write_json
+    monkeypatch.setattr(checkpoint, "write_json",
+                        lambda path, data: written.append(Path(path).name) or real(path, data))
+    return written
+
+
+def test_the_summary_is_synced_to_disk(evaluation, monkeypatch, tmp_path):
+    evaluation(0.5)
+    written = synced_writes(monkeypatch)
+    train(tmp_path, 2)
+    assert written == ["summary.json"]
+
+
+def test_a_summary_cut_short_by_a_reboot_is_written_again_from_the_checkpoint(evaluation, tmp_path):
+    evaluation(0.5)
+    first, _ = train(tmp_path, 3)
+    log = (tmp_path / "run" / "log.csv").read_text()
+    (tmp_path / "run" / "summary.json").write_text("")
+    again, reports = train(tmp_path, 3)
+    assert reports == [] and (tmp_path / "run" / "log.csv").read_text() == log
+    del first["wall_time"], again["wall_time"]
+    assert again == json.loads(json.dumps(first))
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["generations"] == 3
+
+
 def test_experiment_runs_report_status_and_milestones(evaluation, monkeypatch, tmp_path):
     evaluation(1.0)
     monkeypatch.setattr(population, "select_final",
@@ -229,6 +258,65 @@ def test_truncate_log_keeps_the_rows_before_a_generation(tmp_path):
                                                                       else 0) for key in evolution.LOG_FIELDS})
     evolution.truncate_log(path, 2)
     assert list(pd.read_csv(path)["generation"]) == [0, 1]
+
+
+def damaged_log(path, tail):
+    """A log of generations 0-2 whose end was damaged by a crash: `tail` replaces the last bytes."""
+    evolution.start_log(path)
+    for g in range(3):
+        evolution.append_log(path, {key: 100 + g if key == "generation" else ([1] if key in ("seeds", "map_shares")
+                                                                            else 0) for key in evolution.LOG_FIELDS})
+    with open(path, "ab") as f:
+        f.write(tail)
+
+
+def test_truncate_log_drops_a_tail_of_zero_bytes(tmp_path):
+    """After a reboot the end of a file can read as zero bytes; the run must still resume."""
+    path = tmp_path / "log.csv"
+    damaged_log(path, b"\0" * 300)
+    evolution.truncate_log(path, 103)
+    assert list(pd.read_csv(path)["generation"]) == [100, 101, 102]
+
+
+def test_truncate_log_drops_a_torn_row(tmp_path):
+    """A row cut short ("10" of generation 103) is not kept as a row of generation 10."""
+    path = tmp_path / "log.csv"
+    damaged_log(path, b"10")
+    evolution.truncate_log(path, 103)
+    assert list(pd.read_csv(path)["generation"]) == [100, 101, 102]
+    damaged_log(path, b"1\0" + b",0" * (len(evolution.LOG_FIELDS) - 1) + b"\n")     # all fields, first damaged
+    evolution.truncate_log(path, 200)
+    assert list(pd.read_csv(path)["generation"]) == [100, 101, 102]
+
+
+def synced_files(monkeypatch, calls):
+    """Record the name of every file synced to disk (os.fsync) in `calls`."""
+    real = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: calls.append(Path(os.readlink(f"/proc/self/fd/{fd}")).name)
+                        or real(fd))
+
+
+def test_log_rows_are_synced_before_the_checkpoint(evaluation, monkeypatch, tmp_path):
+    """A generation's row is on disk before its checkpoint, so a reboot cannot lose rows the checkpoint covers."""
+    evaluation(0.5)
+    calls, real_save = [], checkpoint.save
+    synced_files(monkeypatch, calls)
+    monkeypatch.setattr(checkpoint, "save", lambda path, state: calls.append("save") or real_save(path, state))
+    train(tmp_path, 2)
+    saves = [i for i, call in enumerate(calls) if call == "save"]
+    assert len(saves) == 2 and all(calls[i - 1] == "log.csv" for i in saves)
+
+
+def test_truncate_log_syncs_the_new_log_before_replacing_it(monkeypatch, tmp_path):
+    path = tmp_path / "log.csv"
+    damaged_log(path, b"")
+    calls, real_replace = [], os.replace
+    synced_files(monkeypatch, calls)
+    monkeypatch.setattr(os, "replace", lambda a, b: calls.append(("replace", Path(a).name, Path(b).name))
+                        or real_replace(a, b))
+    evolution.truncate_log(path, 102)
+    assert len(calls) == 2 and calls[1] == ("replace", calls[0], "log.csv")
+    assert list(pd.read_csv(path)["generation"]) == [100, 101]
 
 
 class WithSpecies(ga.GA):

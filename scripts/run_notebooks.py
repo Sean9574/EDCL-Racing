@@ -8,12 +8,10 @@ In background:   mkdir -p results
 Progress:        python -m racing.progress                     (from another terminal)
 
 Exit codes: 0 finished; 1 a notebook failed; 2 invalid options; 3 earlier results were produced with different
-settings (run again with --fresh).
+settings (run again with --fresh) or cannot be read (delete the files named).
 """
 import argparse
-import json
 import os
-import pickle
 import platform
 import subprocess
 import sys
@@ -31,8 +29,10 @@ NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
 FRESH_REMOVE = ("runs", "champions", "tables", "figures", "dataset.npz", "dataset_info.json", "status.json",
                 "run_log.txt", "run_info.json")       # under results/; pilots, app_runs and archive are kept
-RECORD_FILES = ("summary.json", "dagger.json")        # run records that carry the settings they were produced with
-STATE_FILES = (checkpoint.CHECKPOINT_NAME, "dagger_state.pkl")
+RECORD_STATES = {"summary.json": checkpoint.CHECKPOINT_NAME,      # run records that carry their settings, and the
+                 "dagger.json": "dagger_state.pkl"}                # checkpoint a run finishes again from
+RECORD_FILES = tuple(RECORD_STATES)
+STATE_FILES = tuple(RECORD_STATES.values())
 
 
 def now():
@@ -115,8 +115,7 @@ def execute(path, kernel_dir):
 
 
 def write_info(info, path):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(info, indent=2))
+    checkpoint.write_json(path, info)
 
 
 def fresh_start(results_dir):
@@ -126,39 +125,59 @@ def fresh_start(results_dir):
 
 
 def recorded_settings(path):
-    """The settings recorded in a run record or checkpoint, or None if it has none (an earlier version) or cannot be
-    read."""
-    try:
-        if path.name in RECORD_FILES:
-            data = json.loads(path.read_text())
-        else:
+    """The settings recorded in a run record or checkpoint, or None if it has none (an earlier version). Raises
+    checkpoint.UnreadableRecord if the file cannot be read."""
+    if path.name in RECORD_FILES:
+        data = checkpoint.read_record(path)
+    else:
+        try:
             data = checkpoint.load(path)
-    except (OSError, ValueError, EOFError, pickle.UnpicklingError, AttributeError, ImportError):
-        return None
+        except Exception as error:                     # any damage to a pickle: truncated, zeroed, foreign
+            raise checkpoint.UnreadableRecord(f"{path} cannot be read ({type(error).__name__})") from error
     return data.get("settings") if isinstance(data, dict) else None
 
 
-def settings_problems(runs_dir):
-    """One message per run record or checkpoint under runs_dir whose recorded settings differ from the current ones
-    (revision 3 §8.2). A record without readable settings, such as one of revision 2.0, counts as different, as it
-    does for checkpoint.completed, so the run stops here rather than inside a notebook."""
+def finishes_from_checkpoint(path):
+    """Whether the run of an unreadable record finishes again by itself: its checkpoint is next to it and readable
+    (checkpoint.completed)."""
+    state = path.parent / RECORD_STATES[path.name]
+    if not state.exists():
+        return False
+    try:
+        recorded_settings(state)
+    except checkpoint.UnreadableRecord:
+        return False
+    return True
+
+
+def check_results(runs_dir):
+    """(settings problems, unreadable files) of the run records and checkpoints under runs_dir (revision 3 §8.2),
+    so the run stops here rather than inside a notebook. A record whose settings differ, or that has none (such as
+    one of revision 2.0, which checkpoint.completed refuses), is a settings problem, one message each. A file that
+    cannot be read, such as one cut short by a reboot, is listed by its path; a record whose run finishes again from
+    its checkpoint is not."""
     runs_dir = Path(runs_dir)
+    problems, unreadable = [], []
     if not runs_dir.exists():
-        return []
-    problems = []
+        return problems, unreadable
     for path in sorted(runs_dir.rglob("*")):
         if path.name not in RECORD_FILES + STATE_FILES:
             continue
-        recorded = recorded_settings(path)
+        name = path.relative_to(runs_dir).as_posix()
+        try:
+            recorded = recorded_settings(path)
+        except checkpoint.UnreadableRecord:
+            if path.name in STATE_FILES or not finishes_from_checkpoint(path):
+                unreadable.append(path)
+            continue
         if recorded is None:
-            problems.append(f"{path.relative_to(runs_dir).as_posix()}: no readable settings record "
-                            "(made by an earlier version)")
+            problems.append(f"{name}: no settings record (made by an earlier version)")
             continue
         try:
             checkpoint.check_settings(recorded)
         except checkpoint.SettingsMismatch as error:
-            problems.append(f"{path.relative_to(runs_dir).as_posix()}: {error}")
-    return problems
+            problems.append(f"{name}: {error}")
+    return problems, unreadable
 
 
 def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
@@ -168,7 +187,7 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     from ipykernel.kernelspec import write_kernel_spec
 
     notebook_dir = Path(notebook_dir)
-    info = json.loads(Path(info_path).read_text()) if Path(info_path).exists() else {}
+    info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
     info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
                  "power_profile": power_profile(), "versions": versions(),
                  "settings": checkpoint.settings_record(), **code_version()})
@@ -233,12 +252,20 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
             return 2
     if args.fresh:
         fresh_start(results_dir)
-    problems = settings_problems(Path(results_dir) / "runs")
+    problems, unreadable = check_results(Path(results_dir) / "runs")
+    if unreadable:
+        print("error: these result files cannot be read, probably because a crash or reboot cut them short:",
+              file=sys.stderr)
+        for path in unreadable:
+            print(f"  {path}", file=sys.stderr)
+        print("Delete only these files and run again: the steps they belong to are redone, every other result is "
+              "kept.", file=sys.stderr)
     if problems:
         print("error: earlier results were produced with different settings:", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         print("Run again with --fresh to remove them and start over.", file=sys.stderr)
+    if problems or unreadable:
         return 3
     return run(notebook_dir, args.start, log_path, info_path, status_path, monitor, out)
 

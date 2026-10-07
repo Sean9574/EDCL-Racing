@@ -1,5 +1,4 @@
 """Scripted expert driver (spec §7.1) and imitation dataset collection on freshly generated maps (spec §7.2-7.3, revision 3 §6.1)."""
-import json
 import os
 import time
 from pathlib import Path
@@ -116,13 +115,6 @@ def _collect_track(seed, level):
     return collect_rows(get_track(seed, level), np.random.default_rng([seed, level, config.DATASET_SALT]))
 
 
-def _write_json(path, data):
-    """Write JSON so that an interruption cannot leave a partial file behind."""
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(data, indent=2))
-    os.replace(temporary, path)
-
-
 def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky", resume=True):
     """Collect the train/val/test rows (spec §7.3) and save them as a compressed .npz file. Tracks are distributed
     across worker processes; each has its own random number generator, so the rows do not depend on n_jobs.
@@ -161,6 +153,6 @@ def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky", resume=Tru
     finally:
         if temporary.exists():
             temporary.unlink()
-    _write_json(info_path, {"wall_time": wall_time, "n_jobs": n_jobs, "splits": summary, "items": items,
-                            "settings": checkpoint.settings_record()})
+    checkpoint.write_json(info_path, {"wall_time": wall_time, "n_jobs": n_jobs, "splits": summary, "items": items,
+                                      "settings": checkpoint.settings_record()})
     return data, summary

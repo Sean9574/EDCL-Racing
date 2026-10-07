@@ -101,7 +101,7 @@ def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None):
                "val_accuracy": float(max(history.history["val_accuracy"])), "params": int(model.count_params()),
                "wall_time": wall_time, "stage_path": str(stage), **(extra or {}),
                "settings": checkpoint.settings_record()}
-    (Path(out_dir) / "summary.json").write_text(json.dumps(summary, indent=2))
+    checkpoint.write_json(Path(out_dir) / "summary.json", summary)
     return summary
 
 
@@ -253,7 +253,7 @@ def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SE
                "chosen_trial": chosen["trial_id"], "chosen_val_accuracy": chosen["val_accuracy"],
                "chosen_params": chosen["params"], "chosen_hyperparameters": chosen["hyperparameters"],
                "settings": checkpoint.settings_record()}
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    checkpoint.write_json(out_dir / "summary.json", summary)
     return summary
 
 
@@ -264,7 +264,7 @@ def retrain(approach, data, seed, search=None, out_dir=None, epochs=config.MAX_E
     done = previous_run(out_dir, resume)
     if done is not None:
         return done
-    chosen = json.loads((search / "summary.json").read_text())["chosen_hyperparameters"]
+    chosen = checkpoint.read_record(search / "summary.json")["chosen_hyperparameters"]
     start_run(out_dir)
     keras_cpu().utils.set_random_seed(seed)
     model = build_network(architecture(chosen), chosen["activation"], float(chosen["dropout"]),

@@ -277,3 +277,46 @@ def test_a_rerun_keeps_the_record_of_earlier_notebooks(runner, tmp_path, monkeyp
     info = json.loads((tmp_path / "info.json").read_text())
     assert [e["notebook"] for e in info["notebooks"]] == ["01_a.ipynb", "02_b.ipynb", "03_c.ipynb"]
     assert [r["from"] for r in info["runs"]] == [None, "03"]
+
+
+def test_an_unreadable_record_is_named_and_only_that_file_is_to_be_deleted(runner, tmp_path, monkeypatch, capsys):
+    """A record cut short by a reboot is not a settings change: --fresh would remove every result."""
+    three_notebooks(tmp_path)
+    executed = []
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: executed.append(path.name))
+    record = tmp_path / "results" / "runs" / "baseline" / "seed0" / "summary.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("")
+    broken = tmp_path / "results" / "runs" / "neat" / "seed1" / runner.checkpoint.CHECKPOINT_NAME
+    broken.parent.mkdir(parents=True)
+    broken.write_bytes(b"\0" * 64)
+    assert run_main(runner, tmp_path, []) == 3
+    err = capsys.readouterr().err
+    assert "baseline/seed0/summary.json" in err and "neat/seed1/checkpoint.pkl" in err
+    assert "delete" in err.lower() and "--fresh" not in err and "earlier version" not in err
+    assert executed == [] and record.exists() and broken.exists()
+    record.unlink()
+    broken.unlink()
+    assert run_main(runner, tmp_path, []) == 0 and len(executed) == 3
+
+
+def test_an_unreadable_summary_next_to_its_checkpoint_finishes_by_itself(runner, tmp_path, monkeypatch):
+    """The run redoes its final selection from the checkpoint (checkpoint.completed), so the runner starts."""
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    run = tmp_path / "results" / "runs" / "ga" / "seed0"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text("")
+    runner.checkpoint.save(run / runner.checkpoint.CHECKPOINT_NAME,
+                           {"generation": 9, "settings": runner.checkpoint.settings_record()})
+    assert run_main(runner, tmp_path, []) == 0
+
+
+def test_the_run_record_is_synced_to_disk(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    written, real = [], runner.checkpoint.write_json
+    monkeypatch.setattr(runner.checkpoint, "write_json",
+                        lambda path, data: written.append(Path(path).name) or real(path, data))
+    assert run_main(runner, tmp_path, []) == 0
+    assert written and set(written) == {"info.json"}

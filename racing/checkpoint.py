@@ -43,6 +43,10 @@ class SettingsMismatch(RuntimeError):
     """The settings recorded with a run differ from the current configuration."""
 
 
+class UnreadableRecord(RuntimeError):
+    """A run record that cannot be read, such as one cut short by a reboot; the message names the file."""
+
+
 def _json_value(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -91,6 +95,24 @@ def save(path, state):
             temporary.unlink()
 
 
+def write_json(path, data):
+    """Write `data` as JSON through a temporary file in the same folder that is synced to disk before it replaces
+    `path`, so neither an interruption nor a reboot leaves a partial or empty record (revision 3 §8.2)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        text = json.dumps(data, indent=2)
+        with open(temporary, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def load(path):
     """The saved state, or None if there is no checkpoint."""
     path = Path(path)
@@ -100,13 +122,33 @@ def load(path):
         return pickle.load(f)
 
 
-def completed(run_dir, name="summary.json"):
+def read_record(path):
+    """A run record (JSON object); UnreadableRecord if it is empty, cut short or not an object."""
+    try:
+        record = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as error:
+        raise UnreadableRecord(f"{path} cannot be read ({type(error).__name__}), probably cut short by a crash or "
+                               "a reboot: delete only this file and run again; its step is then redone") from error
+    if not isinstance(record, dict):
+        raise UnreadableRecord(f"{path} is not a run record: delete only this file and run again; its step is "
+                               "then redone")
+    return record
+
+
+def completed(run_dir, name="summary.json", state_name=CHECKPOINT_NAME):
     """The summary of a completed run in `run_dir`, or None if the run has not completed. A summary made with other
-    settings, or without a settings record (an earlier version), raises SettingsMismatch."""
+    settings, or without a settings record (an earlier version), raises SettingsMismatch. A summary that cannot be
+    read counts as not completed when the run's checkpoint `state_name` is next to it (the run finishes again from
+    the checkpoint); otherwise it raises UnreadableRecord naming the file."""
     path = Path(run_dir) / name
     if not path.exists():
         return None
-    summary = json.loads(path.read_text())
+    try:
+        summary = read_record(path)
+    except UnreadableRecord:
+        if (path.parent / state_name).exists():
+            return None
+        raise
     if "settings" not in summary:
         raise SettingsMismatch(f"{path} has no settings record (made by an earlier version); "
                                "start over with scripts/run_notebooks.py --fresh")

@@ -189,3 +189,10 @@ def test_collection_time_is_recorded(tmp_path):
                                                                     "test": [(0, 1)]})
     info = json.loads((tmp_path / "d_info.json").read_text())
     assert info["wall_time"] > 0 and info["n_jobs"] == 1 and info["splits"] == summary
+
+
+def test_the_dataset_record_is_synced_to_disk(monkeypatch, tmp_path):
+    written, real = [], checkpoint.write_json
+    monkeypatch.setattr(checkpoint, "write_json", lambda path, data: written.append(path.name) or real(path, data))
+    expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
+    assert written == ["d_info.json"]

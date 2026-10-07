@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -81,6 +83,14 @@ def scripted(monkeypatch, checks):
     return collected, drivers
 
 
+def synced_writes(monkeypatch):
+    """Names of the files written through checkpoint.write_json, which syncs them to disk."""
+    written, real = [], checkpoint.write_json
+    monkeypatch.setattr(checkpoint, "write_json",
+                        lambda path, data: written.append(Path(path).name) or real(path, data))
+    return written
+
+
 def test_dagger_parameters_are_recorded_settings():
     assert (config.DAGGER_MAPS, config.DAGGER_EPOCHS, config.DAGGER_HOLDOUT, config.DAGGER_GOAL,
             config.DAGGER_STREAK, config.DAGGER_PATIENCE) == (20, 30, 0.1, 18, 3, 10)
@@ -138,6 +148,43 @@ def test_rounds_reach_the_goal_and_rows_accumulate(monkeypatch, toy_data, traine
     status = progress.read_status()
     assert status["stage"] == "dagger" and status["round"] == 4 and status["checks"] == 20
     assert "DAgger goal" in config.RUN_LOG_PATH.read_text()
+
+
+def test_the_refinement_summary_is_synced_to_disk(monkeypatch, toy_data, trained_runs):
+    scripted(monkeypatch, [18, 18, 18])
+    written = synced_writes(monkeypatch)
+    dagger.refine("baseline", 0, toy_data, runs_dir=trained_runs)
+    assert written == ["dagger.json"]
+
+
+def test_correction_rows_are_synced_to_disk_before_they_replace_the_old_ones(monkeypatch, toy_data, trained_runs):
+    scripted(monkeypatch, [18, 18, 18])
+    calls, real_fsync, real_replace = [], os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: calls.append(Path(os.readlink(f"/proc/self/fd/{fd}")).name)
+                        or real_fsync(fd))
+    monkeypatch.setattr(os, "replace", lambda a, b: calls.append(("replace", Path(a).name, Path(b).name))
+                        or real_replace(a, b))
+    dagger.refine("baseline", 0, toy_data, runs_dir=trained_runs)
+    replaced = [i for i, call in enumerate(calls) if isinstance(call, tuple) and call[2] == dagger.ROWS_NAME]
+    assert len(replaced) == 3 and all(calls[i - 1] == calls[i][1] for i in replaced)
+
+
+def test_fewer_correction_rows_than_the_checkpoint_records_is_an_error(tmp_path):
+    """Rows lost in a crash would silently change the refinement; it stops and names the files instead."""
+    path = tmp_path / dagger.ROWS_NAME
+    x, y = dagger._load_rows(path, 0)
+    assert x.shape == (0, config.N_INPUTS) and len(y) == 0
+    with pytest.raises(RuntimeError, match=f"{dagger.ROWS_NAME}.*{dagger.STATE_NAME}"):
+        dagger._load_rows(path, 5)                                          # missing
+    np.savez(path, X=np.zeros((3, config.N_INPUTS), dtype=np.float32), y=np.zeros(3, dtype=np.int64))
+    with pytest.raises(RuntimeError, match="3 correction rows.*5"):
+        dagger._load_rows(path, 5)                                          # short
+    path.write_bytes(b"\0" * 100)
+    with pytest.raises(RuntimeError, match=dagger.STATE_NAME):
+        dagger._load_rows(path, 5)                                          # zeroed by a reboot
+    np.savez(path, X=np.ones((8, config.N_INPUTS), dtype=np.float32), y=np.arange(8))
+    x, y = dagger._load_rows(path, 5)                                       # rows of an unfinished round: dropped
+    assert len(x) == len(y) == 5 and list(y) == [0, 1, 2, 3, 4]
 
 
 def test_a_stalled_refinement_keeps_the_best_network(monkeypatch, toy_data, trained_runs):

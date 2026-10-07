@@ -1,10 +1,20 @@
 import json
+import types
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from racing import checkpoint, config, imitation, nets, paths
+
+
+def synced_writes(monkeypatch):
+    """Names of the files written through checkpoint.write_json, which syncs them to disk."""
+    written, real = [], checkpoint.write_json
+    monkeypatch.setattr(checkpoint, "write_json",
+                        lambda path, data: written.append(Path(path).name) or real(path, data))
+    return written
 
 
 @pytest.fixture
@@ -67,6 +77,12 @@ def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     assert summary["learning_rate"] == config.LEARNING_RATE
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 431
     assert checkpoint.completed(tmp_path / "run")["val_accuracy"] == summary["val_accuracy"]
+
+
+def test_the_training_summary_is_synced_to_disk(monkeypatch, toy_data, tmp_path):
+    written = synced_writes(monkeypatch)
+    imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1)
+    assert written == ["summary.json"]
 
 
 def test_train_baseline_saves_its_stage_per_seed_and_no_final_controller(monkeypatch, toy_data, tmp_path):
@@ -147,6 +163,32 @@ def test_a_complete_search_is_not_run_again(monkeypatch, toy_data, tmp_path):
     (out / "summary.json").write_text(json.dumps(done))
     monkeypatch.setattr(imitation, "make_tuner", lambda *args, **kwargs: pytest.fail("searched again"))
     assert imitation.run_tuner("kt_random", toy_data, out_dir=out)["wall_time"] == 12.5
+
+
+class FakeTrial:
+    def __init__(self, trial_id, values, score):
+        self.trial_id, self.score = trial_id, score
+        self.hyperparameters = types.SimpleNamespace(values=values)
+
+
+class FakeTuner:
+    """One completed trial, without Keras Tuner."""
+
+    def __init__(self):
+        values = {"layers": 1, "units_0": 8, "activation": "relu", "dropout": 0.0, "learning_rate": 0.001}
+        self.oracle = types.SimpleNamespace(trials={"00": FakeTrial("00", values, 0.5)})
+        self.trained_epochs = {"00": 3}
+
+    def search(self, *args, **kwargs):
+        pass
+
+
+def test_the_search_summary_is_synced_to_disk(monkeypatch, toy_data, tmp_path):
+    monkeypatch.setattr(imitation, "make_tuner", lambda *args, **kwargs: FakeTuner())
+    written = synced_writes(monkeypatch)
+    summary = imitation.run_tuner("kt_random", toy_data, out_dir=tmp_path / "search", export_models=False)
+    assert written == ["summary.json"] and summary["chosen_trial"] == "00"
+    assert checkpoint.completed(tmp_path / "search")["chosen_params"] == nets.n_params((8,))
 
 
 def run_small_search(approach, toy_data, tmp_path, seen=None):

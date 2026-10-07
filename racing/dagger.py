@@ -4,7 +4,6 @@ A refinement runs in rounds. The car drives fresh Extra hard maps; at every step
 state; the rows join the network's dataset and training continues; a time trial on further fresh maps checks the
 result. Every round is checkpointed, and every round starts from a freshly loaded network after seeding Keras for
 that round, so an interrupted refinement resumes where it stopped and ends exactly like an uninterrupted one."""
-import json
 import os
 import time
 from pathlib import Path
@@ -95,17 +94,31 @@ def _train_round(model, x, y, rng):
 
 
 def _load_rows(path, count):
-    """The first `count` correction rows in `path`. Rows of a round interrupted before its checkpoint are dropped."""
-    if count == 0 or not path.exists():
+    """The first `count` correction rows in `path`, the number the refinement's checkpoint records. Rows of a round
+    interrupted before its checkpoint are dropped. Fewer rows than recorded (a file lost or cut short in a crash)
+    stop the refinement with an error, since continuing without them would silently change it."""
+    if count == 0:
         return np.zeros((0, config.N_INPUTS), dtype=np.float32), np.zeros(0, dtype=np.int64)
-    with np.load(path) as stored:
-        return stored["X"][:count], stored["y"][:count]
+    remedy = (f"the refinement's checkpoint {path.parent / STATE_NAME} records {count}: delete {STATE_NAME} to start "
+              "this refinement over")
+    try:
+        with np.load(path) as stored:
+            x, y = stored["X"][:count], stored["y"][:count]
+    except Exception as error:                          # missing, zeroed or cut short
+        raise RuntimeError(f"{path} cannot be read ({type(error).__name__}), but {remedy}") from error
+    if len(y) < count:
+        raise RuntimeError(f"{path} holds {len(y)} correction rows, but {remedy}")
+    return x, y
 
 
 def _save_rows(path, x, y):
+    """Save the correction rows through a temporary file that is synced to disk before it replaces the old rows, so
+    the rows the next checkpoint records survive a reboot (revision 3 §8.2)."""
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(temporary, "wb") as f:
         np.savez(f, X=x, y=y)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(temporary, path)
 
 
@@ -113,12 +126,6 @@ def _save_model(model, path):
     """Save a Keras model so that an interruption cannot leave a partial file behind."""
     temporary = path.with_name(f".{path.stem}.{os.getpid()}.tmp.keras")
     model.save(temporary)
-    os.replace(temporary, path)
-
-
-def _write_json(path, data):
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(data, indent=2))
     os.replace(temporary, path)
 
 
@@ -139,7 +146,7 @@ def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rou
     imitation stage. Writes the refined network as the 'dagger' stage: the network of the final round when the goal
     is reached, otherwise the network with the best check result."""
     run = paths.run_dir(approach, seed, runs_dir)
-    done = checkpoint.completed(run, name=SUMMARY_NAME)
+    done = checkpoint.completed(run, name=SUMMARY_NAME, state_name=STATE_NAME)
     if done is not None:
         return done
     label = config.LABELS[approach]
@@ -148,7 +155,7 @@ def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rou
         raise FileNotFoundError(f"{imitation_stage} not found: train the {label} network first (notebook 02)")
     state_path, rows_path = run / STATE_NAME, run / ROWS_NAME
     dagger_stage = paths.stage_path(approach, seed, "dagger", runs_dir)
-    rate = float(json.loads((run / "summary.json").read_text()).get("learning_rate", config.LEARNING_RATE))
+    rate = float(checkpoint.read_record(run / "summary.json").get("learning_rate", config.LEARNING_RATE))
     state = checkpoint.load(state_path)
     if state is None:
         paths.remove(rows_path, dagger_stage)
@@ -206,7 +213,7 @@ def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rou
                "best_checks": state["best_checks"], "final_checks": history[-1]["checks"] if history else None,
                "correction_rows": state["n_rows"], "respawns": state["respawns"], "wall_time": state["elapsed"],
                "stage_path": str(dagger_stage), "history": history}
-    _write_json(run / SUMMARY_NAME, summary)
+    checkpoint.write_json(run / SUMMARY_NAME, summary)
     paths.remove(state_path)
     progress.milestone(_finished_message(label, seed, state))
     return summary

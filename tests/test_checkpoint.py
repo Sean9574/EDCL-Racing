@@ -1,5 +1,6 @@
 import json
 import pickle
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -113,3 +114,50 @@ def test_checkpoints_are_plain_pickles(tmp_path):
     checkpoint.save(path, {"generation": 1})
     with open(path, "rb") as f:
         assert pickle.load(f) == {"generation": 1}
+
+
+def test_write_json_syncs_the_temporary_file_before_replacing(tmp_path, monkeypatch):
+    """A record is on disk before it replaces the old one, so a reboot cannot leave it empty (revision 3 §8.2)."""
+    calls, real_fsync, real_replace = [], checkpoint.os.fsync, checkpoint.os.replace
+    monkeypatch.setattr(checkpoint.os, "fsync", lambda fd: calls.append("fsync") or real_fsync(fd))
+    monkeypatch.setattr(checkpoint.os, "replace", lambda a, b: calls.append(("replace", Path(a).parent, Path(b)))
+                        or real_replace(a, b))
+    path = tmp_path / "run" / "summary.json"
+    checkpoint.write_json(path, {"generations": 3, "levels": [{"level": 1}]})
+    assert json.loads(path.read_text()) == {"generations": 3, "levels": [{"level": 1}]}
+    assert calls == ["fsync", ("replace", path.parent, path)]       # synced first; the temporary is a sibling
+    assert [p.name for p in path.parent.iterdir()] == ["summary.json"]
+
+
+def test_a_failed_json_write_keeps_the_previous_record(tmp_path):
+    path = tmp_path / "summary.json"
+    checkpoint.write_json(path, {"generations": 3})
+    with pytest.raises(TypeError):
+        checkpoint.write_json(path, {"generations": object()})
+    assert json.loads(path.read_text()) == {"generations": 3}
+    assert [p.name for p in tmp_path.iterdir()] == ["summary.json"]
+
+
+@pytest.mark.parametrize("content", ["", "\0\0\0\0", '{"generations": 7, "sett'])
+def test_an_unreadable_summary_next_to_its_checkpoint_is_not_completed(tmp_path, content):
+    """A summary cut short by a reboot: the run finishes again from its checkpoint."""
+    (tmp_path / "summary.json").write_text(content)
+    checkpoint.save(tmp_path / checkpoint.CHECKPOINT_NAME, {"generation": 7})
+    assert checkpoint.completed(tmp_path) is None
+
+
+def test_an_unreadable_summary_without_a_checkpoint_names_the_file(tmp_path):
+    (tmp_path / "summary.json").write_text("")
+    with pytest.raises(checkpoint.UnreadableRecord) as error:
+        checkpoint.completed(tmp_path)
+    message = str(error.value)
+    assert str(tmp_path / "summary.json") in message and "delete" in message and "--fresh" not in message
+
+
+def test_an_unreadable_record_uses_its_own_checkpoint_name(tmp_path):
+    (tmp_path / "dagger.json").write_text("")
+    checkpoint.save(tmp_path / checkpoint.CHECKPOINT_NAME, {"generation": 7})      # another run's checkpoint
+    with pytest.raises(checkpoint.UnreadableRecord):
+        checkpoint.completed(tmp_path, "dagger.json", state_name="dagger_state.pkl")
+    checkpoint.save(tmp_path / "dagger_state.pkl", {"round": 4})
+    assert checkpoint.completed(tmp_path, "dagger.json", state_name="dagger_state.pkl") is None
