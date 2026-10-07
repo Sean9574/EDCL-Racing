@@ -385,3 +385,4 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     for name in ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
                  "driving_selected", "dataset"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
+    assert results["figures"][-1] == tmp_path / "out" / "figures" / "networks.png" and results["figures"][-1].exists()

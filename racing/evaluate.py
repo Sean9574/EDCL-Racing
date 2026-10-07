@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from racing import config, nets, paths, sim
+from racing import config, netfig, nets, paths, sim
 from racing.tracks import get_track
 
 DRIVE_COLUMNS = ["approach", "run_seed", "track", "finished", "success", "crashed", "race_time", "lap_time",
@@ -635,5 +635,9 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
     for name, frame in tables.items():
         frame.to_csv(folder / f"{name}.csv", index=False)
         (folder / f"{name}.md").write_text(to_markdown(frame))
+    drawn = figures(runs_dir, out_dir / "figures")
+    if best:                                            # each method's best final controller (revision 3 §7.3)
+        drawn.append(netfig.draw_networks({approach: drivers[(approach, seed)] for approach, seed in best.items()},
+                                          out_dir / "figures" / "networks.png"))
     return {**tables, "per_track": per_track, "validation": validation, "metrics": metrics, "best_seeds": best,
-            "figures": figures(runs_dir, out_dir / "figures")}
+            "figures": drawn}
