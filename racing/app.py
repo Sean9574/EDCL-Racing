@@ -5,13 +5,15 @@ Run with:  ~/miniconda3/bin/python -m racing.app
 import multiprocessing as mp
 import os
 import queue
+import signal
+import threading
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import numpy as np
 import pygame
 
-from racing import config, nets, sim
+from racing import config, nets, paths, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -22,7 +24,7 @@ PANEL_BG = (248, 249, 251)
 INK = (29, 35, 48)
 MUTED = (91, 100, 116)
 BUTTON = (228, 232, 238)
-BUTTON_ACTIVE = (0, 114, 178)
+BUTTON_ACTIVE = (55, 62, 78)     # dark neutral: never mistaken for an approach (spec §10.1)
 RAY = (255, 196, 0)
 
 
@@ -102,18 +104,11 @@ class Playback:
             sim.step(self.track, self.cars, steer, throttle, self.time_limit)
 
 
-def mixed_policy(dense_nets):
-    """One car per network; each network may have its own architecture."""
-    def policy(obs, cars):
-        return np.array([net.act(obs[i:i + 1])[0] for i, net in enumerate(dense_nets)], dtype=np.int64)
-    return policy
-
-
 def report_policy(report, indices):
     """Policy for the chosen members of a training report."""
     if "weights" in report:
         return nets.population_policy(report["weights"][indices], tuple(report["hidden"]), report["activation"])
-    return mixed_policy([report["nets"][i] for i in indices])
+    return nets.mixed_policy([report["nets"][i] for i in indices])
 
 
 def leaderboard(playback, names):
@@ -135,9 +130,10 @@ def leaderboard(playback, names):
     return rows
 
 
-def trainer_main(approach, size, reports, running):
-    """Training process: trains one approach and sends a report after every generation, trial or epoch.
-    Writes to config.APP_RUNS_DIR and never saves champions."""
+def trainer_main(approach, size, seed, level, reports, running):
+    """Training process: trains one approach with run seed `seed`, starting at curriculum level `level`, and sends a
+    report after every generation, trial or epoch. Writes to config.APP_RUNS_DIR and never saves final
+    controllers (spec §10.2)."""
     from racing import es, ga, imitation
     from racing.expert import collect_dataset
 
@@ -145,12 +141,15 @@ def trainer_main(approach, size, reports, running):
         reports.put(report)
         running.wait()                      # training holds here while the viewer is paused
 
-    out_dir = config.APP_RUNS_DIR / approach
+    out_dir = config.APP_RUNS_DIR / approach / f"seed{seed}"
     if approach == "ga":
-        ga.run_ga(pop_size=size, out_dir=out_dir, on_generation=send, champion_dir=None, n_jobs=config.N_JOBS)
+        ga.run_ga(pop_size=size, seed=seed, start_level=level, out_dir=out_dir, on_generation=send,
+                  champion_dir=None, n_jobs=config.N_JOBS)
         return
-    if approach == "es":
-        es.run_es(lam=size, out_dir=out_dir, on_generation=send, champion_dir=None, n_jobs=config.N_JOBS)
+    if approach in ("es", "es_seeded"):
+        initial = es.trained_baseline(seed) if approach == "es_seeded" else None
+        es.run_es(lam=size, seed=seed, start_level=level, initial=initial, approach=approach, out_dir=out_dir,
+                  on_generation=send, champion_dir=None, n_jobs=config.N_JOBS)
         return
     path = config.DATASET_PATH
     if not path.exists():
@@ -165,16 +164,23 @@ def trainer_main(approach, size, reports, running):
         scores.append(val_accuracy)
         fitness = np.array(scores)
         nan = float("nan")
-        send({"approach": approach, "generation": int(number), "level": config.MAX_LEVEL,
+        send({"approach": approach, "generation": int(number), "level": level,
               "seeds": [config.KT_VIEW_SEED], "nets": list(members), "fitness": fitness,
               "kept_finish": nan, "new_finish": nan, "step_size": nan, "best": float(fitness.max()),
               "mean": float(fitness.mean()), "worst": float(fitness.min()), "leveled_up": False})
 
     if approach == "baseline":
-        imitation.train_baseline(data, out_dir=out_dir, champion_dir=None,
+        imitation.train_baseline(data, out_dir=out_dir, champion_dir=None, seed=seed,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
     else:
-        imitation.run_tuner(approach, data, out_dir=out_dir, champion_dir=None, on_trial=add)
+        imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False)
+
+
+def trainer_process(approach, size, seed, level, reports, running):
+    """Entry point of the training process. It leads its own process group, so stopping it also stops the worker
+    processes it starts (spec §10.2)."""
+    os.setpgrp()
+    trainer_main(approach, size, seed, level, reports, running)
 
 
 def percent(value):
@@ -188,7 +194,7 @@ def number(value):
 class App:
     """The viewer window: training view and race view."""
 
-    def __init__(self, screen):
+    def __init__(self, screen, background_tracks=True):
         self.screen = screen
         self.font = pygame.font.SysFont("dejavusans", 15)
         self.small = pygame.font.SysFont("dejavusans", 13)
@@ -200,13 +206,18 @@ class App:
         self.buttons = []
         self.slider = None
         self.dragging = False
-        self.track_cache = {}
+        self.surfaces = {}
+        self.background_tracks = background_tracks
+        self.tracks = {}
+        self.building = set()
         self.speed = 1
         self.step_budget = 0.0
         self.status = "Press Play to start training."
         # training view
         self.approach = "ga"
-        self.population = {"ga": config.GA_POP, "es": config.ES_LAMBDA}
+        self.run_seed = config.RUN_SEEDS[0]
+        self.difficulty = 1
+        self.population = {"ga": config.GA_POP, "es": config.ES_LAMBDA, "es_seeded": config.ES_LAMBDA}
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
@@ -226,18 +237,42 @@ class App:
         self.race_nets = None
         self.race = None
 
+    # ----- tracks -----
+    def request_track(self, seed, level):
+        """The track if it is built; otherwise start building it and return None (spec §10.2). Without background
+        building, the track is built at once."""
+        key = (int(seed), int(level))
+        if key in self.tracks:
+            return self.tracks[key]
+        if not self.background_tracks:
+            self.tracks[key] = get_track(*key)
+            return self.tracks[key]
+        if key not in self.building:
+            self.building.add(key)
+            threading.Thread(target=self.build_track, args=(key,), daemon=True).start()
+        return None
+
+    def build_track(self, key):
+        self.tracks[key] = get_track(*key)
+        self.building.discard(key)
+
     # ----- training process -----
     def start_training(self):
+        if self.approach == "es_seeded" and not paths.champion_path("baseline", self.run_seed,
+                                                                   champion_dir=self.champions_dir).exists():
+            self.status = "Seeded ES needs the baseline controller: run notebook 02 first."
+            return
         context = mp.get_context("spawn")
         self.reports = context.Queue()
         self.running = context.Event()
         self.running.set()
         size = self.population.get(self.approach, 0)
-        self.process = context.Process(target=trainer_main, args=(self.approach, size, self.reports, self.running),
-                                       daemon=True)
+        self.process = context.Process(target=trainer_process, daemon=False,
+                                       args=(self.approach, size, self.run_seed, self.difficulty, self.reports,
+                                             self.running))
         self.process.start()
         self.latest, self.history, self.playback, self.playback_generation = None, [], None, None
-        self.status = f"Training {config.LABELS[self.approach]}."
+        self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
 
     def toggle_play(self):
         if self.process is None:
@@ -250,11 +285,20 @@ class App:
             self.status = f"Training {config.LABELS[self.approach]}."
 
     def stop_training(self):
-        if self.process is not None and hasattr(self.process, "terminate") and self.process.is_alive():
-            self.process.terminate()
+        """End the training process and the worker processes it started, and drop its report queue."""
+        if self.process is not None and self.process.is_alive():
+            try:
+                os.killpg(self.process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                self.process.terminate()             # the process has not yet become a group leader
             self.process.join(timeout=2)
         self.process = None
         self.discard_reports()
+
+    def stop(self):
+        """Stop control of the training view: training ends and the settings can be changed again."""
+        self.stop_training()
+        self.status = "Stopped. Change the settings or press Play."
 
     def discard_reports(self):
         """Drop the report queue so reports from a stopped trainer never reach a new view."""
@@ -263,14 +307,19 @@ class App:
             self.reports.close()
         self.reports = None
 
+    def drain_reports(self):
+        if self.reports is None:
+            return
+        while True:
+            try:
+                self.receive(self.reports.get_nowait())
+            except queue.Empty:
+                break
+
     def poll_reports(self):
-        if self.reports is not None:
-            while True:
-                try:
-                    self.receive(self.reports.get_nowait())
-                except queue.Empty:
-                    break
+        self.drain_reports()
         if self.process is not None and not self.process.is_alive():
+            self.drain_reports()                     # a report sent just before the process ended
             code = self.process.exitcode
             self.status = "Training finished." if code == 0 else f"Training stopped (exit code {code})."
             self.process = None
@@ -280,9 +329,9 @@ class App:
         self.latest = report
         self.history.append((report["generation"], report["best"], report["mean"], report["leveled_up"]))
 
-    # ----- settings -----
+    # ----- settings (changeable only while no training runs) -----
     def select_approach(self, approach):
-        if approach == self.approach:
+        if self.process is not None or approach == self.approach:
             return
         self.stop_training()
         self.approach = approach
@@ -290,10 +339,25 @@ class App:
         self.status = "Press Play to start training."
 
     def change_population(self, direction):
+        if self.process is not None:
+            return
         presets = list(config.POPULATION_PRESETS)
         current = self.population[self.approach]
         position = presets.index(current) if current in presets else 0
         self.population[self.approach] = presets[min(max(position + direction, 0), len(presets) - 1)]
+
+    def change_run_seed(self, direction):
+        if self.process is not None:
+            return
+        seeds = list(config.RUN_SEEDS)
+        self.run_seed = seeds[(seeds.index(self.run_seed) + direction) % len(seeds)]
+
+    def set_difficulty(self, level):
+        if self.process is not None:
+            return
+        self.difficulty = level
+        if self.approach not in config.EVOLUTION_APPROACHES:
+            self.playback = None                     # the imitation views drive the map of this level
 
     def population_size(self):
         if self.latest is not None:
@@ -324,14 +388,30 @@ class App:
             self.status = "Training view."
 
     # ----- playback -----
-    def start_playback(self, report):
+    def start_playback(self, report, track):
         fitness = np.asarray(report["fitness"], dtype=float)
         self.indices = select_indices(fitness, self.show, self.shown, sample_seed=report["generation"])
-        track = get_track(report["seeds"][0], report["level"])
         self.playback = Playback(track, report_policy(report, self.indices), len(self.indices))
         self.best_slot = int(np.argmax(fitness[self.indices]))
         self.playback_generation = report["generation"]
         self.step_budget = 0.0
+
+    def shown_track(self):
+        """The track on screen in the training view: the playback's, or for imitation approaches the map they are
+        driven on, which is known before training starts."""
+        if self.playback is not None:
+            return self.playback.track
+        if self.approach not in config.EVOLUTION_APPROACHES:
+            return self.request_track(config.KT_VIEW_SEED, self.difficulty)
+        return None
+
+    def map_text(self):
+        track = self.shown_track()
+        if track is not None:
+            return f"Map: seed {track.seed}, level {track.level}"
+        if self.approach in config.EVOLUTION_APPROACHES and self.latest is None:
+            return "Map: shown with the first generation"
+        return "Map: building the track"
 
     def load_race(self):
         models = nets.load_champions(self.champions_dir)
@@ -345,8 +425,10 @@ class App:
     def start_race(self):
         if not self.race_names:
             return
-        track = get_track(config.TEST_SEEDS[self.race_seed], config.MAX_LEVEL)
-        self.race = Playback(track, mixed_policy(self.race_nets), len(self.race_nets), laps=config.RACE_LAPS)
+        track = self.request_track(config.TEST_SEEDS[self.race_seed], config.MAX_LEVEL)
+        if track is None:
+            return
+        self.race = Playback(track, nets.mixed_policy(self.race_nets), len(self.race_nets), laps=config.RACE_LAPS)
         self.step_budget = 0.0
 
     def change_race_track(self, direction):
@@ -357,12 +439,14 @@ class App:
         self.poll_reports()
         if self.mode == "train":
             if self.latest is not None and (self.playback is None or self.playback.over):
-                self.start_playback(self.latest)
+                track = self.request_track(self.latest["seeds"][0], self.latest["level"])
+                if track is not None:
+                    self.start_playback(self.latest, track)
             active = self.playback
         else:
             active = self.race
         if active is not None:
-            self.step_budget += self.speed * dt / config.DT
+            self.step_budget += self.speed * config.PLAYBACK_BASE * dt / config.DT
             steps = int(self.step_budget)
             self.step_budget = 0.0 if steps > config.MAX_STEPS_PER_FRAME else self.step_budget - steps
             steps = min(steps, config.MAX_STEPS_PER_FRAME)
@@ -396,22 +480,26 @@ class App:
     # ----- drawing -----
     def track_surface(self, track):
         key = (track.seed, track.level)
-        if key not in self.track_cache:
+        if key not in self.surfaces:
             camera = Camera(track, self.view)
-            self.track_cache[key] = (camera, render_track(track, camera, self.view.size))
-        return self.track_cache[key]
+            self.surfaces[key] = (camera, render_track(track, camera, self.view.size))
+        return self.surfaces[key]
 
     def draw(self):
         self.screen.fill(GRASS)
         self.buttons = []
         self.slider = None
-        playback = self.playback if self.mode == "train" else self.race
-        if playback is not None:
-            camera, surface = self.track_surface(playback.track)
+        if self.mode == "train":
+            track, playback = self.shown_track(), self.playback
+        else:
+            playback = self.race
+            track = playback.track if playback is not None else None
+        if track is not None:
+            camera, surface = self.track_surface(track)
             self.screen.blit(surface, self.view.topleft)
-            if self.mode == "train":
+            if playback is not None and self.mode == "train":
                 self.draw_population(playback, camera)
-            else:
+            elif playback is not None:
                 self.draw_racers(playback, camera)
         self.draw_panel()
 
@@ -470,7 +558,7 @@ class App:
         for k, speed in enumerate(config.SPEEDS):
             self.button(pygame.Rect(x + k * (quarter + 8), y, quarter, 28), f"{speed}×",
                         lambda s=speed: self.set_speed(s), self.speed == speed)
-        return y + 40
+        return y + 36
 
     def draw_panel(self):
         pygame.draw.rect(self.screen, PANEL_BG, self.panel)
@@ -485,29 +573,46 @@ class App:
             self.draw_race_panel(x, y, w)
         self.text(self.status[:56], x, self.panel.bottom - 26, self.small, MUTED)
 
+    def draw_difficulty(self, x, y, w, level, action, enabled):
+        """Easy / Medium / Hard / Extra hard buttons (spec §10.4). Returns the next free y."""
+        y = self.text("Difficulty", x, y, self.small, MUTED)
+        quarter = (w - 24) // 4
+        for k, (value, name) in enumerate(config.DIFFICULTIES.items()):
+            self.button(pygame.Rect(x + k * (quarter + 8), y, quarter, 26), name, lambda v=value: action(v),
+                        level == value, enabled=enabled)
+        return y + 34
+
     def draw_train_panel(self, x, y, w):
+        idle = self.process is None
         third = (w - 16) // 3
         y = self.text("Approach", x, y, self.small, MUTED)
         for k, approach in enumerate(config.APPROACHES):
-            rect = pygame.Rect(x + (k % 3) * (third + 8), y + (k // 3) * 36, third, 30)
+            rect = pygame.Rect(x + (k % 3) * (third + 8), y + (k // 3) * 34, third, 28)
             self.button(rect, config.LABELS[approach], lambda a=approach: self.select_approach(a),
-                        approach == self.approach, color=config.COLORS[approach])
-        y += 80
+                        approach == self.approach, enabled=idle, color=config.COLORS[approach])
+        y += 3 * 34 + 4
+        self.text("Run seed", x, y + 5, self.small, MUTED)
+        self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_run_seed(-1), enabled=idle)
+        self.text(str(self.run_seed), x + 152, y + 5)
+        self.button(pygame.Rect(x + 180, y, 30, 28), ">", lambda: self.change_run_seed(1), enabled=idle)
+        y += 36
+        y = self.draw_difficulty(x, y, w, self.difficulty, self.set_difficulty, idle)
         if self.approach in self.population:
-            y = self.text("Population (λ)" if self.approach == "es" else "Population", x, y, self.small, MUTED)
-            idle = self.process is None
-            self.button(pygame.Rect(x, y, 30, 28), "−", lambda: self.change_population(-1), enabled=idle)
-            self.text(str(self.population[self.approach]), x + 44, y + 5)
-            self.button(pygame.Rect(x + 110, y, 30, 28), "+", lambda: self.change_population(1), enabled=idle)
-            y += 40
+            self.text("Population" if self.approach == "ga" else "Population (λ)", x, y + 5, self.small, MUTED)
+            self.button(pygame.Rect(x + 110, y, 30, 28), "−", lambda: self.change_population(-1), enabled=idle)
+            self.text(str(self.population[self.approach]), x + 152, y + 5)
+            self.button(pygame.Rect(x + 210, y, 30, 28), "+", lambda: self.change_population(1), enabled=idle)
+            y += 36
         playing = self.process is not None and self.running is not None and self.running.is_set()
-        self.button(pygame.Rect(x, y, w, 34), "Pause" if playing else "Play", self.toggle_play, playing)
-        y += 46
+        half = (w - 8) // 2
+        self.button(pygame.Rect(x, y, half, 32), "Pause" if playing else "Play", self.toggle_play, playing)
+        self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop, enabled=not idle)
+        y += 42
         y = self.text("Show", x, y, self.small, MUTED)
         for k, mode in enumerate(("all", "best", "worst")):
-            self.button(pygame.Rect(x + k * (third + 8), y, third, 28), mode.capitalize(),
+            self.button(pygame.Rect(x + k * (third + 8), y, third, 26), mode.capitalize(),
                         lambda m=mode: self.set_show(m), self.show == mode)
-        y += 38
+        y += 34
         size = self.population_size()
         shown = min(self.shown, size)
         y = self.text(f"Cars shown: {shown}", x, y, self.small, MUTED)
@@ -515,24 +620,30 @@ class App:
         pygame.draw.rect(self.screen, BUTTON, self.slider, border_radius=5)
         knob = x + (shown - 1) / max(size - 1, 1) * w
         pygame.draw.circle(self.screen, BUTTON_ACTIVE, (int(knob), y + 9), 8)
-        y += 26
+        y += 24
         y = self.draw_speed_buttons(x, y, w)
-        self.button(pygame.Rect(x, y, w, 28), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays, self.rays)
-        y += 40
+        self.button(pygame.Rect(x, y, w, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
+                    self.rays)
+        y += 34
         y = self.draw_stats(x, y)
-        self.draw_plot(pygame.Rect(x, y + 6, w, 150))
+        bottom = self.panel.bottom - 34
+        if bottom - y > 50:
+            self.draw_plot(pygame.Rect(x, y + 4, w, bottom - y - 4))
 
     def draw_stats(self, x, y):
+        y = self.text(self.map_text(), x, y, self.small)
         r = self.latest
         if r is None:
             return self.text("No generation completed yet.", x, y, self.small, MUTED)
+        nan = float("nan")
         unit = "Trial" if r["approach"].startswith("kt") else ("Epoch" if r["approach"] == "baseline" else "Generation")
-        size_name = "σ" if r["approach"] == "es" else "Mutation strength"
+        size_name = "Mutation strength" if r["approach"] == "ga" else "σ"
         for line in (f"Level {r['level']}    {unit} {r['generation']}",
                      f"Finished: kept {percent(r['kept_finish'])}   new {percent(r['new_finish'])}",
+                     f"At pace: kept {percent(r.get('kept_pace', nan))}   new {percent(r.get('new_pace', nan))}",
                      f"{size_name}: {number(r['step_size'])}",
                      f"Best {r['best']:.3f}    Mean {r['mean']:.3f}"):
-            y = self.text(line, x, y)
+            y = self.text(line, x, y, self.small)
         return y
 
     def draw_plot(self, rect):

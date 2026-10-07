@@ -1,21 +1,26 @@
+import os
 import queue
+import signal
 import threading
+import time
 
 import numpy as np
 import pygame
 import pytest
 
 from racing import app as viewer
-from racing import config, nets
+from racing import config, nets, paths
 
 
 @pytest.fixture
 def window(monkeypatch, circle_track):
     monkeypatch.setattr(viewer, "get_track", lambda seed, level: circle_track)
+    monkeypatch.setattr(viewer.os, "killpg", lambda pgid, sig: None)     # tests never signal real processes
     pygame.init()
     screen = pygame.display.set_mode(config.WINDOW_SIZE)
-    instance = viewer.App(screen)
+    instance = viewer.App(screen, background_tracks=False)
     yield instance
+    instance.process = None
     instance.stop_training()
     pygame.quit()
 
@@ -26,7 +31,7 @@ def ga_report(generation=0, n=30):
     return {"approach": "ga", "generation": generation, "level": 1, "seeds": [0, 1, 2],
             "weights": nets.init_population(rng, n), "hidden": [16], "activation": "relu",
             "fitness": fitness, "finished": np.zeros(n, dtype=bool), "is_kept": np.zeros(n, dtype=bool),
-            "kept_finish": float("nan"), "new_finish": 0.0, "step_size": 0.5, "best": float(fitness.max()),
+            "kept_finish": float("nan"), "new_finish": 0.0, "kept_pace": float("nan"), "new_pace": 0.0, "step_size": 0.5, "best": float(fitness.max()),
             "mean": float(fitness.mean()), "worst": float(fitness.min()), "evals": n, "elapsed": 1.0,
             "leveled_up": False}
 
@@ -183,18 +188,23 @@ def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, t
     monkeypatch.setattr(es, "run_es", fake_es)
     reports, running = queue.Queue(), threading.Event()
     running.set()
-    viewer.trainer_main("ga", 30, reports, running)
-    viewer.trainer_main("es", 12, reports, running)
+    viewer.trainer_main("ga", 30, 0, 1, reports, running)
+    viewer.trainer_main("es", 12, 0, 1, reports, running)
     assert calls["ga"]["champion_dir"] is None and calls["ga"]["pop_size"] == 30
     assert calls["es"]["champion_dir"] is None and calls["es"]["lam"] == 12
-    assert calls["ga"]["out_dir"] == tmp_path / "ga" and calls["es"]["out_dir"] == tmp_path / "es"
+    assert calls["ga"]["out_dir"] == tmp_path / "ga" / "seed0" and calls["es"]["out_dir"] == tmp_path / "es" / "seed0"
     assert reports.get_nowait()["generation"] == 0 and reports.empty()
 
 
 def test_pause_and_resume_toggle_the_running_event(window):
     class Alive:
+        pid = 0
+
         def is_alive(self):
             return True
+
+        def join(self, timeout=None):
+            pass
 
     window.process, window.running = Alive(), threading.Event()
     window.running.set()
@@ -263,7 +273,7 @@ def test_pausing_still_delivers_the_finished_generation(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
     monkeypatch.setattr(ga, "run_ga", lambda **kwargs: kwargs["on_generation"](ga_report(0)))
     reports, running = queue.Queue(), threading.Event()           # paused: running is not set
-    trainer = threading.Thread(target=viewer.trainer_main, args=("ga", 30, reports, running), daemon=True)
+    trainer = threading.Thread(target=viewer.trainer_main, args=("ga", 30, 0, 1, reports, running), daemon=True)
     trainer.start()
     try:
         assert reports.get(timeout=5)["generation"] == 0          # the finished generation is shown while paused
@@ -295,7 +305,7 @@ def fake_imitation(monkeypatch, tmp_path):
 def run_baseline_trainer():
     running = threading.Event()
     running.set()
-    viewer.trainer_main("baseline", 0, queue.Queue(), running)
+    viewer.trainer_main("baseline", 0, 0, 1, queue.Queue(), running)
 
 
 def test_trainer_main_collects_its_own_dataset(monkeypatch, tmp_path):
@@ -312,3 +322,177 @@ def test_trainer_main_uses_the_reported_dataset(monkeypatch, tmp_path):
     np.savez(config.DATASET_PATH, y_train=np.array([7]))
     run_baseline_trainer()
     assert collected == [] and list(trained[0]["y_train"]) == [7]
+
+
+def test_trainer_main_passes_seed_level_and_seeded_start(monkeypatch, tmp_path):
+    from racing import es, ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    calls = {}
+    monkeypatch.setattr(ga, "run_ga", lambda **kwargs: calls.setdefault("ga", kwargs))
+    monkeypatch.setattr(es, "run_es", lambda **kwargs: calls.setdefault("es", kwargs))
+    monkeypatch.setattr(es, "trained_baseline", lambda seed: f"baseline seed {seed}")
+    reports, running = queue.Queue(), threading.Event()
+    running.set()
+    viewer.trainer_main("ga", 30, 2, 3, reports, running)
+    viewer.trainer_main("es_seeded", 12, 1, 2, reports, running)
+    assert calls["ga"]["seed"] == 2 and calls["ga"]["start_level"] == 3
+    assert calls["es"]["approach"] == "es_seeded" and calls["es"]["initial"] == "baseline seed 1"
+    assert calls["es"]["out_dir"] == tmp_path / "es_seeded" / "seed1" and calls["es"]["start_level"] == 2
+
+
+def test_training_process_is_not_a_daemon(window, monkeypatch):
+    created = {}
+
+    class FakeProcess:
+        def __init__(self, target, args, daemon):
+            created.update(target=target, args=args, daemon=daemon)
+            self.pid = 0
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+    class FakeContext:
+        Process = FakeProcess
+
+        def Queue(self):
+            return FakeQueue()
+
+        def Event(self):
+            return threading.Event()
+
+    monkeypatch.setattr(viewer.mp, "get_context", lambda method: FakeContext())
+    window.change_run_seed(1)
+    window.set_difficulty(2)
+    window.start_training()
+    assert created["daemon"] is False and created["target"] is viewer.trainer_process
+    assert created["args"][:4] == ("ga", config.GA_POP, config.RUN_SEEDS[1], 2)
+
+
+def test_stop_ends_the_trainer_process_group(window, monkeypatch):
+    killed = []
+    monkeypatch.setattr(viewer.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+
+    class Alive:
+        pid = 4321
+
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            pass
+
+    window.process, window.reports = Alive(), FakeQueue()
+    window.stop()
+    assert killed == [(4321, signal.SIGTERM)] and window.process is None and "Stopped" in window.status
+
+
+def test_settings_are_locked_while_training(window):
+    class Alive:
+        pid = 0
+
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            pass
+
+    window.process = Alive()
+    window.select_approach("es")
+    window.change_run_seed(1)
+    window.set_difficulty(3)
+    window.change_population(1)
+    assert window.approach == "ga" and window.run_seed == config.RUN_SEEDS[0] and window.difficulty == 1
+    assert window.population["ga"] == config.GA_POP
+
+
+def test_seeded_es_without_baseline_shows_a_message(window, tmp_path):
+    window.champions_dir = tmp_path
+    window.select_approach("es_seeded")
+    window.start_training()
+    assert window.process is None and "notebook 02" in window.status
+
+
+def test_final_report_of_a_finished_trainer_is_shown(window):
+    class Done:
+        exitcode = 0
+
+        def is_alive(self):
+            return False
+
+    class LateQueue(FakeQueue):
+        """The trainer's last report becomes readable only after its process has ended."""
+
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def get_nowait(self):
+            self.calls += 1
+            if self.calls == 2:
+                self.items.append(ga_report(5))
+            return super().get_nowait()
+
+    window.process, window.reports = Done(), LateQueue()
+    window.poll_reports()
+    assert window.latest["generation"] == 5 and "finished" in window.status.lower()
+
+
+def test_one_x_runs_at_twice_real_time(window):
+    window.receive(ga_report())
+    window.update(0.0)
+    window.update(0.1)
+    assert abs(window.playback.cars.time - config.PLAYBACK_BASE * 0.1) < 1e-9
+
+
+def test_tracks_are_built_in_the_background(monkeypatch, circle_track):
+    release = threading.Event()
+
+    def slow_track(seed, level):
+        release.wait(5)
+        return circle_track
+
+    monkeypatch.setattr(viewer, "get_track", slow_track)
+    pygame.init()
+    app = viewer.App(pygame.display.set_mode(config.WINDOW_SIZE))
+    try:
+        app.receive(ga_report())
+        app.update(1 / 60)
+        app.draw()
+        assert app.playback is None and "Map:" in app.map_text()     # the window keeps drawing meanwhile
+        release.set()
+        for _ in range(200):
+            app.update(1 / 60)
+            if app.playback is not None:
+                break
+            time.sleep(0.01)
+        assert app.playback is not None
+    finally:
+        release.set()
+        pygame.quit()
+
+
+def test_map_text_names_the_track(window, circle_track):
+    assert window.map_text() == "Map: shown with the first generation"      # GA before training
+    window.receive(ga_report())
+    window.update(1 / 60)
+    assert window.map_text() == f"Map: seed {circle_track.seed}, level {circle_track.level}"
+
+
+def test_imitation_preview_uses_the_difficulty(monkeypatch, window, circle_track):
+    calls = []
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level: calls.append((seed, level)) or circle_track)
+    window.select_approach("baseline")
+    window.set_difficulty(3)
+    window.draw()
+    assert (config.KT_VIEW_SEED, 3) in calls
+
+
+def test_training_panel_fits_the_window(window):
+    for approach in config.APPROACHES:
+        window.approach = approach
+        window.draw()
+        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
+        assert window.slider.bottom <= window.panel.bottom - 30
