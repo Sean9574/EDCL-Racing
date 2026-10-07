@@ -449,7 +449,7 @@ def save_neat_champion(approach, seed, genome, champion_dir=config.CHAMPIONS_DIR
 @dataclass(eq=False)
 class Species:
     """Genomes of one niche: its representative (from the previous generation), members (indices into the current
-    population), best fitness so far and generations since that last improved."""
+    population), best fitness so far at the current level and target, and generations since that last improved."""
     id: int
     representative: Genome
     members: list = field(default_factory=list)
@@ -491,6 +491,13 @@ class SpeciesSet:
         for s in self.species:
             s.representative = genomes[s.members[int(rng.integers(len(s.members)))]]
 
+    def restart_records(self):
+        """Forget every species' best fitness and stagnation count, so stagnation is measured within one level and
+        target (revision 3 §5.4): maps change every generation, so a best fitness is a record of noisy scores, and
+        after a level-up or a shorter target the old records are out of reach."""
+        for s in self.species:
+            s.best_fitness, s.stale = float("-inf"), 0
+
     def allot(self, n_children, fitness):
         """Children per species id: proportional to mean member fitness, largest remainder; a stagnant species gets
         none unless it holds the population's best car."""
@@ -518,6 +525,9 @@ class SpeciesSet:
         species.species = [Species(s["id"], Genome.from_dict(s["representative"]), list(s["members"]),
                                    s["best_fitness"], s["stale"]) for s in state["species"]]
         return species
+
+
+RESTART_EVENTS = ("level_up", "goal", "tightened")    # engine events after which species records restart
 
 
 class NEAT:
@@ -575,6 +585,8 @@ class NEAT:
         if event == "level_up":
             self.steps.reset()
         self.species.speciate(rng, genomes, fitness)
+        if event in RESTART_EVENTS:                   # the children drive at the new level or target
+            self.species.restart_records()
         allotment = self.species.allot(self.pop_size - len(kept), fitness)
         new_genomes, new_parents = [], []
         for s in self.species.species:

@@ -765,6 +765,10 @@ fewer than 20). A genome joins the first species whose representative, a random 
 previous generation, lies within the threshold δ_t. Otherwise it founds a new species. δ_t starts at
 3.0 and is adjusted by 0.1 each generation towards 20 species. A species whose best fitness has not
 improved for 20 generations receives no children, unless it contains the best car of the population.
+Because the maps change every generation, a species' best fitness is a record of noisy scores, and after
+a level-up or a shorter target the old records are out of reach. Every species' best fitness and
+stagnation count therefore restart when the population advances a level, reaches the mastery goal or
+masters a shorter target, so stagnation is measured within one level and target.
 Kept cars (§9.3) remain in the population regardless of their species.
 
 **Activation.** Hidden nodes use tanh. Output nodes are linear, and the action is the class with the

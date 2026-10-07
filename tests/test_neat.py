@@ -470,6 +470,37 @@ def test_step_size_resets_on_level_up_only():
     assert method.step_size == config.NEAT_SIGMA0
 
 
+def records_after(event):
+    """Species records after a generation that ends with `event`, and after the next generation, whose scores are
+    lower (harder maps or a shorter target)."""
+    rng = np.random.default_rng(38)
+    method = neat.NEAT(pop_size=20)
+    method.initialize(rng)
+    fitness = np.random.default_rng(39).random(20) + 5.0
+    method.advance(rng, result_for(fitness, np.zeros(20)), np.array([0]), None)
+    for s in method.species.species:
+        s.stale = config.NEAT_STAGNATION + 4                    # long-lived species with out-of-reach records
+    method.advance(rng, result_for(fitness, np.zeros(20)), np.array([0]), event)
+    after = [(s.best_fitness, s.stale) for s in method.species.species]
+    method.advance(rng, result_for(fitness - 4.0, np.zeros(20)), np.array([0]), None)
+    return after, [(s.best_fitness, s.stale) for s in method.species.species]
+
+
+@pytest.mark.parametrize("event", ["level_up", "goal", "tightened"])
+def test_stagnation_restarts_with_each_level_and_target(event):
+    """Maps change every generation, so a species' best fitness is a record of noisy scores, and after a level-up,
+    the goal or a tightened target the old records are out of reach (revision 3 §5.4)."""
+    after, following = records_after(event)
+    assert after and all(best == float("-inf") and stale == 0 for best, stale in after)
+    assert all(best < 2.0 and stale == 0 for best, stale in following)     # the new level's scores are the records
+
+
+def test_stagnation_is_kept_without_a_level_or_target_change():
+    after, following = records_after(None)
+    assert all(best > 5.0 and stale > config.NEAT_STAGNATION for best, stale in after)
+    assert max(stale for _, stale in following) > config.NEAT_STAGNATION
+
+
 def test_state_round_trip_continues_identically():
     rng_a = np.random.default_rng(37)
     a = neat.NEAT(pop_size=30)
