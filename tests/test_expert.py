@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pytest
 
@@ -40,7 +41,7 @@ def test_collect_rows_shapes_and_labels(circle_track):
 def test_collect_dataset_writes_all_splits(tmp_path):
     path = tmp_path / "data.npz"
     data, summary = expert.collect_dataset(path, splits={"train": [(0, 1)], "val": [(0, 2)], "test": [(1, 2)]})
-    assert [p.name for p in tmp_path.iterdir()] == ["data.npz"]        # no temporary file left behind
+    assert sorted([p.name for p in tmp_path.iterdir()]) == ["data.npz", "data_info.json"]        # no temporary file left behind
     for split in ("train", "val", "test"):
         assert data[f"X_{split}"].dtype == np.float32 and data[f"y_{split}"].dtype == np.int64
         assert len(data[f"X_{split}"]) == len(data[f"y_{split}"]) > 0
@@ -124,3 +125,19 @@ def test_expert_drives_every_seed():
         tracks.get_track(seed, 3)
     for seed in list(config.VAL_SEEDS) + list(config.TEST_SEEDS):
         tracks.get_track(seed, 4)
+
+
+def test_parallel_collection_matches_serial(tmp_path):
+    splits = {"train": [(0, 1), (1, 2)], "val": [(80, 2)], "test": [(1000, 2)]}
+    serial, _ = expert.collect_dataset(tmp_path / "a.npz", splits=splits)
+    parallel, _ = expert.collect_dataset(tmp_path / "b.npz", splits=splits, n_jobs=2, backend="threading")
+    assert set(serial) == set(parallel)
+    for key in serial:
+        assert np.array_equal(serial[key], parallel[key])
+
+
+def test_collection_time_is_recorded(tmp_path):
+    _, summary = expert.collect_dataset(tmp_path / "d.npz", splits={"train": [(0, 1)], "val": [(0, 1)],
+                                                                    "test": [(0, 1)]})
+    info = json.loads((tmp_path / "d_info.json").read_text())
+    assert info["wall_time"] > 0 and info["n_jobs"] == 1 and info["splits"] == summary
