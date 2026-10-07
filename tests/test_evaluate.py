@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from racing import config, evaluate, nets, paths, population
+from racing import config, evaluate, nets, paths, population, sim
 
 
 @pytest.fixture
@@ -16,6 +16,19 @@ def fake_tracks(monkeypatch, circle_track):
 def drivers(n=3, seed=0):
     flats = nets.init_population(np.random.default_rng(seed), n)
     return {("ga", k): nets.from_flat(flats[k]) for k in range(n)}
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+
+
+def drive_rows(rows):
+    """A per-track frame from (approach, seed, track, finished, succeeded, crashed, lap time) tuples."""
+    return pd.DataFrame([{"approach": a, "run_seed": s, "track": t, "finished": f, "success": ok, "crashed": c,
+                          "race_time": lap * config.LAPS, "lap_time": lap, "progress": 1.0 if f else 0.5,
+                          "fitness": 1.5 if f else 0.5} for a, s, t, f, ok, c, lap in rows],
+                        columns=evaluate.DRIVE_COLUMNS)
 
 
 def test_controllers_drive_all_laps(monkeypatch, fake_tracks):
@@ -51,10 +64,21 @@ def test_driving_together_matches_driving_alone(fake_tracks):
     assert together.iloc[1].equals(alone.iloc[0])
 
 
-def test_best_seeds_highest_mean_validation_fitness_lowest_seed_on_ties():
-    rows = [("ga", 0, 0.5), ("ga", 0, 0.7), ("ga", 1, 0.9), ("ga", 1, 0.9), ("es", 0, 1.0), ("es", 2, 1.0)]
-    frame = pd.DataFrame([{"approach": a, "run_seed": s, "fitness": f} for a, s, f in rows])
-    assert evaluate.best_seeds(frame) == {"es": 0, "ga": 1}
+def test_success_means_three_laps_within_the_target(monkeypatch, fake_tracks):
+    result = sim.RunResult(fitness=np.array([1.2, 1.1, 0.4]), finished=np.array([True, True, False]),
+                           crashed=np.array([False, False, True]), progress=np.array([1.0, 1.0, 0.3]),
+                           finish_time=np.array([70.0, 90.0, np.nan]), steps=1, laps_done=np.array([3, 3, 0]))
+    monkeypatch.setattr(evaluate.sim, "simulate", lambda track, policy, n, **kwargs: result)
+    frame = evaluate.driving_results(drivers(), [1000])          # target: 1.3 × 20 s × 3 laps = 78 s
+    assert list(frame["finished"]) == [True, True, False] and list(frame["success"]) == [True, False, False]
+    assert frame["lap_time"].iloc[1] == pytest.approx(30.0)
+
+
+def test_best_seeds_most_successes_then_fitness_then_lowest_seed():
+    rows = [("ga", 0, True, 1.5), ("ga", 0, True, 1.5), ("ga", 1, True, 1.9), ("ga", 1, False, 1.9),
+            ("es", 0, True, 1.2), ("es", 2, True, 1.2), ("neat", 1, False, 0.4), ("neat", 2, False, 0.6)]
+    frame = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "fitness": f} for a, s, ok, f in rows])
+    assert evaluate.best_seeds(frame) == {"es": 0, "ga": 0, "neat": 2}
 
 
 def test_inference_warm_up_matches_the_timed_calls():
@@ -84,16 +108,38 @@ def test_every_controller_is_timed_with_the_same_prediction_settings():
         assert model.predict(x, verbose=0).shape == (64, config.N_ACTIONS)
 
 
+def stub_timing(monkeypatch, order=None):
+    record = order.append if order is not None else (lambda name: None)
+    monkeypatch.setattr(evaluate, "same_prediction_settings", lambda model: record("settings"))
+    monkeypatch.setattr(evaluate, "accuracy", lambda model, x, y: record("accuracy") or 0.5)
+    monkeypatch.setattr(evaluate, "inference_time", lambda model, x: record("batch") or 1e-6)
+    monkeypatch.setattr(evaluate, "single_sample_latency", lambda model, x, calls: record("single") or 1e-3)
+
+
 def test_metrics_apply_the_prediction_settings_before_any_prediction(monkeypatch, tmp_path):
     order = []
-    monkeypatch.setattr(evaluate, "same_prediction_settings", lambda model: order.append("settings"))
-    monkeypatch.setattr(evaluate, "accuracy", lambda model, x, y: order.append("accuracy") or 0.5)
-    monkeypatch.setattr(evaluate, "inference_time", lambda model, x: order.append("batch") or 1e-6)
-    monkeypatch.setattr(evaluate, "single_sample_latency", lambda model, x, calls: order.append("single") or 1e-3)
+    stub_timing(monkeypatch, order)
     model = nets.to_keras(nets.init_population(np.random.default_rng(11), 1)[0])
     data = {"X_test": np.zeros((4, config.N_INPUTS), np.float32), "y_test": np.zeros(4, int)}
     evaluate.metrics_per_seed({("ga", 0): model}, data, tmp_path)
     assert order == ["settings", "accuracy", "batch", "single"]
+
+
+def test_metrics_count_driver_parameters_and_all_imitation_training(monkeypatch, tmp_path):
+    stub_timing(monkeypatch)
+
+    class NeatLike:
+        n_params = 19
+
+    model = nets.to_keras(nets.init_population(np.random.default_rng(13), 1)[0])
+    write_json(paths.run_dir("baseline", 0, tmp_path) / "summary.json", {"wall_time": 10.0})
+    write_json(paths.run_dir("baseline", 0, tmp_path) / "dagger.json", {"wall_time": 20.0, "rounds": 3})
+    write_json(paths.speed_dir("baseline", 0, tmp_path) / "summary.json", {"wall_time": 30.0})
+    data = {"X_test": np.zeros((4, config.N_INPUTS), np.float32), "y_test": np.zeros(4, int)}
+    metrics = evaluate.metrics_per_seed({("neat", 0): model, ("baseline", 0): model}, data, tmp_path,
+                                        drivers={("neat", 0): NeatLike()}).set_index("approach")
+    assert metrics.loc["neat", "params"] == 19 and metrics.loc["baseline", "params"] == model.count_params()
+    assert metrics.loc["baseline", "training_s"] == 60.0 and np.isnan(metrics.loc["neat", "training_s"])
 
 
 def test_single_sample_latency_is_positive():
@@ -113,10 +159,10 @@ def metrics_frame():
     rows = []
     for seed, acc in ((0, 0.60), (1, 0.62), (2, 0.64)):
         rows.append({"approach": "kt_random", "run_seed": seed, "accuracy": acc, "params": 447, "batch_us": 2.0,
-                     "single_ms": 0.5, "training_s": 30.0 + seed, "search_s": 900.0, "level_reached": np.nan})
-    for seed, level in ((0, 4), (1, 3)):
+                     "single_ms": 0.5, "training_s": 30.0 + seed, "search_s": 900.0})
+    for seed in (0, 1):
         rows.append({"approach": "ga", "run_seed": seed, "accuracy": 0.2, "params": 431, "batch_us": 2.0,
-                     "single_ms": 0.5, "training_s": 600.0, "search_s": np.nan, "level_reached": level})
+                     "single_ms": 0.5, "training_s": 600.0, "search_s": np.nan})
     return pd.DataFrame(rows)
 
 
@@ -127,40 +173,100 @@ def test_comparison_table():
     assert table.loc[0, "Search time (s)"] == "900.0" and table.loc[1, "Search time (s)"] == "–"
 
 
-def test_driving_table_aggregates_seeds():
-    per_track = pd.DataFrame([
-        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "race_time": 150.0, "lap_time": 50.0},
-        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "race_time": 162.0, "lap_time": 54.0},
-        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "race_time": 180.0, "lap_time": 60.0}])
-    table = evaluate.driving_table(per_track, metrics_frame())
-    row = table.iloc[0]
-    assert row["Method"] == "GA" and row["Seeds"] == 2 and row["Tracks completed (of 2)"] == "1.5 ± 0.7"
-    assert row["Mean lap time (s)"] == "53.50 ± 4.95" and row["Level reached (per seed)"] == "4, 3"
-    assert list(table.columns[:2]) == ["Method", "Seeds"]
+def test_results_table_counts_finishes_successes_and_target_reduction(tmp_path):
+    nan = np.nan
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("ga", 0, 1001, False, False, True, nan),
+                            ("ga", 1, 1000, True, False, False, 54.0), ("ga", 1, 1001, True, True, False, 60.0),
+                            ("es", 0, 1000, True, True, False, 52.0), ("es", 0, 1001, False, False, True, nan)])
+    write_json(paths.run_dir("ga", 0, tmp_path) / "summary.json", {"goal_reached": True, "target_reduction": 0.143})
+    write_json(paths.run_dir("ga", 1, tmp_path) / "summary.json", {"goal_reached": False})
+    table = evaluate.results_table(per_track, tmp_path)
+    assert list(table["Method"]) == ["ES", "GA"]
+    ga = table.set_index("Method").loc["GA"]
+    assert ga["Seeds"] == 2 and ga["Finished"] == "3 / 4" and ga["Finished per seed"] == "1, 2"
+    assert ga["Succeeded"] == "2 / 4" and ga["Succeeded per seed"] == "1, 1"
+    assert ga["Mean lap time (s)"] == "53.50 ± 4.95" and ga["Best lap time (s)"] == "50.00"
+    assert ga["Mean race time (s)"] == "160.5 ± 14.8" and ga["Crashes"] == "0.5 ± 0.7"
+    assert ga["Target reduction (per seed)"] == "14.3%, not reached"
+    assert table.set_index("Method").loc["ES", "Target reduction (per seed)"] == "–"
 
 
-def test_driving_table_names_the_seeds_a_lap_time_covers():
-    per_track = pd.DataFrame([
-        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "race_time": 150.0, "lap_time": 50.0},
-        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "race_time": 162.0, "lap_time": 54.0},
-        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "race_time": 180.0, "lap_time": 60.0},
-        {"approach": "ga", "run_seed": 2, "track": 1000, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "ga", "run_seed": 2, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "es", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "race_time": 156.0, "lap_time": 52.0},
-        {"approach": "es", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "es", "run_seed": 1, "track": 1000, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "es", "run_seed": 1, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "es_seeded", "run_seed": 0, "track": 1000, "finished": False, "crashed": True,
-         "race_time": np.nan, "lap_time": np.nan},
-        {"approach": "es_seeded", "run_seed": 0, "track": 1001, "finished": False, "crashed": True,
-         "race_time": np.nan, "lap_time": np.nan}])
-    table = evaluate.driving_table(per_track, metrics_frame()).set_index("Method")
-    assert table.loc["GA", "Seeds"] == 3 and table.loc["GA", "Tracks completed (of 2)"] == "1.0 ± 1.0"
-    assert table.loc["GA", "Mean lap time (s)"] == "53.50 ± 4.95 (2 of 3 seeds)"
-    assert table.loc["ES", "Seeds"] == 2 and table.loc["ES", "Mean lap time (s)"] == "52.00 (1 of 2 seeds)"
-    assert table.loc["Seeded ES", "Mean lap time (s)"] == "–"
+def test_head_to_head_compares_the_maps_every_controller_finished():
+    nan = np.nan
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("ga", 1, 1000, True, True, False, 54.0),
+                            ("es", 0, 1000, True, True, False, 51.0), ("ga", 0, 1001, True, True, False, 60.0),
+                            ("ga", 1, 1001, True, True, False, 58.0), ("es", 0, 1001, True, True, False, 62.0),
+                            ("ga", 0, 1002, True, True, False, 55.0), ("ga", 1, 1002, True, True, False, 55.0),
+                            ("es", 0, 1002, False, False, True, nan)])
+    table = evaluate.head_to_head_table(per_track).set_index("Method")
+    column = "Mean lap time on the 2 shared maps (s)"
+    assert table.loc["GA", column] == "55.50 ± 0.71" and table.loc["ES", column] == "56.50"
+    assert table.loc["GA", "Fastest on (maps)"] == 1 and table.loc["ES", "Fastest on (maps)"] == 1
+
+
+def test_head_to_head_without_shared_maps():
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("es", 0, 1000, False, False, True, np.nan)])
+    table = evaluate.head_to_head_table(per_track)
+    column = "Mean lap time on the 0 shared maps (s)"
+    assert list(table[column]) == ["–", "–"] and list(table["Fastest on (maps)"]) == [0, 0]
+
+
+def test_training_cost_table(tmp_path):
+    level = lambda n, generation, elapsed: {"level": n, "generation": generation, "evals": generation * 1000,
+                                            "elapsed": elapsed}
+    write_json(paths.run_dir("ga", 0, tmp_path) / "summary.json", {
+        "start_level": 1, "goal_reached": True, "outcome": "speed_limit", "generations": 1200, "evals": 1_200_000,
+        "wall_time": 36000.0, "level_reached": 4,
+        "levels": [level(1, 25, 60.0), level(2, 80, 600.0), level(3, 120, 1800.0), level(4, 300, 7200.0)]})
+    write_json(paths.run_dir("ga", 1, tmp_path) / "summary.json", {
+        "start_level": 1, "goal_reached": False, "outcome": "stalled", "generations": 2100, "evals": 2_100_000,
+        "wall_time": 5000.0, "level_reached": 2, "levels": [level(1, 30, 90.0)]})
+    write_json(paths.run_dir("baseline", 0, tmp_path) / "summary.json", {"wall_time": 15.0})
+    write_json(paths.run_dir("baseline", 0, tmp_path) / "dagger.json",
+               {"rounds": 7, "goal_reached": True, "wall_time": 3600.0})
+    write_json(paths.speed_dir("baseline", 0, tmp_path) / "summary.json", {
+        "start_level": 4, "goal_reached": True, "outcome": "speed_limit", "generations": 600, "evals": 330_000,
+        "wall_time": 7200.0, "level_reached": 4, "levels": [level(4, 40, 900.0)]})
+    write_json(paths.search_dir("kt_random", tmp_path) / "summary.json", {"wall_time": 914.2})
+    write_json(paths.run_dir("kt_random", 0, tmp_path) / "summary.json", {"wall_time": 12.0})
+    table = evaluate.training_cost_table(tmp_path)
+    assert list(table["Method"]) == ["Baseline", "KT Random", "GA", "GA"] and list(table["Seed"]) == [0, 0, 0, 1]
+    base, kt, ga0, ga1 = (table.iloc[k] for k in range(4))
+    assert ga0["Easy cleared"] == "gen 25 · 25,000 evals · 0.02 h"
+    assert ga0["Mastery goal"] == "gen 300 · 300,000 evals · 2.00 h"
+    assert ga0["Run end"] == "speed limit · gen 1,200" and ga0["Evaluations"] == "1,200,000"
+    assert ga0["Evolution (h)"] == "10.00" and ga0["Total (h)"] == "10.00" and ga0["Search (h)"] == "–"
+    assert ga1["Medium cleared"] == "not reached" and ga1["Mastery goal"] == "not reached"
+    assert ga1["Run end"] == "stalled on level 2 · gen 2,100"
+    assert base["Easy cleared"] == "–" and base["Mastery goal"] == "gen 40 · 40,000 evals · 0.25 h"
+    assert base["DAgger rounds"] == "7" and base["DAgger goal"] == "reached" and base["DAgger (h)"] == "1.00"
+    assert base["Imitation training (h)"] == "0.00" and base["Total (h)"] == "3.00"
+    assert kt["Search (h)"] == "0.25" and kt["Run end"] == "–" and kt["Mastery goal"] == "–"
+    assert kt["Evaluations"] == "–" and kt["DAgger rounds"] == "–" and kt["Total (h)"] == "0.00"
+
+
+def test_training_cost_table_without_records_is_empty(tmp_path):
+    assert evaluate.training_cost_table(tmp_path).empty
+
+
+def test_stage_results_and_table(fake_tracks, tmp_path):
+    flats = nets.init_population(np.random.default_rng(12), 2)
+    for stage, flat in zip(("imitation", "dagger"), flats):
+        path = paths.stage_path("baseline", 0, stage, tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        nets.to_keras(flat).save(path)
+    final = drive_rows([("baseline", 0, 1000, True, True, False, 50.0), ("ga", 0, 1000, True, True, False, 40.0)])
+    results = evaluate.stage_results(tmp_path, final, test_seeds=[1000])
+    assert sorted(results["stage"].unique()) == ["dagger", "imitation", "speed push"]
+    assert set(results["approach"]) == {"baseline"}
+    table = evaluate.stages_table(results)
+    assert list(table["Stage"]) == ["After imitation", "After DAgger", "After speed push"]
+    assert set(table["Method"]) == {"Baseline"} and table.loc[2, "Finished"] == "1 / 1"
+
+
+def test_stage_results_without_stage_files(tmp_path):
+    results = evaluate.stage_results(tmp_path, drive_rows([("ga", 0, 1000, True, True, False, 40.0)]), [1000])
+    assert results.empty and "stage" in results.columns and evaluate.stages_table(results).empty
 
 
 def test_search_cost_and_dataset_tables(tmp_path):
@@ -176,16 +282,31 @@ def test_search_cost_and_dataset_tables(tmp_path):
     assert data.loc[0, "Collection time (s)"] == 61.0 and data.loc[0, "Rows"] == 90000
 
 
-def test_figures_per_seed(tmp_path):
+def write_log(folder, events, shares, laps):
+    folder.mkdir(parents=True, exist_ok=True)
+    n = len(shares)
+    pd.DataFrame({"generation": range(n), "level": 1, "evals": np.arange(1, n + 1) * 10, "min_share": shares,
+                  "median_lap": laps, "step_size": np.linspace(0.1, 0.05, n),
+                  "event": events}).to_csv(folder / "log.csv", index=False)
+
+
+def test_figures_per_method(tmp_path):
     runs = tmp_path / "runs"
     for seed in (0, 1):
-        folder = paths.run_dir("ga", seed, runs)
-        folder.mkdir(parents=True)
-        pd.DataFrame({"generation": [0, 1, 2], "level": [1, 1, 2], "evals": [10, 20, 30], "best": [0.1, 0.5, 1.2],
-                      "mean": [0.05, 0.2, 0.6], "step_size": [np.nan, 0.25, 0.05],
-                      "leveled_up": [False, True, False]}).to_csv(folder / "log.csv", index=False)
+        write_log(paths.run_dir("ga", seed, runs), [None, "level_up", None, "goal"], [0.1, 0.92, 0.5, 0.95],
+                  [np.nan, np.nan, 40.0, 38.5])
+    write_log(paths.speed_dir("baseline", 0, runs), [None, "goal", "tightened"], [0.91, 0.93, 0.95],
+              [45.0, 44.0, 42.0])
+    logs = evaluate.evolution_logs(runs)
+    assert sorted(logs) == ["baseline", "ga"] and sorted(logs["ga"]) == [0, 1] and sorted(logs["baseline"]) == [0]
     written = evaluate.figures(runs, tmp_path / "figures")
-    assert [p.name for p in written] == ["fitness_curves.png", "step_sizes.png"]
+    assert [p.name for p in written] == ["success_over_training.png", "lap_time_over_training.png",
+                                         "step_sizes.png"]
+
+
+def test_light_series_colors_get_an_outline():
+    assert evaluate._outline(config.COLORS["neat"]) is not None
+    assert evaluate._outline(config.COLORS["ga"]) is None and evaluate._outline(config.COLORS["es"]) is None
 
 
 def export_search(runs, approach, flats):
@@ -245,25 +366,22 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     champions, runs = tmp_path / "champions", tmp_path / "runs"
     rng = np.random.default_rng(5)
     for approach, seed in (("ga", 0), ("ga", 2), ("es", 1)):
-        population.save_dense_champion(approach, seed, nets.DensePopulation(nets.init_population(rng, 1)), 0, champions)
-    folder = paths.run_dir("ga", 0, runs)
-    folder.mkdir(parents=True)
-    (folder / "summary.json").write_text(json.dumps({"wall_time": 12.0, "level_reached": 2}))
+        population.save_dense_champion(approach, seed, nets.DensePopulation(nets.init_population(rng, 1)), 0,
+                                       champions)
+    write_json(paths.run_dir("ga", 0, runs) / "summary.json", {
+        "wall_time": 12.0, "level_reached": 2, "goal_reached": False, "outcome": "stalled", "generations": 10,
+        "evals": 1000, "start_level": 1, "levels": [{"level": 1, "generation": 4, "evals": 400, "elapsed": 5.0}]})
     np.savez(tmp_path / "dataset.npz", X_test=rng.random((40, config.N_INPUTS)).astype(np.float32),
              y_test=rng.integers(0, 15, 40))
     results = evaluate.main(champions_dir=champions, runs_dir=runs, data_path=tmp_path / "dataset.npz",
                             out_dir=tmp_path / "out", test_seeds=[1000], val_seeds=[80], latency_calls=5)
-    assert list(results["comparison"]["Method"]) == ["ES", "GA"]
+    assert set(results) == {"results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
+                            "driving_selected", "dataset", "per_track", "validation", "metrics", "best_seeds",
+                            "figures"}
+    assert list(results["results"]["Method"]) == ["ES", "GA"] and list(results["comparison"]["Method"]) == ["ES", "GA"]
+    cost = results["training_cost"].set_index("Seed")
+    assert cost.loc[0, "Mastery goal"] == "not reached" and cost.loc[0, "Run end"] == "stalled on level 2 · gen 10"
     assert json.loads((champions / "best_seeds.json").read_text()).keys() == {"ga", "es"}
-    for name in ("comparison", "driving", "search_cost", "driving_selected", "dataset"):
+    for name in ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
+                 "driving_selected", "dataset"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
-
-
-def test_figures_read_revision_3_logs(tmp_path):
-    folder = tmp_path / "runs" / "ga" / "seed0"
-    folder.mkdir(parents=True)
-    pd.DataFrame({"generation": [0, 1, 2], "evals": [20, 40, 60], "best": [0.5, 1.2, 1.4],
-                  "step_size": [np.nan, 0.1, 0.09], "event": ["", "level_up", ""]}).to_csv(folder / "log.csv",
-                                                                                          index=False)
-    written = evaluate.figures(tmp_path / "runs", tmp_path / "figures")
-    assert tmp_path / "figures" / "fitness_curves.png" in written

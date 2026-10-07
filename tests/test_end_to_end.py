@@ -35,7 +35,8 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
                             test_seeds=[1000], val_seeds=[80], n_jobs=2, latency_calls=20)
     assert list(results["comparison"]["Method"]) == ["Baseline", "KT Random", "ES", "GA", "Seeded ES"]
     assert list(results["driving_selected"]["Method"]) == ["KT Random"]
-    for name in ("comparison", "driving", "search_cost", "driving_selected", "dataset"):
+    for name in ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
+                 "driving_selected", "dataset"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
     best = json.loads((champions / "best_seeds.json").read_text())
     assert best["baseline"] in (0, 1) and best["es_seeded"] == 1
