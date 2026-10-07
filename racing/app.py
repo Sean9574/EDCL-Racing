@@ -15,7 +15,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import numpy as np
 import pygame
 
-from racing import config, nets, paths, sim
+from racing import config, netwindow, nets, paths, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -310,6 +310,11 @@ class App:
         self.playback_generation = None
         self.indices = None
         self.best_slot = 0
+        # network window
+        self.net_process = None
+        self.net_queue = None
+        self.net_choice = 0                 # index into the race lineup
+        self.net_sent = None                # identity of the network the window shows
         # race view
         self.champions_dir = config.CHAMPIONS_DIR
         self.race_index = 0                 # into config.TEST_SEEDS
@@ -363,6 +368,7 @@ class App:
                                              self.running))
         self.process.start()
         self.latest, self.history, self.playback, self.playback_generation = None, [], None, None
+        self.net_sent = None                                 # a new run's first report goes to the window
         self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
 
     def toggle_play(self):
@@ -428,6 +434,91 @@ class App:
             self.history.append((report["generation"], float(report["min_share"]), float("nan"), marked))
         else:
             self.history.append((report["generation"], report["best"], report["mean"], report["leveled_up"]))
+
+    # ----- network window -----
+    def toggle_network_window(self):
+        """Open the separate network window, or close it if it is open."""
+        if self.net_process is not None:
+            self.close_network_window()
+            return
+        context = mp.get_context("spawn")
+        self.net_queue = context.Queue()
+        self.net_process = context.Process(target=netwindow.window_process, daemon=False, args=(self.net_queue,))
+        self.net_process.start()
+        self.net_sent = None
+
+    def close_network_window(self):
+        """Ask the window to quit, wait briefly, terminate it if it stays, and forget it."""
+        if self.net_process is not None and self.net_process.is_alive():
+            self.net_queue.put(None)
+            self.net_process.join(timeout=2)
+            if self.net_process.is_alive():
+                self.net_process.terminate()
+                self.net_process.join(timeout=1)
+        self.reset_network_window()
+
+    def reset_network_window(self):
+        if self.net_queue is not None and hasattr(self.net_queue, "cancel_join_thread"):
+            self.net_queue.cancel_join_thread()
+            self.net_queue.close()
+        self.net_process, self.net_queue, self.net_sent = None, None, None
+
+    def selected_car(self):
+        """(approach, seed) of the race car whose network the window shows: the first car if the choice is outside
+        the lineup; None for an empty lineup."""
+        if not self.lineup:
+            return None
+        return self.lineup[self.net_choice if 0 <= self.net_choice < len(self.lineup) else 0]
+
+    def cycle_network_car(self):
+        if self.lineup:
+            self.net_choice = (self.lineup.index(self.selected_car()) + 1) % len(self.lineup)
+
+    def network_car_label(self):
+        car = self.selected_car()
+        return "Network of: –" if car is None else f"Network of: {config.LABELS[car[0]]} s{car[1]} ▸"
+
+    def shown_network(self):
+        """(identity, driver, title) of the network the window should show now, or None."""
+        if self.mode == "train":
+            report = self.latest
+            if report is None:
+                return None
+            approach, generation = report["approach"], report["generation"]
+            if "population" in report:
+                driver, unit = report["population"].driver(int(np.argmax(report["fitness"]))), "generation"
+            else:
+                driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
+            title = (f"{config.LABELS[approach]} · seed {self.run_seed} · {unit} {generation} · "
+                     f"{driver.n_params:,} parameters")
+            return ("train", approach, self.run_seed, generation), driver, title
+        car = self.selected_car()
+        if car is None:
+            return None
+        identity = ("race", *car)
+        if identity == self.net_sent:
+            return identity, None, None
+        try:
+            driver = self.driver(*car)
+        except Exception:
+            self.failed.add(car)
+            self.lineup.remove(car)
+            self.status = f"Controller {config.LABELS[car[0]]} seed {car[1]} could not be loaded; skipped."
+            return None
+        return identity, driver, f"{config.LABELS[car[0]]} · seed {car[1]} · {driver.n_params:,} parameters"
+
+    def poll_network_window(self):
+        """Forget a window the user closed; send the shown network when it changed."""
+        if self.net_process is None:
+            return
+        if not self.net_process.is_alive():
+            self.reset_network_window()
+            return
+        shown = self.shown_network()
+        if shown is not None and shown[0] != self.net_sent:
+            identity, driver, title = shown
+            self.net_queue.put(netwindow.network_message(driver, title))
+            self.net_sent = identity
 
     # ----- settings (changeable only while no training runs) -----
     def select_approach(self, approach):
@@ -576,11 +667,13 @@ class App:
         self.racing = False
         self.race = None
         self.step_budget = 0.0
+        selected = self.selected_car()
         self.lineup = []
         for approach in self.race_available:
             seed = self.chosen_seed(approach)
             if seed is not None and (approach, seed) not in self.failed:
                 self.lineup.append((approach, seed))
+        self.net_choice = self.lineup.index(selected) if selected in self.lineup else 0
 
     def driver(self, approach, seed):
         if (approach, seed) not in self.drivers:
@@ -630,6 +723,7 @@ class App:
 
     def update(self, dt):
         self.poll_reports()
+        self.poll_network_window()
         if self.mode == "train":
             if self.latest is not None and (self.playback is None or self.playback.over):
                 track = self.request_track(self.latest["seeds"][0], self.latest["level"])
@@ -826,10 +920,16 @@ class App:
         self.button(pygame.Rect(x, y, w, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
                     self.rays)
         y += 34
+        y = self.draw_network_button(x, y, w)
         y = self.draw_stats(x, y)
         bottom = self.panel.bottom - 34
         if bottom - y > 50:
             self.draw_plot(pygame.Rect(x, y + 4, w, bottom - y - 4))
+
+    def draw_network_button(self, x, y, w):
+        self.button(pygame.Rect(x, y, w, 26), "Network window", self.toggle_network_window,
+                    self.net_process is not None)
+        return y + 34
 
     def draw_stats(self, x, y):
         y = self.text(self.map_text(), x, y, self.small)
@@ -894,6 +994,10 @@ class App:
                     enabled=idle and bool(self.lineup))
         self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop_race, enabled=self.racing)
         y += 42
+        y = self.draw_network_button(x, y, w)
+        self.button(pygame.Rect(x, y - 6, w, 26), self.network_car_label(), self.cycle_network_car,
+                    enabled=bool(self.lineup))
+        y += 28
         y = self.text("Controllers", x, y, self.small, MUTED)
         for approach in self.race_available:
             self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
@@ -927,6 +1031,7 @@ def main():
             pygame.display.flip()
     finally:
         viewer.stop_training()
+        viewer.close_network_window()
         pygame.quit()
 
 

@@ -122,3 +122,19 @@ def draw_networks(drivers, path):
     fig.savefig(path, dpi=200)
     plt.close(fig)
     return path
+
+
+def render_graph(graph, title, size):
+    """One network diagram as an RGB uint8 array of shape (height, width, 3) for size = (width, height) pixels, drawn
+    off screen with the same style as draw_networks (no files, no pyplot, no global backend)."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    width, height = max(int(size[0]), 1), max(int(size[1]), 1)
+    dpi = 100
+    fig = Figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_axes([0.01, 0.01, 0.98, 0.91])
+    _draw_graph(ax, graph)
+    ax.set_title(title, fontsize=10)
+    canvas.draw()
+    return np.asarray(canvas.buffer_rgba())[..., :3].copy()

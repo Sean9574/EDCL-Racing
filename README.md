@@ -213,6 +213,10 @@ On Windows 11 the window opens through WSLg.
 - **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
   line. For each method, choose its best seed, a specific seed, or off, then press Start race; Stop returns to the
   start line.
+- **Network window:** the Network window button opens a separate window (movable to another monitor, resizable,
+  closed with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
+  generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in
+  the race view the Network of button cycles through the cars in the race.
 - **Difficulty:** Easy (gentle loops on a wide road), Medium (circuits), Hard (circuits with a main straight into a
   hairpin, sometimes a chicane or esses), Extra hard (narrow circuits with two hairpins, chicanes, esses and fast
   sweepers). Maps run clockwise or counter-clockwise.

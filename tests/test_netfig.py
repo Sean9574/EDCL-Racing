@@ -53,3 +53,19 @@ def test_draw_networks_writes_a_png(tmp_path):
 def test_draw_networks_without_controllers_raises(tmp_path):
     with pytest.raises(ValueError):
         netfig.draw_networks({}, tmp_path / "networks.png")
+
+
+@pytest.mark.parametrize("make", [dense_driver, neat_driver])
+def test_render_graph_returns_an_rgb_image_of_the_requested_size(make):
+    image = netfig.render_graph(netfig.network_graph(make()), "title", (640, 480))
+    assert image.shape == (480, 640, 3) and image.dtype == np.uint8
+    assert len(np.unique(image.reshape(-1, 3), axis=0)) > 10                           # not blank
+    rgb = image.astype(int)
+    red, blue = rgb[..., 0] - rgb[..., 2] > 40, rgb[..., 2] - rgb[..., 0] > 40       # faint lines are tinted
+    assert red.any() and blue.any()                                                    # both weight signs
+
+
+def test_render_graph_follows_the_size():
+    graph = netfig.network_graph(neat_driver())
+    assert netfig.render_graph(graph, "t", (300, 200)).shape == (200, 300, 3)
+    assert netfig.render_graph(graph, "t", (1, 1)).shape[2] == 3

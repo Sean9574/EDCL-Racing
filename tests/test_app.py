@@ -906,3 +906,186 @@ def test_a_light_color_swatch_is_outlined(window):
         window.swatch(approach, rect)
         assert (tuple(window.screen.get_at(rect.topleft))[:3] == viewer.INK) == outlined
         assert tuple(window.screen.get_at(rect.center))[:3] == viewer.hex_to_rgb(config.COLORS[approach])
+
+
+# ----- network window -----
+class NetProcess:
+    """Stands in for the network window's process."""
+    instances = []
+
+    def __init__(self, target, args, daemon):
+        self.target, self.args, self.daemon = target, args, daemon
+        self.alive, self.started, self.joined, self.terminated = False, False, False, False
+        NetProcess.instances.append(self)
+
+    def start(self):
+        self.started = self.alive = True
+
+    def is_alive(self):
+        return self.alive
+
+    def join(self, timeout=None):
+        self.joined = True
+        if self.args[0].items and self.args[0].items[-1] is None:      # the window obeys the quit message
+            self.alive = False
+
+    def terminate(self):
+        self.terminated, self.alive = True, False
+
+
+class NetQueue(FakeQueue):
+    def put(self, item):
+        self.items.append(item)
+
+
+@pytest.fixture
+def net(window, monkeypatch):
+    NetProcess.instances = []
+
+    class Context:
+        Process = NetProcess
+
+        def Queue(self):
+            return NetQueue()
+
+    monkeypatch.setattr(viewer.mp, "get_context", lambda method: Context())
+    return window
+
+
+def sent(window):
+    return [m for m in window.net_queue.items if m is not None]
+
+
+def test_the_network_button_opens_and_closes_one_window_process(net):
+    net.toggle_network_window()
+    process = NetProcess.instances[0]
+    assert process.started and process.daemon is False and process.target is viewer.netwindow.window_process
+    net.toggle_network_window()
+    assert len(NetProcess.instances) == 1 and process.joined and not process.terminated
+    assert net.net_process is None and net.net_queue is None
+
+
+def test_a_window_that_ignores_quit_is_terminated(net):
+    net.toggle_network_window()
+    process = NetProcess.instances[0]
+    process.join = lambda timeout=None: None
+    net.toggle_network_window()
+    assert process.terminated and net.net_process is None
+
+
+def test_a_closed_window_resets_the_state(net):
+    net.toggle_network_window()
+    NetProcess.instances[0].alive = False                       # the user closed it
+    net.update(1 / 60)
+    assert net.net_process is None and net.net_queue is None and net.net_sent is None
+    net.toggle_network_window()
+    assert len(NetProcess.instances) == 2                       # the button opens it again
+
+
+def test_a_new_report_sends_exactly_one_message(net):
+    net.toggle_network_window()
+    net.update(1 / 60)
+    assert sent(net) == []                                      # nothing to show yet
+    report = ga_report(0)
+    net.receive(report)
+    net.update(1 / 60)
+    net.update(1 / 60)
+    assert len(sent(net)) == 1
+    best = int(np.argmax(report["fitness"]))
+    assert sent(net)[0]["graph"] == viewer.netwindow.netfig.network_graph(report["population"].driver(best))
+    assert sent(net)[0]["title"] == f"GA · seed {net.run_seed} · generation 0 · {report['population'].driver(best).n_params:,} parameters"
+    net.receive(ga_report(1))
+    net.update(1 / 60)
+    assert len(sent(net)) == 2
+
+
+def test_the_neat_window_shows_the_evolved_genome(net):
+    net.approach = "neat"
+    net.toggle_network_window()
+    net.receive(neat_report(3))
+    net.update(1 / 60)
+    assert "generation 3" in sent(net)[0]["title"] and sent(net)[0]["title"].startswith(config.LABELS["neat"])
+
+
+def test_imitation_shows_the_latest_member(net):
+    net.approach = "baseline"
+    members = [nets.from_flat(row) for row in nets.init_population(np.random.default_rng(1), 3)]
+    net.toggle_network_window()
+    net.receive({"approach": "baseline", "generation": 2, "level": 1, "seeds": [0], "nets": members,
+                 "fitness": np.array([0.1, 0.2, 0.3]), "best": 0.3, "mean": 0.2, "worst": 0.1, "leveled_up": False})
+    net.update(1 / 60)
+    message = sent(net)[0]
+    assert message["graph"] == viewer.netwindow.netfig.network_graph(members[-1]) and " epoch 2 " in message["title"]
+
+
+def test_a_reopened_window_gets_the_current_network(net):
+    net.receive(ga_report(0))
+    net.toggle_network_window()
+    net.update(1 / 60)
+    net.toggle_network_window()
+    net.toggle_network_window()
+    net.update(1 / 60)
+    assert len(sent(net)) == 1
+
+
+def three_car_race(window, tmp_path):
+    save_race_champions(tmp_path, approaches=(("es", 0), ("ga", 0), ("neat", 0)))
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    assert window.lineup == [("es", 0), ("ga", 0), ("neat", 0)]
+
+
+def test_the_race_cycle_button_walks_the_lineup_and_wraps(net, tmp_path):
+    three_car_race(net, tmp_path)
+    net.toggle_network_window()
+    net.update(1 / 60)
+    assert len(sent(net)) == 1 and sent(net)[0]["title"].startswith(f"{config.LABELS['es']} · seed 0 · ")
+    assert "generation" not in sent(net)[0]["title"]
+    net.update(1 / 60)
+    assert len(sent(net)) == 1                                  # unchanged: nothing sent
+    seen = []
+    for _ in range(4):
+        net.cycle_network_car()
+        seen.append(net.net_choice)
+        net.update(1 / 60)
+    assert seen == [1, 2, 0, 1] and len(sent(net)) == 5
+    assert sent(net)[-1]["title"].startswith(f"{config.LABELS['ga']} · seed 0")
+
+
+def test_the_selection_falls_back_to_the_first_car(net, tmp_path):
+    three_car_race(net, tmp_path)
+    net.net_choice = 2                                          # neat
+    while net.race_choice["neat"] != "off":
+        net.cycle_choice("neat")
+    assert net.lineup == [("es", 0), ("ga", 0)] and net.net_choice == 0
+    net.net_choice = 5
+    assert net.selected_car() == ("es", 0)
+
+
+def test_the_selection_stays_on_its_car_when_others_leave(net, tmp_path):
+    three_car_race(net, tmp_path)
+    net.net_choice = 1                                          # ga
+    while net.race_choice["es"] != "off":
+        net.cycle_choice("es")
+    assert net.lineup == [("ga", 0), ("neat", 0)] and net.selected_car() == ("ga", 0) and net.net_choice == 0
+
+
+def test_the_network_buttons_fit_both_panels(net, tmp_path):
+    for approach in config.APPROACHES:
+        net.approach = approach
+        net.draw()
+        assert any(rect.height and action == net.toggle_network_window for rect, action in net.buttons)
+        assert all(rect.bottom <= net.panel.bottom - 30 for rect, _ in net.buttons), approach
+    save_race_champions(tmp_path, approaches=[(approach, 0) for approach in config.APPROACHES])
+    net.champions_dir = tmp_path
+    net.set_mode("race")
+    net.update(1 / 60)
+    net.start_race()
+    net.update(1 / 60)
+    net.buttons = []
+    net.draw()
+    actions = [action for _, action in net.buttons]
+    assert net.toggle_network_window in actions and net.cycle_network_car in actions
+    assert all(rect.bottom <= net.panel.bottom - 30 for rect, _ in net.buttons)
+    approach, seed = net.lineup[0]
+    assert net.network_car_label() == f"Network of: {config.LABELS[approach]} s{seed} ▸"
