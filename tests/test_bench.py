@@ -12,9 +12,9 @@ def test_estimate_with_two_processes():
 
 
 def test_evaluate_population_multiprocess_consistency():
-    """Multi-process evaluation must match single-process on real level-1 track."""
+    """Multi-process evaluation must match single-process on a real level-1 track."""
     weights = nets.init_population(np.random.default_rng(0), 8)
-    fitness_single, finished_single = population.evaluate_population(weights, [0], 1)
-    fitness_multi, finished_multi = population.evaluate_population(weights, [0], 1, n_jobs=2)
-    assert np.array_equal(fitness_single, fitness_multi)
-    assert np.array_equal(finished_single, finished_multi)
+    single = population.evaluate_population(weights, [0, 1], 1)
+    multi = population.evaluate_population(weights, [0, 1], 1, n_jobs=2)
+    for a, b in zip(single, multi):
+        assert np.array_equal(a, b)

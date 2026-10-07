@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import config
+from racing import config, paths
 from racing.backend import keras_cpu
 
 
@@ -138,3 +138,43 @@ def load_champions(directory=None):
         if path.exists():
             models[approach] = keras_cpu().models.load_model(path)
     return models
+
+
+def to_flat(model):
+    """Flat float64 weights of a dense Keras model, in the layout of unflatten (the inverse of to_keras)."""
+    keras = keras_cpu()
+    parts = []
+    for layer in model.layers:
+        if isinstance(layer, keras.layers.Dense):
+            w, b = layer.get_weights()
+            parts += [np.asarray(w, dtype=float).ravel(), np.asarray(b, dtype=float)]
+    return np.concatenate(parts)
+
+
+def mixed_policy(drivers):
+    """Policy for sim.simulate: car i is driven by drivers[i]; the networks may differ in architecture."""
+    def policy(obs, cars):
+        return np.array([driver.act(obs[i:i + 1])[0] for i, driver in enumerate(drivers)], dtype=np.int64)
+    return policy
+
+
+def champion_seeds(directory=None):
+    """{approach: [run seeds]} of the final controllers saved as <directory>/<approach>/seed<k>.keras, in the
+    order of config.APPROACHES. Approaches without controllers are left out."""
+    directory = Path(config.CHAMPIONS_DIR if directory is None else directory)
+    found = {}
+    for approach in config.APPROACHES:
+        seeds = sorted(int(p.stem[len("seed"):]) for p in (directory / approach).glob("seed*.keras"))
+        if seeds:
+            found[approach] = seeds
+    return found
+
+
+def load_champion(approach, seed, directory=None):
+    """(Keras model, DenseNet driver) of one final controller. Evolutionary controllers drive with the float64
+    weights saved next to the Keras file (spec §6)."""
+    keras_path = paths.champion_path(approach, seed, champion_dir=directory)
+    model = keras_cpu().models.load_model(keras_path)
+    flat_path = paths.champion_path(approach, seed, ".npy", directory)
+    driver = from_flat(np.load(flat_path)) if flat_path.exists() else from_keras(model)
+    return model, driver

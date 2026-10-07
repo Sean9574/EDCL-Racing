@@ -1,6 +1,6 @@
 import numpy as np
 
-from racing import config, nets
+from racing import config, nets, population
 
 
 def test_baseline_parameter_count():
@@ -79,3 +79,42 @@ def test_load_champions_keeps_standard_order(tmp_path):
     nets.to_keras(w).save(tmp_path / "ga.keras")
     nets.to_keras(w).save(tmp_path / "baseline.keras")
     assert list(nets.load_champions(tmp_path)) == ["baseline", "ga"]
+
+
+def test_to_flat_inverts_to_keras():
+    flat = nets.init_population(np.random.default_rng(4), 1)[0]
+    back = nets.to_flat(nets.to_keras(flat))
+    assert back.dtype == np.float64 and np.array_equal(back, flat.astype(np.float32).astype(np.float64))
+
+
+def test_champion_seeds_in_standard_order(tmp_path):
+    for approach, seed in (("ga", 1), ("es_seeded", 2), ("baseline", 0), ("ga", 0)):
+        (tmp_path / approach).mkdir(exist_ok=True)
+        (tmp_path / approach / f"seed{seed}.keras").write_bytes(b"")
+    found = nets.champion_seeds(tmp_path)
+    assert list(found) == ["baseline", "ga", "es_seeded"] and found["ga"] == [0, 1]
+    assert nets.champion_seeds(tmp_path / "missing") == {}
+
+
+def test_load_champion_drives_with_float64_weights(tmp_path):
+    flat = nets.init_population(np.random.default_rng(5), 1)[0]
+    population.save_champion("es", 0, flat, tmp_path)
+    model, driver = nets.load_champion("es", 0, tmp_path)
+    assert model.count_params() == 431
+    assert np.array_equal(np.concatenate([np.concatenate([w.ravel(), b]) for w, b in driver.layers]), flat)
+
+
+def test_load_champion_without_weights_file_uses_the_keras_model(tmp_path):
+    model = nets.to_keras(nets.init_population(np.random.default_rng(6), 1)[0])
+    (tmp_path / "baseline").mkdir()
+    model.save(tmp_path / "baseline" / "seed0.keras")
+    _, driver = nets.load_champion("baseline", 0, tmp_path)
+    assert driver.n_params == 431
+
+
+def test_mixed_policy_drives_each_car_with_its_own_network():
+    rng = np.random.default_rng(7)
+    drivers = [nets.from_flat(f) for f in nets.init_population(rng, 3)]
+    obs = rng.random((3, config.N_INPUTS))
+    actions = nets.mixed_policy(drivers)(obs, None)
+    assert list(actions) == [drivers[i].act(obs[i:i + 1])[0] for i in range(3)]
