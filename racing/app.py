@@ -2,6 +2,7 @@
 
 Run with:  ~/miniconda3/bin/python -m racing.app
 """
+import json
 import multiprocessing as mp
 import os
 import queue
@@ -111,10 +112,11 @@ def report_policy(report, indices):
     return nets.mixed_policy([report["nets"][i] for i in indices])
 
 
-def leaderboard(playback, names):
-    """Rows (position, name, laps completed, last lap, best lap, status), ordered by distance covered."""
+def leaderboard(playback, count):
+    """Rows (position, car index, laps completed, last lap, best lap, status), ordered by distance covered."""
+    nan = float("nan")
     if playback is None:
-        return [(k + 1, name, 0, float("nan"), float("nan"), "ready") for k, name in enumerate(names)]
+        return [(k + 1, k, 0, nan, nan, "ready") for k in range(count)]
     cars = playback.cars
     rows = []
     for position, i in enumerate(np.argsort(-cars.progress, kind="stable")):
@@ -126,7 +128,8 @@ def leaderboard(playback, names):
             status = "stopped"
         else:
             status = "racing"
-        rows.append((position + 1, names[i], int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]), status))
+        rows.append((position + 1, int(i), int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]),
+                     status))
     return rows
 
 
@@ -232,10 +235,15 @@ class App:
         self.best_slot = 0
         # race view
         self.champions_dir = config.CHAMPIONS_DIR
-        self.race_seed = 0
-        self.race_names = []
-        self.race_nets = None
-        self.race = None
+        self.race_index = 0                 # into config.TEST_SEEDS
+        self.race_level = config.MAX_LEVEL
+        self.race_available = {}            # approach -> run seeds with a saved controller
+        self.race_choice = {}               # approach -> "best", a run seed, or "off"
+        self.best = {}                      # approach -> best run seed recorded by the evaluation
+        self.drivers = {}                   # (approach, seed) -> DenseNet
+        self.lineup = []                    # (approach, seed) of the cars in the race
+        self.race = None                    # Playback: the preview until the race starts
+        self.racing = False
 
     # ----- tracks -----
     def request_track(self, seed, level):
@@ -301,7 +309,10 @@ class App:
         self.discard_reports()
 
     def stop(self):
-        """Stop control of the training view: training ends and the settings can be changed again."""
+        """Stop control: ends training in the training view and the race in the race view."""
+        if self.mode == "race":
+            self.stop_race()
+            return
         self.stop_training()
         self.status = "Stopped. Change the settings or press Play."
 
@@ -384,14 +395,6 @@ class App:
         self.shown = 1 + int(round(fraction * (self.population_size() - 1)))
         self.playback = None
 
-    def set_mode(self, mode):
-        self.mode = mode
-        self.step_budget = 0.0
-        if mode == "race" and not self.race_names:
-            self.load_race()
-        elif mode == "train" and self.status.startswith("No trained controllers"):
-            self.status = "Training view."
-
     # ----- playback -----
     def start_playback(self, report, track):
         fitness = np.asarray(report["fitness"], dtype=float)
@@ -418,27 +421,105 @@ class App:
             return "Map: shown with the first generation"
         return "Map: building the track"
 
+    def set_mode(self, mode):
+        self.mode = mode
+        self.step_budget = 0.0
+        if mode == "race" and not self.race_available:
+            self.load_race()
+        elif mode == "train" and self.status.startswith("No trained controllers"):
+            self.status = "Training view."
+
+    # ----- race view -----
     def load_race(self):
-        models = nets.load_champions(self.champions_dir)
-        self.race_names = list(models)
-        self.race_nets = [nets.from_keras(model) for model in models.values()]
-        if self.race_names:
+        """Find the saved final controllers and each approach's best run seed (spec §10.3)."""
+        self.race_available = nets.champion_seeds(self.champions_dir)
+        best_path = paths.best_seeds_path(self.champions_dir)
+        self.best = {}
+        if best_path.exists():
+            self.best = {approach: int(seed) for approach, seed in json.loads(best_path.read_text()).items()}
+        self.race_choice = {approach: self.race_choice.get(approach, "best") for approach in self.race_available}
+        if self.race_available:
             self.status = "Race view."
         else:
             self.status = f"No trained controllers found in {self.champions_dir}."
+        self.reset_race()
+
+    def chosen_seed(self, approach):
+        """The run seed whose controller races for `approach`, or None if the approach is off. Without an
+        evaluation record, 'best' falls back to the lowest saved seed."""
+        choice = self.race_choice.get(approach, "best")
+        if choice == "off":
+            return None
+        seeds = self.race_available[approach]
+        if choice == "best":
+            best = self.best.get(approach)
+            return best if best in seeds else seeds[0]
+        return choice
+
+    def choice_label(self, approach):
+        choice = self.race_choice.get(approach, "best")
+        if choice == "best":
+            return f"best (seed {self.chosen_seed(approach)})"
+        if choice == "off":
+            return "off"
+        return f"seed {choice}"
+
+    def cycle_choice(self, approach):
+        if self.racing:
+            return
+        options = ["best", *self.race_available[approach], "off"]
+        current = self.race_choice.get(approach, "best")
+        self.race_choice[approach] = options[(options.index(current) + 1) % len(options)]
+        self.reset_race()
+
+    def reset_race(self):
+        """Back to the map preview: the selected controllers wait on the start line."""
+        self.racing = False
+        self.race = None
+        self.step_budget = 0.0
+        self.lineup = []
+        for approach in self.race_available:
+            seed = self.chosen_seed(approach)
+            if seed is not None:
+                self.lineup.append((approach, seed))
+
+    def driver(self, approach, seed):
+        if (approach, seed) not in self.drivers:
+            self.drivers[(approach, seed)] = nets.load_champion(approach, seed, self.champions_dir)[1]
+        return self.drivers[(approach, seed)]
+
+    def race_track(self):
+        return self.request_track(config.TEST_SEEDS[self.race_index], self.race_level)
+
+    def prepare_race(self):
+        """Build the preview once the track is ready: every selected car on the start line."""
+        if self.race is None and self.lineup:
+            track = self.race_track()
+            if track is not None:
+                drivers = [self.driver(approach, seed) for approach, seed in self.lineup]
+                self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS)
 
     def start_race(self):
-        if not self.race_names:
-            return
-        track = self.request_track(config.TEST_SEEDS[self.race_seed], config.MAX_LEVEL)
-        if track is None:
-            return
-        self.race = Playback(track, nets.mixed_policy(self.race_nets), len(self.race_nets), laps=config.RACE_LAPS)
-        self.step_budget = 0.0
+        self.prepare_race()
+        if self.race is not None:
+            self.racing = True
+            self.status = "Racing."
+
+    def stop_race(self):
+        self.reset_race()
+        self.status = "Race stopped. Change the controllers, track or difficulty, or start again."
 
     def change_race_track(self, direction):
-        self.race_seed = (self.race_seed + direction) % len(config.TEST_SEEDS)
-        self.race = None
+        if self.racing:
+            return
+        self.race_index = (self.race_index + direction) % len(config.TEST_SEEDS)
+        self.reset_race()
+
+    def set_race_level(self, level):
+        if self.racing:
+            return
+        self.race_level = level
+        self.reset_race()
 
     def update(self, dt):
         self.poll_reports()
@@ -449,7 +530,8 @@ class App:
                     self.start_playback(self.latest, track)
             active = self.playback
         else:
-            active = self.race
+            self.prepare_race()
+            active = self.race if self.racing else None
         if active is not None:
             self.step_budget += self.speed * config.PLAYBACK_BASE * dt / config.DT
             steps = int(self.step_budget)
@@ -498,7 +580,7 @@ class App:
             track, playback = self.shown_track(), self.playback
         else:
             playback = self.race
-            track = playback.track if playback is not None else None
+            track = playback.track if playback is not None else (self.race_track() if self.race_available else None)
         if track is not None:
             camera, surface = self.track_surface(track)
             self.screen.blit(surface, self.view.topleft)
@@ -532,8 +614,8 @@ class App:
         cars = playback.cars
         sx, sy = camera.to_screen(cars.x, cars.y)
         size = max(8.0, 6.0 * camera.scale)
-        for i, name in enumerate(self.race_names):
-            color = hex_to_rgb(config.COLORS[name])
+        for i, (approach, _) in enumerate(self.lineup):
+            color = hex_to_rgb(config.COLORS[approach])
             if cars.crashed[i]:
                 color = tuple(int(0.5 * c + 127) for c in color)          # faded
             shape = car_polygon(sx[i], sy[i], cars.heading[i], size)
@@ -677,22 +759,36 @@ class App:
                           [point(g, v) for g, v in zip(gens, best)], 2)
 
     def draw_race_panel(self, x, y, w):
-        if not self.race_names:
+        if not self.race_available:
             self.text("No trained controllers found.", x, y, self.small, MUTED)
             return
-        y = self.text("Test track", x, y, self.small, MUTED)
-        self.button(pygame.Rect(x, y, 30, 28), "<", lambda: self.change_race_track(-1))
-        self.text(f"seed {config.TEST_SEEDS[self.race_seed]}", x + 44, y + 5)
-        self.button(pygame.Rect(x + 140, y, 30, 28), ">", lambda: self.change_race_track(1))
-        y += 40
-        self.button(pygame.Rect(x, y, w, 34), "Start race", self.start_race)
-        y += 46
+        idle = not self.racing
+        self.text("Test track", x, y + 5, self.small, MUTED)
+        self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_race_track(-1), enabled=idle)
+        self.text(f"seed {config.TEST_SEEDS[self.race_index]}", x + 150, y + 5)
+        self.button(pygame.Rect(x + 240, y, 30, 28), ">", lambda: self.change_race_track(1), enabled=idle)
+        y += 36
+        y = self.draw_difficulty(x, y, w, self.race_level, self.set_race_level, idle)
+        half = (w - 8) // 2
+        self.button(pygame.Rect(x, y, half, 32), "Start race", self.start_race, self.racing,
+                    enabled=idle and bool(self.lineup))
+        self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop_race, enabled=self.racing)
+        y += 42
+        y = self.text("Controllers", x, y, self.small, MUTED)
+        for approach in self.race_available:
+            pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[approach]), pygame.Rect(x, y + 8, 10, 10))
+            self.text(config.LABELS[approach], x + 16, y + 5, self.small)
+            self.button(pygame.Rect(x + 140, y, w - 140, 24), self.choice_label(approach),
+                        lambda a=approach: self.cycle_choice(a), enabled=idle)
+            y += 28
+        y += 4
         y = self.draw_speed_buttons(x, y, w)
         y = self.text(f"Leaderboard ({config.RACE_LAPS} laps)", x, y, self.small, MUTED)
-        for position, name, laps, last, best, status in leaderboard(self.race, self.race_names):
-            pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[name]), pygame.Rect(x, y + 3, 10, 10))
-            y = self.text(f"{position}. {config.LABELS[name]:<13} lap {laps}  last {number(last)}  best {number(best)}  {status}",
-                          x + 16, y, self.small)
+        for position, i, laps, last, best, status in leaderboard(self.race, len(self.lineup)):
+            approach, seed = self.lineup[i]
+            pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[approach]), pygame.Rect(x, y + 3, 10, 10))
+            y = self.text(f"{position}. {config.LABELS[approach]} s{seed}  lap {laps}  last {number(last)}  "
+                          f"best {number(best)}  {status}", x + 16, y, self.small)
 
 
 def main():

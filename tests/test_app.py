@@ -1,3 +1,4 @@
+import json
 import os
 import queue
 import signal
@@ -9,7 +10,7 @@ import pygame
 import pytest
 
 from racing import app as viewer
-from racing import config, nets, paths
+from racing import config, nets, paths, population
 
 
 @pytest.fixture
@@ -109,15 +110,6 @@ def test_dead_training_process_is_reported(window):
     assert "stopped" in window.status.lower() and window.process is None
 
 
-def test_leaderboard_orders_by_distance(circle_track):
-    playback = viewer.Playback(circle_track, lambda obs, cars: np.zeros(len(cars.x), dtype=int), 2, laps=3)
-    playback.cars.progress[:] = [10.0, 50.0]
-    playback.cars.crashed[0] = True
-    rows = viewer.leaderboard(playback, ["baseline", "ga"])
-    assert [r[1] for r in rows] == ["ga", "baseline"] and rows[1][5] == "crashed"
-    assert [r[0] for r in rows] == [1, 2]
-
-
 class FakeQueue:
     """Stands in for a multiprocessing queue."""
 
@@ -165,13 +157,6 @@ def test_reports_are_drained_in_race_mode(window, tmp_path):
     assert window.reports.items == [] and window.latest["generation"] == 1
 
 
-def test_step_burst_is_capped_and_budget_dropped(window):
-    window.mode = "race"
-    window.race = viewer.Playback(viewer.get_track(0, 1), lambda o, c: np.full(len(c.x), 8), 1)
-    window.update(10.0)
-    assert abs(window.race.cars.time - config.MAX_STEPS_PER_FRAME * config.DT) < 1e-9 and window.step_budget == 0.0
-
-
 def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, tmp_path):
     from racing import es, ga
     monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
@@ -214,35 +199,116 @@ def test_pause_and_resume_toggle_the_running_event(window):
     assert window.running.is_set()
 
 
-def stub_champions(window):
+def save_race_champions(directory, best=None):
     rng = np.random.default_rng(0)
-    flat = nets.init_population(rng, 2)
-    window.race_names = ["ga", "es"]
-    window.race_nets = [nets.from_flat(flat[0]), nets.from_flat(flat[1])]
+    for approach, seed in (("es", 0), ("ga", 0), ("ga", 1)):
+        population.save_champion(approach, seed, nets.init_population(rng, 1)[0], directory)
+    if best is not None:
+        (directory / "best_seeds.json").write_text(json.dumps(best))
 
 
-def test_race_runs_and_draws_a_leaderboard(window):
-    stub_champions(window)
+def race_window(window, tmp_path, best=None):
+    save_race_champions(tmp_path, best)
+    window.champions_dir = tmp_path
     window.set_mode("race")
+    return window
+
+
+def test_race_lineup_uses_the_best_seeds(window, tmp_path):
+    race_window(window, tmp_path, {"ga": 1, "es": 0})
+    assert window.lineup == [("es", 0), ("ga", 1)]
+    assert window.choice_label("ga") == "best (seed 1)"
+
+
+def test_race_lineup_falls_back_without_best_seeds(window, tmp_path):
+    race_window(window, tmp_path)
+    assert window.lineup == [("es", 0), ("ga", 0)]
+
+
+def test_cycling_a_choice_picks_seeds_and_off(window, tmp_path):
+    race_window(window, tmp_path, {"ga": 1})
+    window.cycle_choice("ga")
+    assert ("ga", 0) in window.lineup and window.choice_label("ga") == "seed 0"
+    window.cycle_choice("ga")
+    assert ("ga", 1) in window.lineup
+    window.cycle_choice("ga")
+    assert window.lineup == [("es", 0)] and window.choice_label("ga") == "off"
+    window.cycle_choice("ga")
+    assert window.lineup == [("es", 0), ("ga", 1)]
+
+
+def test_preview_waits_on_the_start_line_until_started(window, tmp_path):
+    race_window(window, tmp_path)
+    for _ in range(5):
+        window.update(1 / 60)
+        window.draw()
+    assert window.race is not None and window.race.cars.time == 0.0 and not window.racing
+    window.start_race()
+    window.update(0.1)
+    assert window.racing and window.race.cars.time > 0
+    window.stop()
+    window.update(1 / 60)
+    assert not window.racing and window.race.cars.time == 0.0
+
+
+def test_race_settings_are_locked_while_racing(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    lineup = list(window.lineup)
+    window.change_race_track(1)
+    window.set_race_level(2)
+    window.cycle_choice("ga")
+    assert window.race_index == 0 and window.race_level == config.MAX_LEVEL and window.lineup == lineup
+
+
+def test_race_difficulty_sets_the_track_level(monkeypatch, window, tmp_path, circle_track):
+    calls = []
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level: calls.append((seed, level)) or circle_track)
+    race_window(window, tmp_path)
+    window.set_race_level(2)
+    window.update(1 / 60)
+    assert (config.TEST_SEEDS[0], 2) in calls
+
+
+def test_race_draws_a_leaderboard_and_fits_the_window(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
     window.start_race()
     for _ in range(30):
         window.update(1 / 60)
         window.draw()
-    rows = viewer.leaderboard(window.race, window.race_names)
-    assert sorted(r[0] for r in rows) == [1, 2] and window.race.cars.time > 0
+    rows = viewer.leaderboard(window.race, len(window.lineup))
+    assert sorted(r[0] for r in rows) == [1, 2] and sorted(r[1] for r in rows) == [0, 1]
+    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
 
 
-def test_champions_saved_later_are_picked_up(window, tmp_path, monkeypatch):
+def test_leaderboard_orders_by_distance(circle_track):
+    playback = viewer.Playback(circle_track, lambda obs, cars: np.zeros(len(cars.x), dtype=int), 2, laps=3)
+    playback.cars.progress[:] = [10.0, 50.0]
+    playback.cars.crashed[0] = True
+    rows = viewer.leaderboard(playback, 2)
+    assert [r[1] for r in rows] == [1, 0] and rows[1][5] == "crashed" and [r[0] for r in rows] == [1, 2]
+    ready = viewer.leaderboard(None, 2)
+    assert [(r[0], r[1], r[2], r[5]) for r in ready] == [(1, 0, 0, "ready"), (2, 1, 0, "ready")]
+
+
+def test_champions_saved_later_are_picked_up(window, tmp_path):
     window.champions_dir = tmp_path
     window.set_mode("race")
     assert "No trained controllers" in window.status
     window.set_mode("train")
-    assert "No trained controllers" not in window.status
-    stub = {"ga": object()}
-    monkeypatch.setattr(nets, "load_champions", lambda directory: stub)
-    monkeypatch.setattr(nets, "from_keras", lambda model: "net")
+    save_race_champions(tmp_path)
     window.set_mode("race")
-    assert window.race_names == ["ga"] and window.race_nets == ["net"]
+    assert window.race_available == {"es": [0], "ga": [0, 1]}
+
+
+def test_step_burst_is_capped_and_budget_dropped(window):
+    window.receive(ga_report())
+    window.update(0.0)
+    window.update(10.0)
+    assert abs(window.playback.cars.time - config.MAX_STEPS_PER_FRAME * config.DT) < 1e-9
+    assert window.step_budget == 0.0
 
 
 def click(pos):

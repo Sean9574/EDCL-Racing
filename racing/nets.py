@@ -129,17 +129,6 @@ def to_keras(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
     return model
 
 
-def load_champions(directory=None):
-    """Final controllers saved as <approach>.keras, in the order of config.APPROACHES. Missing ones are skipped."""
-    directory = Path(config.CHAMPIONS_DIR if directory is None else directory)
-    models = {}
-    for approach in config.APPROACHES:
-        path = directory / f"{approach}.keras"
-        if path.exists():
-            models[approach] = keras_cpu().models.load_model(path)
-    return models
-
-
 def to_flat(model):
     """Flat float64 weights of a dense Keras model, in the layout of unflatten (the inverse of to_keras)."""
     keras = keras_cpu()

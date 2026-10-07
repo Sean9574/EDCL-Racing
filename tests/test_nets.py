@@ -70,17 +70,6 @@ def test_from_keras_skips_dropout_and_keeps_activations():
     assert np.mean(np.argmax(model.predict(obs, verbose=0), axis=1) == net.act(obs)) >= 0.99
 
 
-def test_load_champions_empty_directory(tmp_path):
-    assert nets.load_champions(tmp_path) == {}
-
-
-def test_load_champions_keeps_standard_order(tmp_path):
-    w = nets.init_population(np.random.default_rng(7), 1)[0]
-    nets.to_keras(w).save(tmp_path / "ga.keras")
-    nets.to_keras(w).save(tmp_path / "baseline.keras")
-    assert list(nets.load_champions(tmp_path)) == ["baseline", "ga"]
-
-
 def test_to_flat_inverts_to_keras():
     flat = nets.init_population(np.random.default_rng(4), 1)[0]
     back = nets.to_flat(nets.to_keras(flat))
