@@ -123,6 +123,17 @@ def test_track_cache_is_bounded(monkeypatch):
         tracks.get_track.cache_clear()                        # no fake tracks for later tests
 
 
+CACHE_BUDGET = 100e6     # bytes of cached tracks per process: 24 workers and the main process stay under 2.5 GB
+
+
+def test_a_full_cache_of_extra_hard_tracks_fits_the_memory_budget():
+    """Review focus 1: an Extra hard track holds a road grid of over 10 MB, and every worker process has its own
+    cache, so a full cache must stay small (WSL 2 has about half the machine's memory)."""
+    track = next(t for t in (candidate_track(0, 4, a) for a in range(20)) if t is not None)
+    size = sum(v.nbytes for v in vars(track).values() if isinstance(v, np.ndarray))
+    assert size > 5e6 and config.TRACK_CACHE_SIZE * size <= CACHE_BUDGET
+
+
 @pytest.mark.slow
 def test_every_level_generates_drivable_maps():
     """Calibration (revision 3 §3.1): 50 seeds per level are accepted and completed by the expert."""

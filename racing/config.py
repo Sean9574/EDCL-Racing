@@ -41,7 +41,8 @@ LEVELS = {                   # revision 3 Table 1: Easy loops, circuits with F1-
 MAX_LEVEL = 4
 CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (revision 3 §3.2)
 DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (revision 3 §3.3)
-TRACK_CACHE_SIZE = 64        # built tracks kept per process; training maps are fresh every generation
+TRACK_CACHE_SIZE = 8         # built tracks kept per process (an Extra hard track holds 10-14 MB); training maps are
+                             # fresh every generation, so a larger cache only costs memory in every worker
 
 # --- Network interface (spec §6) ---
 N_INPUTS = N_RAYS + 1
