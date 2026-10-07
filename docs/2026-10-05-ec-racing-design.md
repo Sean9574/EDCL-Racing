@@ -149,8 +149,11 @@ record of the reported run.
   with `notebooks/` as the working directory.
 - **Run record:** the runner writes `results/run_info.json`. It records the processor model, the number
   of logical processors, the number of worker processes, the operating-system power profile, the
-  versions of Python, numpy, TensorFlow, Keras and keras-tuner, and the start and end time of each
-  notebook. A log of the run is written to `results/run_log.txt`.
+  versions of Python, numpy, TensorFlow, Keras and keras-tuner, the experiment settings from
+  `config.py` (worker processes, Keras speed settings, GA mutation range, pace factor, level-advancement
+  threshold, epoch limit, run seeds and budget), the code version (commit and whether the working tree
+  had uncommitted changes), and the start and end time of each notebook. A log of the run is written to
+  `results/run_log.txt`.
 - **Clean start:** each training run removes its own earlier outputs before it starts, so an
   interrupted run cannot leave files that are later mixed with a new run.
 
@@ -254,22 +257,26 @@ Progress is measured along the centerline. Each car tracks its nearest centerlin
 window from 5 m behind to 30 m ahead. Its progress is the furthest arc length reached, so reverse
 driving does not increase progress.
 
-A run terminates when any of the following occurs:
+A run consists of three laps, in training, in the evaluation of the final controllers and in the races of
+the application, so that a controller is judged on consistent driving rather than on a single lap. A run
+terminates when any of the following occurs:
 
-- the car completes one lap
+- the car completes three laps
 - the car crashes
 - the car makes no progress for 5 s
-- the time limit is reached, equal to twice the expert's lap time on that track
+- the time limit is reached, equal to twice the expert's lap time on that track for each lap (six expert
+  lap times in total)
 
 ### 5.5 Fitness
 
 The fitness of a run on a single track is:
 
-- `p`, the completed fraction of the lap (0 ≤ p < 1), if the lap is not completed
-- `1 + (1 − t_lap / t_limit)`, a value between 1 and 2, if the lap is completed
+- `p`, the completed fraction of the three laps (0 ≤ p < 1), if the run is not completed
+- `1 + (1 − t_run / t_limit)`, a value between 1 and 2, if all three laps are completed, where `t_run`
+  is the time for the three laps
 
 Under this definition, completion separates controllers early in training. Once controllers complete
-laps, lap time separates them.
+their runs, driving time separates them.
 
 ### 5.6 Implementation properties
 
@@ -429,8 +436,8 @@ not the variability of the search itself.
 
 **Driving-based selection (secondary analysis):** imitation methods are selected on validation
 accuracy, whereas evolutionary methods are selected on validation driving. To show how much this
-asymmetry matters, the most-trained model of every distinct configuration in each search drives one
-lap on each of the 20 validation tracks. The model with the highest mean validation fitness is
+asymmetry matters, the most-trained model of every distinct configuration in each search drives three
+laps on each of the 20 validation tracks. The model with the highest mean validation fitness is
 reported for each method as a driving-selected controller in a secondary driving table.
 
 ## 9. Evolutionary Controllers
@@ -456,13 +463,23 @@ weights are drawn from a Glorot-uniform distribution. The seeded ES starts from 
 - **Kept:** carried over unchanged from the previous generation.
 - **New:** created in the current generation by mutation, and in the GA also by crossover.
 
-**Pace:** an individual finishes *at pace* when it completes all three tracks and its lap time on each
-is at most 1.3 times the expert's lap time on that track. The pace factor 1.3 is confirmed by pilot
-runs before the reported run (§3.3).
+**Pace:** an individual finishes *at pace* when it completes all three tracks and its time for the three
+laps on each is at most 1.3 times three of the expert's lap times on that track. The pilot runs (§3.3) confirmed the factor
+1.3: almost every individual that finished also finished at pace, so the requirement does not hold the
+curriculum back.
 
-**Level advancement:** an approach advances one level when 100% of its kept individuals finish at pace
-and at least 80% of its new individuals finish at pace, for three consecutive generations. Each
-approach advances independently. Level 4 continues until the computational budget is exhausted.
+**Level advancement:** an approach advances one level when at least 50% of the whole generation (kept
+and new individuals together) finishes at pace, for three consecutive generations. Each approach
+advances independently. Level 4 continues until the computational budget is exhausted.
+
+An earlier form of the rule required 100% of the kept individuals and at least 80% of the new
+individuals to finish at pace. In pilot runs of 100 generations (one lap per track), neither the GA nor the ES left level 1
+under that rule: selection drives the best individuals to the grip limit, and their mutated offspring
+crashed 30–60% of the time, so the share of new individuals that finished settled well below 80% even
+while every kept individual finished. Measured on the whole generation with a 50% threshold, and with
+the GA keeping every individual that finishes at pace (§9.2), the GA, the ES and the seeded ES all
+reached level 4 within 100 generations in the one-lap pilot runs. Confirming pilot runs with three laps
+per track are recorded in `results/pilots/` before the reported run.
 
 The pace requirement pushes the evolved controllers to drive fast on each level before they move on.
 Without it, the curriculum would promote a population as soon as it survives, however slowly it
@@ -470,7 +487,7 @@ drives. Fitness is unchanged: completion still ranks above any incomplete lap, a
 completed laps. The GA's mutation-strength rule (§9.2) continues to use the plain finishing rate.
 
 **Computational budget:** each approach receives 200,000 individual evaluations per seed. One
-evaluation is one individual driving its generation's three tracks.
+evaluation is one individual driving three laps on each of its generation's three tracks.
 
 - GA: 1,000 evaluations per generation, or 200 generations.
 - ES and seeded ES: 550 evaluations per generation, or approximately 364 generations.
@@ -483,6 +500,7 @@ is recorded in a CSV file with:
 
 - level and generation number
 - best, mean and worst fitness
+- the share of the whole generation that finished at pace, and the number of kept individuals
 - the finishing percentages of kept and new individuals, and the same percentages at pace
 - GA mutation strength or ES step size σ (not logged for the GA's first generation, which is not
   produced by mutation)
@@ -501,8 +519,12 @@ an approach did not reach level 4, selection proceeds the same way and the level
 
 ### 9.2 Genetic algorithm
 
-- **Population:** N = 1,000 individuals (configurable). The K = 50 fittest are kept unchanged.
-- **Each of the N − K new individuals is created in three steps:**
+- **Population:** N = 1,000 individuals (configurable).
+- **Kept individuals:** every individual that finished all three tracks at pace is kept unchanged,
+  fittest first, up to half the population (500). If fewer than K = 50 finished at pace, the fittest
+  others are kept until 50 are kept. A kept individual is re-evaluated on new tracks every generation,
+  so it stays only as long as it keeps meeting the pace requirement or remains among the 50 fittest.
+- **Each remaining new individual is created in three steps:**
   1. **Selection:** two parents are each chosen by tournament selection, with a tournament size of 5
      drawn from the whole population.
   2. **Crossover:** uniform crossover, where each weight is inherited from either parent with
@@ -518,8 +540,9 @@ an approach did not reach level 4, selection proceeds the same way and the level
   minimum is one percent of the maximum, `s_min = s_max / 100`, and `s = s_max` in the first
   generation. The value of `s_max` is chosen by pilot runs (§3.3) from the candidates 0.5, 0.2 and
   0.1: each candidate runs 100 generations with seed 0, and the candidate with the fastest level
-  progression is selected, with ties resolved in favor of the larger value. A first review measured
-  that with `s_max = 0.5` the GA was still on level 1 after 40 generations.
+  progression is selected, with ties resolved in favor of the larger value. Under the level-advancement
+  rule of §9.1, `s_max = 0.1` reached level 4 at generation 84, `s_max = 0.2` at generation 91, and
+  `s_max = 0.5` did not pass level 2, so `s_max = 0.1` and `s_min = 0.001`.
   - Mutation strength is highest when few new individuals finish.
   - It falls to the minimum when all of them finish.
   - After a level advancement, `f_new` drops on the harder tracks, so mutation strength rises again
@@ -553,10 +576,10 @@ The GA's finish-rate adaptation and the ES's success-rate adaptation are two dif
 control strategies. Their behavior is compared in the results.
 
 The tie rule carries a risk on continuous fitness. Once σ is small enough that many offspring repeat
-their parent's discrete actions exactly, ties push `p_s` above 0.2 and σ grows again, possibly into a
-range where too few new individuals finish at pace for advancement. The ES log therefore records the
-fractions of strict successes and ties, and the ES pilot run (§3.3) checks level progression before
-the reported run.
+their parent's discrete actions exactly, ties push `p_s` above 0.2 and σ grows again. The ES log
+therefore records the fractions of strict successes and ties. In the pilot runs σ settled near 2×10⁻⁴
+on level 1, with about 40% ties and no strict successes, and was reset to σ₀ at each level advancement;
+under the level-advancement rule of §9.1 the ES reached level 4 within 100 generations.
 
 ### 9.4 Seeded evolution strategy
 
@@ -711,7 +734,8 @@ application; the reported experiment always starts at level 1 and evaluates on l
 Each method has three final controllers, one per seed (§8.1, §8.3, §9.1). Every measurement below is
 taken for each of them, and tables report the mean and standard deviation across the three seeds.
 
-- **Driving evaluation:** each final controller drives one lap on each of the 20 test tracks.
+- **Driving evaluation:** each final controller drives three laps on each of the 20 test tracks. The
+  reported lap time is the time for the three laps divided by three.
   Evolutionary controllers drive with their float64 weights (§6). The drives are distributed across
   worker processes; results do not depend on the distribution.
 - **Validation driving:** each final controller also drives the 20 validation tracks. For every
@@ -787,6 +811,9 @@ Automated tests use pytest.
   - level advancement triggers on exactly the third consecutive qualifying generation, and the count
     resets after a non-qualifying generation
   - a car that finishes slower than the pace factor allows does not count toward advancement
+  - advancement depends on the share of the whole generation that finished at pace
+- **GA survivors:** every individual that finished at pace is kept, fittest first, up to the cap, and
+  the fittest others fill the minimum
   - the mutation-strength rule returns `s_max` at 0%, the midpoint at 50% and `s_min` at 100%
 - **Work distribution:** population evaluation, dataset collection and test driving give identical
   results with one worker process and with several.
@@ -813,12 +840,13 @@ Automated tests use pytest.
 | Speed input scaling | 40 m/s (normalization only) |
 | Sensors | 9 rays from −90° to +90°, 50 m range |
 | Sphere tracing | Minimum step 0.5 m; at most 48 iterations per ray |
-| Time limit per lap | Twice the expert lap time |
+| Laps per run | 3 (training, evaluation and application races) |
+| Time limit | Twice the expert lap time per lap |
 | No-progress timeout | 5 s |
 | Tracks per generation | 3 |
 | Pace factor | 1.3 times the expert lap time (confirmed by pilot runs) |
-| Level advancement | Kept 100% and new ≥ 80% finishing at pace, three consecutive generations |
-| GA | N = 1,000; K = 50; tournament size 5; crossover p = 0.5; mutation p = 0.1; s_max chosen by pilot runs from {0.5, 0.2, 0.1}; s_min = s_max / 100 |
+| Level advancement | At least 50% of the whole generation finishing at pace, three consecutive generations |
+| GA | N = 1,000; kept: every individual at pace, at most 500, at least K = 50; tournament size 5; crossover p = 0.5; mutation p = 0.1; s_max = 0.1 (chosen by pilot runs from {0.5, 0.2, 0.1}); s_min = s_max / 100 |
 | ES and seeded ES | μ = 50; λ = 500; σ₀ = 0.1; adaptation factor 0.82; σ in [1e-4, 1.0] |
 | Evolutionary budget | 200,000 individual evaluations per approach and seed |
 | Keras training | Adam 1e-3; batch 256; at most 150 epochs; patience 5; `steps_per_execution` and `jit_compile` set by benchmark |
@@ -839,10 +867,11 @@ completes every curriculum level reliably.
 2. **Runtime.** Three seeds per method, a 150-epoch limit and the seeded ES lengthen the experiment
    to several hours. The experiment runner (§3.3) executes it unattended and can resume from any
    notebook. Mitigations for slow generations are listed in §9.5.
-3. **Curriculum stalls.** The advancement criterion is strict by design, and the pace requirement
-   makes it stricter. The pace factor, the threshold and the number of consecutive generations are
-   configurable, pilot runs check level progression before the reported run, and a stall is visible
-   immediately in the training view.
+3. **Curriculum stalls.** A stricter earlier criterion stalled the GA and the ES on level 1 in pilot
+   runs (§9.1). Under the current criterion all evolutionary approaches reached level 4 in the pilots,
+   but a run may still stall on a level; the level reached is reported for every run, the threshold and
+   the number of consecutive generations are configurable, and a stall is visible immediately in the
+   training view.
 4. **ES step size under the tie rule.** Counting ties as half successes may hold σ in a range where
    advancement is rare (§9.3). The ES pilot run records the fractions of strict successes and ties.
    If the pilot shows that σ stalls advancement, the step-size rule is revisited before the reported

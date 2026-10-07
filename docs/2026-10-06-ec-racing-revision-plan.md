@@ -4389,3 +4389,93 @@ unchanged; if a fake relies on the old kept/new rule, adjust it to the whole-gen
 **Verification:** the affected test files, then the full fast suite and
 `$PY -m pytest -m slow tests/test_end_to_end.py tests/test_runner.py -q`. Commit path-scoped with the trailer
 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not run pilots, benchmarks or notebooks.
+
+### Task 15: Three laps in training and evaluation
+
+Every run drives three laps per track, in training (population evaluation, final selection) and in the evaluation of
+the final controllers, matching the three-lap races of the viewer. Time limits already scale with the number of laps
+(`sim.time_limit_for(track, laps)`), and fitness already uses the completed fraction of all laps and the total time.
+
+**Files:**
+- Modify: `racing/config.py`, `racing/population.py`, `racing/evaluate.py`, `racing/app.py`
+- Test: `tests/test_population.py`, `tests/test_evaluate.py`, `tests/test_app.py`
+
+**Interfaces:**
+- config: `LAPS = 3` (Simulation section, comment: laps per run in training and evaluation, spec §5.4).
+- `population._evaluate_track`: `sim.simulate(track, policy, n, laps=config.LAPS)`; a car is at pace when it finishes
+  and its total time is at most `PACE_FACTOR × expert_lap_time × LAPS`.
+- `evaluate.DRIVE_COLUMNS = ["approach", "run_seed", "track", "finished", "crashed", "race_time", "lap_time",
+  "progress", "fitness"]`: `race_time` is the time for all laps (nan if unfinished) and `lap_time = race_time / LAPS`
+  (the average lap); `_drive_track` simulates with `laps=config.LAPS`. Tables keep "Mean lap time (s)" (average lap).
+- Viewer: training playback uses `Playback(..., laps=config.LAPS)`; races keep `config.RACE_LAPS`.
+- The dataset (one lap per track with the expert) and the benchmark (`bench.time_full_laps`, one lap, used only for
+  relative timings) are unchanged.
+
+**Code:**
+
+```python
+# racing/population.py
+def _evaluate_track(weights, seed, level):
+    """Fitness, finishing and finishing at pace (spec §9.1) of every network over config.LAPS laps of one track."""
+    track = get_track(seed, level)
+    result = sim.simulate(track, nets.population_policy(weights), len(weights), laps=config.LAPS)
+    pace_limit = config.PACE_FACTOR * track.expert_lap_time * config.LAPS + config.TIME_EPS
+    at_pace = result.finished & (np.nan_to_num(result.finish_time, nan=np.inf) <= pace_limit)
+    return result.fitness, result.finished, at_pace
+```
+
+```python
+# racing/evaluate.py, in _drive_track
+    result = sim.simulate(track, nets.mixed_policy([drivers[k] for k in keys]), len(keys), laps=config.LAPS)
+    ...
+        race_time = float(result.finish_time[i])
+        rows.append({"approach": approach, "run_seed": run_seed, "track": track_seed,
+                     "finished": bool(result.finished[i]), "crashed": bool(result.crashed[i]),
+                     "race_time": race_time, "lap_time": race_time / config.LAPS,
+                     "progress": float(result.progress[i]), "fitness": float(result.fitness[i])})
+```
+
+**Tests (first, see them fail):**
+
+```python
+# tests/test_population.py — the pace test's fake accepts laps and the limit covers all laps
+def test_at_pace_requires_finishing_within_the_pace_factor(monkeypatch, fake_tracks):
+    limit = config.PACE_FACTOR * fake_tracks.expert_lap_time * config.LAPS
+    seen = []
+
+    def fake_simulate(track, policy, n, laps=1):
+        seen.append(laps)
+        return sim.RunResult(fitness=np.array([1.5, 1.2, 0.4]), finished=np.array([True, True, False]),
+                             crashed=np.array([False, False, True]), progress=np.array([1.0, 1.0, 0.4]),
+                             finish_time=np.array([limit - 1.0, limit + 1.0, np.nan]), steps=10)
+
+    monkeypatch.setattr(population.sim, "simulate", fake_simulate)
+    w = nets.init_population(np.random.default_rng(0), 3)
+    _, finished, at_pace = population.evaluate_population(w, [0], 1)
+    assert seen == [config.LAPS]
+    assert list(finished) == [True, True, False] and list(at_pace) == [True, False, False]
+```
+
+```python
+# tests/test_evaluate.py
+def test_controllers_drive_all_laps(monkeypatch, fake_tracks):
+    seen = []
+    real = evaluate.sim.simulate
+
+    def recording(track, policy, n, laps=1, **kwargs):
+        seen.append(laps)
+        return real(track, policy, n, laps=laps, **kwargs)
+
+    monkeypatch.setattr(evaluate.sim, "simulate", recording)
+    frame = evaluate.driving_results(drivers(), [1000])
+    assert seen == [config.LAPS]
+    done = frame[frame["finished"]]
+    assert np.allclose(done["lap_time"], done["race_time"] / config.LAPS)
+```
+
+Update `test_driving_results_columns_and_rows` (columns) and the driving-table test frames (add `race_time`). In
+`tests/test_app.py`, add `test_training_playback_drives_all_laps`: after `window.receive(ga_report())` and
+`window.update(1 / 60)`, `window.playback.cars.laps == config.LAPS`.
+
+**Verification:** the three test files, the full fast suite, and `$PY -m pytest -m slow tests/test_end_to_end.py -q`.
+Commit path-scoped with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
