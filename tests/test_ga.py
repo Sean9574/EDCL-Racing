@@ -122,6 +122,22 @@ def test_champion_per_seed_and_stale_files_removed(monkeypatch, tmp_path):
     assert summary["seed"] == 3 and summary["wall_time"] > 0 and summary["val_fitness"] == 0.5
 
 
+def test_each_run_starts_with_fresh_workers_before_its_timer(monkeypatch, tmp_path):
+    events = []
+
+    class Clock:
+        @staticmethod
+        def time():
+            events.append("clock")
+            return 0.0
+
+    monkeypatch.setattr(ga, "fresh_workers", lambda n_jobs: events.append(("fresh", n_jobs)))
+    monkeypatch.setattr(ga, "time", Clock)
+    monkeypatch.setattr(ga, "evaluate_population", fake_evaluation(False, False))
+    ga.run_ga(pop_size=20, kept=5, budget=20, out_dir=tmp_path, champion_dir=None, n_jobs=3)
+    assert events[:2] == [("fresh", 3), "clock"] and events.count(("fresh", 3)) == 1
+
+
 def test_default_output_directory_is_per_seed(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "RUNS_DIR", tmp_path)
     monkeypatch.setattr(ga, "evaluate_population", fake_evaluation(False, False))

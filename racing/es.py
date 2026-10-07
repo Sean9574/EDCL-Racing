@@ -7,8 +7,8 @@ import numpy as np
 
 from racing import config, nets, paths
 from racing.curriculum import LevelTracker, draw_seeds
-from racing.population import (RunLogger, clear_champion, evaluate_population, finish_fractions, make_report,
-                               save_champion, select_champion)
+from racing.population import (RunLogger, clear_champion, evaluate_population, finish_fractions, fresh_workers,
+                               make_report, save_champion, select_champion)
 
 
 def make_offspring(rng, parents, sigma, lam):
@@ -58,6 +58,7 @@ def run_es(mu=config.ES_MU, lam=config.ES_LAMBDA, budget=config.EVAL_BUDGET, see
     """(μ+λ)-ES. With `initial`, the flat weights of a trained network, it is the seeded ES (spec §9.4)."""
     if budget < mu + lam:
         raise ValueError(f"budget ({budget}) is smaller than one generation (μ + λ = {mu + lam} evaluations)")
+    fresh_workers(n_jobs)                              # every run builds its own tracks (spec §9.1)
     start = time.time()
     rng = np.random.default_rng(seed)
     if champion_dir is not None:

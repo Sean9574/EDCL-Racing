@@ -5,8 +5,18 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import config, nets, paths, sim
+from racing import config, nets, paths, sim, tracks
 from racing.tracks import get_track
+
+
+def fresh_workers(n_jobs):
+    """Starts an evolutionary run without built tracks, so every run pays the same cost of generating its tracks
+    (spec §9.1): empties this process's track cache and, for a parallel run, shuts down joblib's reusable worker
+    processes (and their track caches); the run's first parallel evaluation starts new ones."""
+    tracks.get_track.cache_clear()
+    if n_jobs > 1:
+        from joblib.externals.loky import get_reusable_executor
+        get_reusable_executor(reuse=True).shutdown(wait=True)     # creating an executor starts no workers
 
 
 def split_tasks(n, seeds, n_jobs):

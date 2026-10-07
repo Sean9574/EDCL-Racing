@@ -142,6 +142,24 @@ def test_log_records_strict_successes_and_ties(monkeypatch, tmp_path):
     assert list(log["strict_success"]) == [0.5] and list(log["tie_fraction"]) == [0.5]
 
 
+def test_each_run_starts_with_fresh_workers_before_its_timer(monkeypatch, tmp_path):
+    events = []
+
+    class Clock:
+        @staticmethod
+        def time():
+            events.append("clock")
+            return 0.0
+
+    monkeypatch.setattr(es, "fresh_workers", lambda n_jobs: events.append(("fresh", n_jobs)))
+    monkeypatch.setattr(es, "time", Clock)
+    monkeypatch.setattr(es, "evaluate_population",
+                        lambda w, seeds, level, n_jobs=1: (np.zeros(len(w)), np.zeros(len(w), bool),
+                                                           np.zeros(len(w), bool)))
+    es.run_es(mu=4, lam=16, budget=20, out_dir=tmp_path, champion_dir=None, n_jobs=3)
+    assert events[:2] == [("fresh", 3), "clock"] and events.count(("fresh", 3)) == 1
+
+
 def test_es_champion_per_seed(monkeypatch, tmp_path):
     monkeypatch.setattr(es, "evaluate_population",
                         lambda w, seeds, level, n_jobs=1: (np.zeros(len(w)), np.zeros(len(w), bool),

@@ -6,8 +6,8 @@ import numpy as np
 
 from racing import config, nets, paths
 from racing.curriculum import LevelTracker, draw_seeds, mutation_strength
-from racing.population import (RunLogger, clear_champion, evaluate_population, finish_fractions, make_report,
-                               save_champion, select_champion)
+from racing.population import (RunLogger, clear_champion, evaluate_population, finish_fractions, fresh_workers,
+                               make_report, save_champion, select_champion)
 
 
 def tournament(rng, fitness, count, size=config.GA_TOURNAMENT):
@@ -36,6 +36,7 @@ def run_ga(pop_size=config.GA_POP, kept=config.GA_KEPT, budget=config.EVAL_BUDGE
         raise ValueError(f"population size ({pop_size}) must be larger than the number of kept individuals ({kept})")
     if budget < pop_size:
         raise ValueError(f"budget ({budget}) is smaller than one generation ({pop_size} evaluations)")
+    fresh_workers(n_jobs)                              # every run builds its own tracks (spec §9.1)
     start = time.time()
     rng = np.random.default_rng(seed)
     if champion_dir is not None:

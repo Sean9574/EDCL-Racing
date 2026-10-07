@@ -47,6 +47,43 @@ def test_parallel_evaluation_matches_serial(fake_tracks):
         assert np.array_equal(a, b)
 
 
+def worker_pids(n_jobs=2):
+    """Process ids of joblib's worker processes. Each task pauses, so every worker takes one."""
+    from joblib import Parallel, delayed
+
+    def pid_after_pause():
+        import os
+        import time
+        time.sleep(0.3)
+        return os.getpid()
+
+    return set(Parallel(n_jobs=n_jobs, batch_size=1)(delayed(pid_after_pause)() for _ in range(n_jobs)))
+
+
+def test_fresh_workers_start_new_processes_and_clear_the_track_cache():
+    from racing import tracks
+    weights = nets.init_population(np.random.default_rng(5), 4)
+    population.evaluate_population(weights, [0], 1, n_jobs=2)
+    first = worker_pids()
+    population.evaluate_population(weights, [0], 1, n_jobs=2)
+    assert len(first) == 2 and worker_pids() == first          # without the helper, the workers are reused
+    tracks.get_track(0, 1)
+    population.fresh_workers(2)
+    assert tracks.get_track.cache_info().currsize == 0
+    population.evaluate_population(weights, [0], 1, n_jobs=2)
+    second = worker_pids()
+    assert len(second) == 2 and second.isdisjoint(first)
+
+
+def test_fresh_workers_with_one_job_only_clears_the_track_cache(monkeypatch):
+    from joblib.externals import loky
+    from racing import tracks
+    monkeypatch.setattr(loky, "get_reusable_executor", lambda **kwargs: pytest.fail("executor touched"))
+    tracks.get_track(0, 1)
+    population.fresh_workers(1)
+    assert tracks.get_track.cache_info().currsize == 0
+
+
 def test_resimulating_a_subset_reproduces_logged_fitness(fake_tracks):
     w = nets.init_population(np.random.default_rng(2), 10)
     full, _, _ = population.evaluate_population(w, [0], 1)
