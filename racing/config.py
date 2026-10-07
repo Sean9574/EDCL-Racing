@@ -1,4 +1,5 @@
 """Default parameters of EC Racing (design specification §13). Every module reads its constants from here."""
+import os
 from pathlib import Path
 
 import numpy as np
@@ -117,7 +118,18 @@ NEAT_TARGET_SPECIES = 20
 NEAT_STAGNATION = 20         # generations without improvement after which a species receives no children
 
 # --- Parallelism ---
-N_JOBS = 6                   # worker processes; racing/bench.py, worst-case generation: 1: 6.87 s, 3: 2.61 s, 6: 1.88 s, 9: 3.12 s, 12: 2.94 s, 15: 2.74 s
+def worker_count(environ=os.environ):
+    """Worker processes for parallel evaluation (revision 3 §8.4): EC_RACING_JOBS, or 6 when it is not set. The best
+    value for a machine is measured with `python -m racing.bench generation`."""
+    value = environ.get("EC_RACING_JOBS", "").strip()
+    if not value:
+        return 6
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError(f"EC_RACING_JOBS must be a whole number of at least 1, not {value!r}")
+    return int(value)
+
+
+N_JOBS = worker_count()      # results do not depend on it (spec §9.5); recorded in results/run_info.json
 
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3

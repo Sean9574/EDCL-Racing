@@ -1,11 +1,12 @@
 """Benchmarks (spec §9.5): the time of one evolutionary generation for each number of worker processes, and the
 time of one Keras training epoch for each choice of steps_per_execution and jit_compile.
 
-Run with:  ~/miniconda3/bin/python -m racing.bench              (both)
-           ~/miniconda3/bin/python -m racing.bench generation   (generation time only)
-           ~/miniconda3/bin/python -m racing.bench keras        (Keras only; needs results/dataset.npz)
+Run with:  python -m racing.bench              (both)
+           python -m racing.bench generation   (generation time only)
+           python -m racing.bench keras        (Keras only; needs results/dataset.npz)
 Run on an otherwise idle machine.
 """
+import os
 import sys
 import time
 
@@ -15,7 +16,7 @@ from racing import config, expert, population, sim
 from racing.tracks import get_track
 
 SEEDS = (0, 1, 2)
-JOB_COUNTS = (1, 3, 6, 9, 12, 15)
+JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (revision 3 §8.4)
 KERAS_STEPS = (1, 4, 16, 64)
 BACKEND = "loky"
 
@@ -64,12 +65,33 @@ def keras_epoch_time(data, steps_per_execution, jit_compile, epochs=3):
     return (time.perf_counter() - start) / epochs
 
 
+def job_counts(cpus=None):
+    """The worker counts to time: JOB_COUNTS up to the number of logical processors."""
+    if cpus is None:
+        cpus = os.cpu_count() or 1
+    return [jobs for jobs in JOB_COUNTS if jobs <= cpus]
+
+
+def recommend(times):
+    """The worker count with the shortest generation time; on a near tie (within 2%) the smaller count, which leaves
+    the machine more headroom."""
+    best = min(times.values())
+    return min(jobs for jobs, seconds in times.items() if seconds <= best * 1.02)
+
+
 def generation_main():
+    """Times one worst-case generation for each worker count and prints the command that selects the fastest."""
     for seed in SEEDS:
         get_track(seed, config.MAX_LEVEL)
     print(f"One generation of {config.GA_POP} cars, every car completing a lap on 3 level-4 tracks:")
-    for jobs in JOB_COUNTS:
-        print(f"  {jobs:2d} process(es): {generation_time(config.GA_POP, jobs):6.2f} s")
+    times = {}
+    for jobs in job_counts():
+        times[jobs] = generation_time(config.GA_POP, jobs)
+        print(f"  {jobs:2d} process(es): {times[jobs]:6.2f} s", flush=True)
+    best = recommend(times)
+    print(f"Fastest: {best} worker processes (current setting {config.N_JOBS}). Select it with:")
+    print(f"  export EC_RACING_JOBS={best}")
+    return times
 
 
 def keras_main():

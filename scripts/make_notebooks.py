@@ -1,22 +1,37 @@
-"""Writes the six experiment notebooks as plain nbformat-4 JSON (no extra dependency).
+"""Writes the eight experiment notebooks as plain nbformat-4 JSON (no extra dependency).
 
-Run with:  ~/miniconda3/bin/python scripts/make_notebooks.py
+Run with:  python scripts/make_notebooks.py
+
+Before the notebooks are first rewritten, the existing experiment notebooks, which hold the outputs of the revision
+2.0 run, are copied to results/archive/revision2-notebooks/. Every run function skips completed runs and continues
+interrupted ones (revision 3 §8.2), so re-executing a notebook continues where it stopped.
 """
 import json
+import shutil
 from pathlib import Path
 
-FOLDER = Path(__file__).resolve().parent.parent / "notebooks"
+PROJECT = Path(__file__).resolve().parent.parent
+FOLDER = PROJECT / "notebooks"
+ARCHIVE = PROJECT / "results" / "archive" / "revision2-notebooks"
 SETUP = "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path.cwd().parent))"
 
-EVOLUTION_PROGRESS = (
-    "def progress(report):\n"
-    "    if report['generation'] % 50 == 0 or report['event']:\n"
-    "        print(f\"gen {report['generation']:5d}  level {report['level']}  best {report['best']:.3f}  \"\n"
-    "              f\"worst map {report['min_share']:.2f}  step {report['step_size']:.4f}  {report['event'] or ''}\")\n")
+BRIEF = (
+    "BRIEF_KEYS = ('approach', 'seed', 'level_reached', 'goal_reached', 'outcome', 'target_reduction',\n"
+    "              'generations', 'rounds', 'val_successes', 'val_accuracy', 'wall_time')\n\n\n"
+    "def brief(summary):\n"
+    "    \"\"\"One line per run; the live progress and milestones are shown by scripts/run_notebooks.py.\"\"\"\n"
+    "    for value in summary.values():\n"
+    "        if isinstance(value, dict) and 'approach' in value:\n"
+    "            brief(value)                      # a stage of a combined run, e.g. DAgger and speed push\n"
+    "    print({key: summary[key] for key in BRIEF_KEYS if key in summary}, flush=True)\n")
+
+EVALUATION_TABLES = ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
+                     "driving_selected", "dataset")
 
 NOTEBOOKS = {
     "01_dataset.ipynb": [
-        ("markdown", "# 1. Expert dataset\nCollects the imitation-learning dataset (design specification §7)."),
+        ("markdown", "# 1. Expert dataset\nCollects the imitation-learning dataset on freshly generated maps "
+                     "(revision 3 §6.1)."),
         ("code", SETUP),
         ("code", "import json\n\nimport pandas as pd\n\nfrom racing import config\nfrom racing.expert import "
                  "collect_dataset\n\ndata, summary = collect_dataset(n_jobs=config.N_JOBS)\n"
@@ -25,60 +40,70 @@ NOTEBOOKS = {
     ],
     "02_imitation.ipynb": [
         ("markdown", "# 2. Imitation-learning controllers\nBaseline with each run seed, the three Keras Tuner "
-                     "searches, and retraining of each selected architecture with each run seed (design "
-                     "specification §8)."),
+                     "searches, and training of each selected architecture with each run seed (design "
+                     "specification §8; revision 3 §6.2)."),
         ("code", SETUP),
-        ("code", "from racing import config, imitation\n\ndata = imitation.load_dataset()\n"
-                 "for seed in config.RUN_SEEDS:\n    print(imitation.train_baseline(data, seed=seed))"),
-        ("code", "for approach in config.TUNER_APPROACHES:\n    summary = imitation.run_tuner(approach, data)\n"
-                 "    print({k: v for k, v in summary.items() if k != 'chosen_hyperparameters'})\n"
-                 "    for seed in config.RUN_SEEDS:\n        print(imitation.retrain(approach, data, seed=seed))"),
+        ("code", "from racing import config, imitation\n\n\n" + BRIEF + "\n\ndata = imitation.load_dataset()\n"
+                 "for seed in config.RUN_SEEDS:\n    brief(imitation.train_baseline(data, seed=seed))\n"
+                 "for approach in config.TUNER_APPROACHES:\n    brief(imitation.run_tuner(approach, data))\n"
+                 "    for seed in config.RUN_SEEDS:\n        brief(imitation.retrain(approach, data, seed=seed))"),
     ],
-    "03_ga.ipynb": [
-        ("markdown", "# 3. Genetic algorithm\nNeuroevolution with the curriculum, once per run seed (design "
-                     "specification §9.2)."),
+    "03_dagger.ipynb": [
+        ("markdown", "# 3. DAgger and speed push\nEach imitation controller is refined by DAgger rounds and then "
+                     "pushed for speed by an evolution strategy grown from it, once per run seed (revision 3 "
+                     "§6.3–6.4)."),
         ("code", SETUP),
-        ("code", "from racing import config, ga\n\n\n" + EVOLUTION_PROGRESS + "\n\n"
-                 "for seed in config.RUN_SEEDS:\n    print(f'--- seed {seed}')\n"
-                 "    print(ga.run_ga(seed=seed, on_generation=progress, n_jobs=config.N_JOBS))"),
+        ("code", "from racing import config, dagger, imitation\n\n\n" + BRIEF + "\n\ndata = imitation.load_dataset()\n"
+                 "for approach in config.IMITATION_APPROACHES:\n    for seed in config.RUN_SEEDS:\n"
+                 "        brief(dagger.run(approach, seed, data, n_jobs=config.N_JOBS))"),
     ],
-    "04_es.ipynb": [
-        ("markdown", "# 4. Evolution strategy\n(μ+λ)-ES with the 1/5 success rule, once per run seed (design "
-                     "specification §9.3)."),
+    "04_ga.ipynb": [
+        ("markdown", "# 4. Genetic algorithm\nFrom Easy to the mastery goal and the speed push, once per run seed "
+                     "(revision 3 §4, §5.1)."),
         ("code", SETUP),
-        ("code", "from racing import config, es\n\n\n" + EVOLUTION_PROGRESS + "\n\n"
-                 "for seed in config.RUN_SEEDS:\n    print(f'--- seed {seed}')\n"
-                 "    print(es.run_es(seed=seed, on_generation=progress, n_jobs=config.N_JOBS))"),
+        ("code", "from racing import config, ga\n\n\n" + BRIEF + "\n\n"
+                 "for seed in config.RUN_SEEDS:\n    brief(ga.run_ga(seed=seed, n_jobs=config.N_JOBS))"),
     ],
-    "05_es_seeded.ipynb": [
-        ("markdown", "# 5. Seeded evolution strategy\nThe ES started from the baseline trained with the same run "
-                     "seed (design specification §9.4)."),
+    "05_es.ipynb": [
+        ("markdown", "# 5. Evolution strategy\nThe ES with the two-phase step-size rule, once per run seed "
+                     "(revision 3 §4, §5.2)."),
         ("code", SETUP),
-        ("code", "from racing import config, es\n\n\n" + EVOLUTION_PROGRESS + "\n\n"
-                 "for seed in config.RUN_SEEDS:\n    print(f'--- seed {seed}')\n"
-                 "    print(es.run_es(seed=seed, initial=es.trained_baseline(seed), approach='es_seeded',\n"
-                 "                    on_generation=progress, n_jobs=config.N_JOBS))"),
+        ("code", "from racing import config, es\n\n\n" + BRIEF + "\n\n"
+                 "for seed in config.RUN_SEEDS:\n    brief(es.run_es(seed=seed, n_jobs=config.N_JOBS))"),
     ],
-    "06_evaluate.ipynb": [
-        ("markdown", "# 6. Evaluation\nTest tracks, test accuracy, size, inference time and training cost, as "
-                     "mean ± standard deviation across run seeds (design specification §11)."),
+    "06_es_seeded.ipynb": [
+        ("markdown", "# 6. Seeded evolution strategy\nThe ES started from the DAgger-refined baseline of the same "
+                     "run seed (revision 3 §5.3)."),
         ("code", SETUP),
-        ("code", "from racing import config, evaluate\n\nresults = evaluate.main(n_jobs=config.N_JOBS)\n"
-                 "results['comparison']"),
-        ("code", "results['driving']"),
-        ("code", "results['search_cost']"),
-        ("code", "results['driving_selected']"),
-        ("code", "results['dataset']"),
-        ("code", "import json\n\n# run conditions recorded by scripts/run_notebooks.py (spec §3.3)\n"
+        ("code", "from racing import config, es\n\n\n" + BRIEF + "\n\n"
+                 "for seed in config.RUN_SEEDS:\n"
+                 "    brief(es.run_es(seed=seed, initial=es.dagger_baseline(seed), approach='es_seeded',\n"
+                 "                    n_jobs=config.N_JOBS))"),
+    ],
+    "07_neat.ipynb": [
+        ("markdown", "# 7. NEAT\nNeuroevolution of augmenting topologies, once per run seed (revision 3 §5.4)."),
+        ("code", SETUP),
+        ("code", "from racing import config, neat\n\n\n" + BRIEF + "\n\n"
+                 "for seed in config.RUN_SEEDS:\n    brief(neat.run_neat(seed=seed, n_jobs=config.N_JOBS))"),
+    ],
+    "08_evaluate.ipynb": [
+        ("markdown", "# 8. Evaluation\nTest maps finished and succeeded, lap times, training cost, imitation "
+                     "stages and the course comparison, as mean ± standard deviation across run seeds "
+                     "(revision 3 §7)."),
+        ("code", SETUP),
+        ("code", "from IPython.display import display\n\nfrom racing import config, evaluate\n\n"
+                 "results = evaluate.main(n_jobs=config.N_JOBS)\n"
+                 f"for name in {EVALUATION_TABLES!r}:\n    print(name)\n    display(results[name])"),
+        ("code", "import json\n\n# run conditions recorded by scripts/run_notebooks.py (revision 3 §8)\n"
                  "if config.RUN_INFO_PATH.exists():\n"
                  "    print(json.dumps(json.loads(config.RUN_INFO_PATH.read_text()), indent=1))"),
-        ("code", "from IPython.display import Image, display\n\nfor path in results['figures']:\n"
+        ("code", "from IPython.display import Image\n\nfor path in results['figures']:\n"
                  "    display(Image(filename=str(path)))"),
     ],
 }
 
-
-OBSOLETE = ("05_evaluate.ipynb",)      # the evaluation notebook before specification 2.0; other files are kept
+OBSOLETE = ("05_evaluate.ipynb", "03_ga.ipynb", "04_es.ipynb", "05_es_seeded.ipynb",
+            "06_evaluate.ipynb")         # notebooks of earlier specifications; other files are kept
 
 
 def cell(kind, source, index):
@@ -89,8 +114,24 @@ def cell(kind, source, index):
             "source": lines}
 
 
+def archive_once():
+    """Copy the existing experiment notebooks to ARCHIVE before they are first rewritten, while revision 2.0
+    notebooks (any of OBSOLETE) are still present; they hold the outputs of the revision 2.0 run. Does nothing once
+    the archive exists or on a fresh clone without revision 2.0 notebooks. Returns the copied names."""
+    if ARCHIVE.exists() or not any((FOLDER / name).exists() for name in OBSOLETE):
+        return []
+    names = sorted(p.name for p in FOLDER.glob("[0-9][0-9]_*.ipynb"))
+    if not names:
+        return []
+    ARCHIVE.mkdir(parents=True)
+    for name in names:
+        shutil.copy2(FOLDER / name, ARCHIVE / name)
+    return names
+
+
 def main():
     FOLDER.mkdir(exist_ok=True)
+    archive_once()
     for name in OBSOLETE:
         (FOLDER / name).unlink(missing_ok=True)
     for name, cells in NOTEBOOKS.items():

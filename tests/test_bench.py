@@ -36,3 +36,22 @@ def test_evaluate_population_multiprocess_consistency():
     multi = population.evaluate_population(cars, [0, 1], 1, config.TARGET_FACTOR, n_jobs=2)
     for field in ("fitness", "success", "laps"):
         assert np.array_equal(getattr(single, field), getattr(multi, field))
+
+
+def test_job_counts_stop_at_the_number_of_logical_processors():
+    assert bench.job_counts(24) == [1, 4, 6, 8, 12, 16, 20, 24]
+    assert bench.job_counts(20) == [1, 4, 6, 8, 12, 16, 20]
+    assert bench.job_counts(1) == [1]
+
+
+def test_recommend_prefers_fewer_workers_on_a_near_tie():
+    assert bench.recommend({1: 6.9, 6: 1.90, 12: 1.89, 16: 2.5}) == 6
+    assert bench.recommend({1: 6.9, 6: 2.4, 12: 1.9}) == 12
+
+
+def test_generation_main_prints_the_command_for_the_fastest_count(monkeypatch, capsys):
+    monkeypatch.setattr(bench, "get_track", lambda seed, level: None)
+    monkeypatch.setattr(bench, "job_counts", lambda cpus=None: [1, 4])
+    monkeypatch.setattr(bench, "generation_time", lambda pop, jobs, repeats=3: {1: 5.0, 4: 2.0}[jobs])
+    assert bench.generation_main() == {1: 5.0, 4: 2.0}
+    assert "export EC_RACING_JOBS=4" in capsys.readouterr().out

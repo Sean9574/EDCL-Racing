@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 from pathlib import Path
 
@@ -35,9 +36,10 @@ def three_notebooks(tmp_path):
     return folder
 
 
-def run_main(runner, tmp_path, argv):
+def run_main(runner, tmp_path, argv, monitor=False, out=None):
     return runner.main(argv, notebook_dir=tmp_path / "notebooks", log_path=tmp_path / "log.txt",
-                       info_path=tmp_path / "info.json")
+                       info_path=tmp_path / "info.json", results_dir=tmp_path / "results",
+                       status_path=tmp_path / "status.json", monitor=monitor, out=out)
 
 
 @pytest.mark.parametrize("start", ["3", "07", "03_c", "03_c.ipynb"])
@@ -61,13 +63,12 @@ def test_from_an_existing_notebook_runs_it_and_the_later_ones(runner, tmp_path, 
 
 
 def test_run_record_holds_the_settings_and_code_version(runner, tmp_path, monkeypatch):
-    from racing import checkpoint
     three_notebooks(tmp_path)
     monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
     assert run_main(runner, tmp_path, []) == 0
     info = json.loads((tmp_path / "info.json").read_text())
-    assert info["settings"] == checkpoint.settings_record()
-    assert info["settings"]["RUN_SEEDS"] == list(runner.config.RUN_SEEDS) and "N_JOBS" not in info["settings"]
+    assert info["settings"] == json.loads(json.dumps(runner.checkpoint.settings_record()))
+    assert "N_JOBS" not in info["settings"]            # results do not depend on it; recorded as n_jobs
     assert info["n_jobs"] == runner.config.N_JOBS
     assert len(info["git_commit"]) == 40 and int(info["git_commit"], 16) >= 0
     assert isinstance(info["git_dirty"], bool)
@@ -80,17 +81,41 @@ def test_code_version_without_git_is_unknown(runner, monkeypatch):
     assert runner.code_version() == {"git_commit": "unknown", "git_dirty": "unknown"}
 
 
-def test_make_notebooks_removes_only_the_obsolete_notebook(tmp_path, monkeypatch):
+def load_make_notebooks():
     path = SCRIPT.parent / "make_notebooks.py"
     spec = importlib.util.spec_from_file_location("make_notebooks", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    monkeypatch.setattr(module, "FOLDER", tmp_path)
-    for name in ("05_evaluate.ipynb", "07_extra.ipynb", "notes.ipynb"):
-        write_notebook(tmp_path / name, "1")
+    return module
+
+
+def test_make_notebooks_archives_once_then_replaces_the_obsolete_notebooks(tmp_path, monkeypatch):
+    module = load_make_notebooks()
+    folder, archive = tmp_path / "notebooks", tmp_path / "archive"
+    monkeypatch.setattr(module, "FOLDER", folder)
+    monkeypatch.setattr(module, "ARCHIVE", archive)
+    folder.mkdir()
+    for name in ("01_dataset.ipynb", "03_ga.ipynb", "06_evaluate.ipynb", "09_extra.ipynb", "notes.ipynb"):
+        write_notebook(folder / name, f"print({name!r})")
     module.main()
-    assert sorted(p.name for p in tmp_path.glob("*.ipynb")) == sorted([*module.NOTEBOOKS, "07_extra.ipynb",
-                                                                       "notes.ipynb"])
+    assert sorted(p.name for p in archive.iterdir()) == ["01_dataset.ipynb", "03_ga.ipynb", "06_evaluate.ipynb",
+                                                         "09_extra.ipynb"]
+    assert "03_ga" in nbformat.read(archive / "03_ga.ipynb", as_version=4).cells[0].source
+    assert sorted(p.name for p in folder.glob("*.ipynb")) == sorted([*module.NOTEBOOKS, "09_extra.ipynb",
+                                                                     "notes.ipynb"])
+    module.main()                                       # a second rewrite leaves the archive as it was
+    assert "01_dataset" in nbformat.read(archive / "01_dataset.ipynb", as_version=4).cells[0].source
+
+
+def test_a_fresh_clone_without_revision_2_notebooks_archives_nothing(tmp_path, monkeypatch):
+    module = load_make_notebooks()
+    folder, archive = tmp_path / "notebooks", tmp_path / "archive"
+    monkeypatch.setattr(module, "FOLDER", folder)
+    monkeypatch.setattr(module, "ARCHIVE", archive)
+    folder.mkdir()
+    write_notebook(folder / "01_dataset.ipynb", "print('revision 3')")
+    module.main()
+    assert not archive.exists()
 
 
 @pytest.mark.slow
@@ -99,7 +124,8 @@ def test_runs_notebooks_in_order_and_records_the_run(runner, tmp_path):
     folder.mkdir()
     write_notebook(folder / "01_a.ipynb", "import os, sys\nprint(os.getcwd())\nprint(sys.executable)")
     write_notebook(folder / "02_b.ipynb", "print('second')")
-    code = runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json")
+    code = runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+                     status_path=tmp_path / "status.json", monitor=False)
     assert code == 0
     first = nbformat.read(folder / "01_a.ipynb", as_version=4).cells[0].outputs[0]["text"].split()
     assert first == [str(folder), runner.sys.executable]
@@ -115,8 +141,10 @@ def test_resume_keeps_earlier_record_entries(runner, tmp_path):
     folder.mkdir()
     write_notebook(folder / "01_a.ipynb", "print(1)")
     write_notebook(folder / "02_b.ipynb", "print(2)")
-    runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json")
-    runner.run(folder, start="02", log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json")
+    runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+                     status_path=tmp_path / "status.json", monitor=False)
+    runner.run(folder, start="02", log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+                     status_path=tmp_path / "status.json", monitor=False)
     info = json.loads((tmp_path / "info.json").read_text())
     assert [e["notebook"] for e in info["notebooks"]] == ["01_a.ipynb", "02_b.ipynb"]
 
@@ -126,7 +154,8 @@ def test_each_notebook_kernel_is_shut_down(runner, tmp_path):
     folder = tmp_path / "notebooks"
     folder.mkdir()
     write_notebook(folder / "01_a.ipynb", "import os\nprint(os.getpid())")
-    assert runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json") == 0
+    assert runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+                     status_path=tmp_path / "status.json", monitor=False) == 0
     pid = int(nbformat.read(folder / "01_a.ipynb", as_version=4).cells[0].outputs[0]["text"])
     assert not Path(f"/proc/{pid}").exists()
 
@@ -137,7 +166,8 @@ def test_a_failing_notebook_stops_the_run(runner, tmp_path):
     folder.mkdir()
     write_notebook(folder / "01_a.ipynb", "raise ValueError('broken')")
     write_notebook(folder / "02_b.ipynb", "print(2)")
-    code = runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json")
+    code = runner.run(folder, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+                     status_path=tmp_path / "status.json", monitor=False)
     info = json.loads((tmp_path / "info.json").read_text())
     assert code == 1 and [e["notebook"] for e in info["notebooks"]] == ["01_a.ipynb"]
     assert "failed" in info["notebooks"][0]
@@ -148,11 +178,102 @@ def test_experiment_notebooks_are_valid_and_compile():
     import ast
     folder = Path(__file__).resolve().parent.parent / "notebooks"
     names = sorted(p.name for p in folder.glob("*.ipynb"))
-    assert names == ["01_dataset.ipynb", "02_imitation.ipynb", "03_ga.ipynb", "04_es.ipynb", "05_es_seeded.ipynb",
-                     "06_evaluate.ipynb"]
+    assert names == ["01_dataset.ipynb", "02_imitation.ipynb", "03_dagger.ipynb", "04_ga.ipynb", "05_es.ipynb",
+                     "06_es_seeded.ipynb", "07_neat.ipynb", "08_evaluate.ipynb"]
     for name in names:
         notebook = nbformat.read(folder / name, as_version=4)
         nbformat.validate(notebook)
         for cell in notebook.cells:
             if cell.cell_type == "code":
                 ast.parse(cell.source)
+
+
+def changed_settings(runner):
+    return {**runner.checkpoint.settings_record(), "TARGET_FACTOR": 1.2}
+
+
+def test_results_from_other_settings_are_refused_until_fresh(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    executed = []
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: executed.append(path.name))
+    record = tmp_path / "results" / "runs" / "ga" / "seed0" / "summary.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"approach": "ga", "settings": changed_settings(runner)}))
+    assert run_main(runner, tmp_path, []) == 3
+    err = capsys.readouterr().err
+    assert "TARGET_FACTOR" in err and "--fresh" in err and "ga/seed0/summary.json" in err
+    assert executed == [] and not (tmp_path / "info.json").exists()
+    assert run_main(runner, tmp_path, ["--fresh"]) == 0
+    assert executed == ["01_a.ipynb", "02_b.ipynb", "03_c.ipynb"] and not record.exists()
+
+
+def test_a_checkpoint_from_other_settings_is_refused(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    path = tmp_path / "results" / "runs" / "neat" / "seed2" / runner.checkpoint.CHECKPOINT_NAME
+    path.parent.mkdir(parents=True)
+    runner.checkpoint.save(path, {"generation": 7, "settings": changed_settings(runner)})
+    assert run_main(runner, tmp_path, []) == 3
+    assert "neat/seed2" in capsys.readouterr().err
+
+
+def test_records_without_settings_are_refused_until_fresh(runner, tmp_path, monkeypatch, capsys):
+    """checkpoint.completed refuses a record without settings, so the runner refuses it before notebook 01."""
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    record = tmp_path / "results" / "runs" / "ga" / "seed0" / "summary.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"approach": "ga", "evals": 200000}))       # a revision 2.0 record
+    assert run_main(runner, tmp_path, []) == 3
+    assert "ga/seed0/summary.json" in capsys.readouterr().err
+    assert run_main(runner, tmp_path, ["--fresh"]) == 0
+
+
+def test_fresh_removes_results_but_keeps_pilots_viewer_runs_and_archive(runner, tmp_path):
+    results = tmp_path / "results"
+    for name in ("runs/ga/seed0/log.csv", "champions/ga/seed0.keras", "tables/a.md", "figures/a.png",
+                 "pilots/summary.md", "app_runs/ga/seed0/log.csv", "archive/revision2-notebooks/01_dataset.ipynb",
+                 "dataset.npz", "dataset_info.json", "status.json", "run_log.txt", "run_info.json"):
+        (results / name).parent.mkdir(parents=True, exist_ok=True)
+        (results / name).write_text("x")
+    runner.fresh_start(results)
+    assert sorted(p.name for p in results.iterdir()) == ["app_runs", "archive", "pilots"]
+    runner.fresh_start(tmp_path / "missing")            # nothing to remove is not an error
+
+
+def test_fresh_cannot_be_combined_with_from(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    assert run_main(runner, tmp_path, ["--fresh", "--from", "02"]) == 2
+    assert "--fresh" in capsys.readouterr().err
+
+
+def test_a_settings_mismatch_inside_a_notebook_stops_with_code_3(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+
+    def stopped(path, kernel_dir):
+        raise RuntimeError("SettingsMismatch: TARGET_FACTOR: recorded 1.2, current 1.3")
+
+    monkeypatch.setattr(runner, "execute", stopped)
+    assert run_main(runner, tmp_path, []) == 3
+    assert "--fresh" in (tmp_path / "log.txt").read_text()
+
+
+def test_the_monitor_prints_the_runner_milestones(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    out = io.StringIO()
+    assert run_main(runner, tmp_path, [], monitor=True, out=out) == 0
+    text = out.getvalue()
+    assert "run started" in text and "done 03_c.ipynb" in text and "run finished" in text
+    assert text.index("start 01_a.ipynb") < text.index("run finished")
+
+
+def test_a_rerun_keeps_the_record_of_earlier_notebooks(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    assert run_main(runner, tmp_path, []) == 0
+    assert run_main(runner, tmp_path, ["--from", "03"]) == 0
+    info = json.loads((tmp_path / "info.json").read_text())
+    assert [e["notebook"] for e in info["notebooks"]] == ["01_a.ipynb", "02_b.ipynb", "03_c.ipynb"]
+    assert [r["from"] for r in info["runs"]] == [None, "03"]
