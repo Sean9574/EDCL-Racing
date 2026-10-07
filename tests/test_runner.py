@@ -1,3 +1,4 @@
+import fcntl
 import importlib.util
 import io
 import json
@@ -320,3 +321,99 @@ def test_the_run_record_is_synced_to_disk(runner, tmp_path, monkeypatch):
                         lambda path, data: written.append(Path(path).name) or real(path, data))
     assert run_main(runner, tmp_path, []) == 0
     assert written and set(written) == {"info.json"}
+
+
+def hold_lock(results):
+    """The runner lock of `results`, held as a second runner would hold it."""
+    results.mkdir(parents=True, exist_ok=True)
+    handle = open(results / ".runner.lock", "a")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return handle
+
+
+def test_a_second_runner_on_the_same_results_stops_with_code_4(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    (tmp_path / "results" / "runs").mkdir(parents=True)                 # what --fresh would remove
+    held = hold_lock(tmp_path / "results")
+    held.write("4242\n")                                                # the holder records its process
+    held.flush()
+    try:
+        assert run_main(runner, tmp_path, []) == 4
+        assert run_main(runner, tmp_path, ["--fresh"]) == 4
+    finally:
+        held.close()
+    err = capsys.readouterr().err
+    assert "another runner (process 4242)" in err and str(tmp_path / "results") in err
+    assert (tmp_path / "results" / "runs").exists() and not (tmp_path / "info.json").exists()
+    assert not (tmp_path / "log.txt").exists()
+
+
+def test_the_runner_holds_the_lock_for_the_whole_run_and_releases_it(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    seen = []
+
+    def execute(path, kernel_dir):
+        assert (tmp_path / "results" / ".runner.lock").read_text() == f"{runner.os.getpid()}\n"
+        try:
+            hold_lock(tmp_path / "results").close()
+            seen.append("free")
+        except BlockingIOError:
+            seen.append("held")
+        if path.name == "02_b.ipynb":
+            raise RuntimeError("broken")
+
+    monkeypatch.setattr(runner, "execute", execute)
+    assert run_main(runner, tmp_path, []) == 1                           # a failing notebook ends the run
+    assert seen == ["held", "held"]
+    hold_lock(tmp_path / "results").close()                             # released
+    assert run_main(runner, tmp_path, ["--from", "03"]) == 0 and seen[-1] == "held"
+    hold_lock(tmp_path / "results").close()
+
+
+def test_the_lock_creates_the_results_folder(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    assert not (tmp_path / "results").exists()
+    assert run_main(runner, tmp_path, []) == 0
+    assert (tmp_path / "results" / ".runner.lock").exists()
+
+
+
+def test_each_start_records_its_code_version_and_a_changed_commit_is_reported(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    versions = iter([{"git_commit": "a" * 40, "git_dirty": False}, {"git_commit": "a" * 40, "git_dirty": True},
+                     {"git_commit": "b" * 40, "git_dirty": False}])
+    monkeypatch.setattr(runner, "code_version", lambda: next(versions))
+    assert run_main(runner, tmp_path, []) == 0
+    assert run_main(runner, tmp_path, ["--from", "03"]) == 0
+    assert "warning" not in capsys.readouterr().err                     # the same commit
+    assert run_main(runner, tmp_path, ["--from", "03"]) == 0               # resumed after a git pull
+    err = capsys.readouterr().err
+    assert "warning" in err and "aaaaaaa" in err and "bbbbbbb" in err
+    info = json.loads((tmp_path / "info.json").read_text())
+    assert [(r["git_commit"], r["git_dirty"]) for r in info["runs"]] == [("a" * 40, False), ("a" * 40, True),
+                                                                         ("b" * 40, False)]
+    assert info["git_commit"] == "b" * 40
+    assert "aaaaaaa" in (tmp_path / "log.txt").read_text()
+
+
+def test_a_record_from_before_per_start_versions_is_compared_with_its_last_commit(runner, tmp_path, monkeypatch,
+                                                                                  capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "code_version", lambda: {"git_commit": "b" * 40, "git_dirty": False})
+    (tmp_path / "info.json").write_text(json.dumps({"git_commit": "c" * 40, "runs": [{"started": "x", "from": None}],
+                                                    "notebooks": []}))
+    assert run_main(runner, tmp_path, ["--from", "02"]) == 0
+    assert "ccccccc" in capsys.readouterr().err
+
+
+def test_an_unknown_code_version_is_not_reported_as_a_change(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    versions = iter([{"git_commit": "unknown", "git_dirty": "unknown"}, {"git_commit": "b" * 40, "git_dirty": False}])
+    monkeypatch.setattr(runner, "code_version", lambda: next(versions))
+    assert run_main(runner, tmp_path, []) == 0 and run_main(runner, tmp_path, []) == 0
+    assert "warning" not in capsys.readouterr().err

@@ -8,9 +8,11 @@ In background:   mkdir -p results
 Progress:        python -m racing.progress                     (from another terminal)
 
 Exit codes: 0 finished; 1 a notebook failed; 2 invalid options; 3 earlier results were produced with different
-settings (run again with --fresh) or cannot be read (delete the files named).
+settings (run again with --fresh) or cannot be read (delete the files named); 4 another runner is using the same
+results.
 """
 import argparse
+import fcntl
 import os
 import platform
 import subprocess
@@ -33,6 +35,7 @@ RECORD_STATES = {"summary.json": checkpoint.CHECKPOINT_NAME,      # run records 
                  "dagger.json": "dagger_state.pkl"}                # checkpoint a run finishes again from
 RECORD_FILES = tuple(RECORD_STATES)
 STATE_FILES = tuple(RECORD_STATES.values())
+LOCK_NAME = ".runner.lock"                            # under results/; held by the running runner
 
 
 def now():
@@ -89,6 +92,17 @@ def code_version():
             "git_dirty": bool(status.strip()) if status is not None else "unknown"}
 
 
+def code_change(info, version):
+    """A warning if this start's commit differs from the previous start's in the run record `info`, else None. The
+    results of notebooks run earlier were produced with the earlier code."""
+    runs = info.get("runs") or [{}]
+    previous, current = runs[-1].get("git_commit", info.get("git_commit")), version["git_commit"]
+    if previous in (None, "unknown") or current == "unknown" or previous == current:
+        return None
+    return (f"warning: the code changed since the previous start (commit {previous[:7]}, now {current[:7]}); "
+            "notebooks run earlier used the earlier code. Do not git pull during a run.")
+
+
 def notebook_names(folder, start=None):
     """Experiment notebooks (named NN_*.ipynb) in order, from notebook `start` on."""
     names = sorted(p.name for p in Path(folder).glob("[0-9][0-9]_*.ipynb"))
@@ -116,6 +130,33 @@ def execute(path, kernel_dir):
 
 def write_info(info, path):
     checkpoint.write_json(path, info)
+
+
+def lock_results(results_dir):
+    """An exclusive lock on results_dir/.runner.lock, so two runners never work on the same results. Returns the
+    open lock file, which records this process and releases the lock when closed, or None if another runner holds
+    it. The lock file is not inherited by the notebook kernels."""
+    path = Path(results_dir) / LOCK_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    handle.truncate(0)
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    return handle
+
+
+def lock_holder(results_dir):
+    """The process id recorded by the runner holding the lock, or None if unknown."""
+    try:
+        text = (Path(results_dir) / LOCK_NAME).read_text().strip()
+    except OSError:
+        return None
+    return text if text.isdigit() else None
 
 
 def fresh_start(results_dir):
@@ -183,16 +224,22 @@ def check_results(runs_dir):
 def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
         status_path=config.STATUS_PATH, monitor=True, out=None):
     """Execute the notebooks in order while the progress monitor shows the live status line and the milestones.
-    The record keeps the entries of notebooks run earlier; each notebook's entry is replaced when it runs again."""
+    The record keeps the entries of notebooks run earlier; each notebook's entry is replaced when it runs again.
+    Every start is recorded with its code version, and a commit that differs from the previous start's is reported."""
     from ipykernel.kernelspec import write_kernel_spec
 
     notebook_dir = Path(notebook_dir)
     info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
+    version = code_version()
+    warning = code_change(info, version)
     info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
                  "power_profile": power_profile(), "versions": versions(),
-                 "settings": checkpoint.settings_record(), **code_version()})
+                 "settings": checkpoint.settings_record(), **version})
     info.setdefault("notebooks", [])
-    info.setdefault("runs", []).append({"started": now(), "from": start})
+    info.setdefault("runs", []).append({"started": now(), "from": start, **version})   # each start's code version
+    if warning is not None:
+        print(warning, file=sys.stderr)
+        log(warning, log_path)
     names = notebook_names(notebook_dir, start)
     paths.remove(status_path)                          # the live line shows only this run's status
     watcher = progress.Monitor(status_path, log_path, out=out) if monitor else None
@@ -250,24 +297,34 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
             print("error: --fresh starts over from the first notebook and cannot be combined with --from",
                   file=sys.stderr)
             return 2
-    if args.fresh:
-        fresh_start(results_dir)
-    problems, unreadable = check_results(Path(results_dir) / "runs")
-    if unreadable:
-        print("error: these result files cannot be read, probably because a crash or reboot cut them short:",
+    lock = lock_results(results_dir)
+    if lock is None:
+        holder = lock_holder(results_dir)
+        who = f"another runner (process {holder})" if holder else "another runner"
+        print(f"error: {who} is using {results_dir}; wait for it to finish or stop it, then run again",
               file=sys.stderr)
-        for path in unreadable:
-            print(f"  {path}", file=sys.stderr)
-        print("Delete only these files and run again: the steps they belong to are redone, every other result is "
-              "kept.", file=sys.stderr)
-    if problems:
-        print("error: earlier results were produced with different settings:", file=sys.stderr)
-        for problem in problems:
-            print(f"  {problem}", file=sys.stderr)
-        print("Run again with --fresh to remove them and start over.", file=sys.stderr)
-    if problems or unreadable:
-        return 3
-    return run(notebook_dir, args.start, log_path, info_path, status_path, monitor, out)
+        return 4
+    try:
+        if args.fresh:
+            fresh_start(results_dir)
+        problems, unreadable = check_results(Path(results_dir) / "runs")
+        if unreadable:
+            print("error: these result files cannot be read, probably because a crash or reboot cut them short:",
+                  file=sys.stderr)
+            for path in unreadable:
+                print(f"  {path}", file=sys.stderr)
+            print("Delete only these files and run again: the steps they belong to are redone, every other result "
+                  "is kept.", file=sys.stderr)
+        if problems:
+            print("error: earlier results were produced with different settings:", file=sys.stderr)
+            for problem in problems:
+                print(f"  {problem}", file=sys.stderr)
+            print("Run again with --fresh to remove them and start over.", file=sys.stderr)
+        if problems or unreadable:
+            return 3
+        return run(notebook_dir, args.start, log_path, info_path, status_path, monitor, out)
+    finally:
+        lock.close()                                   # releases the lock
 
 
 if __name__ == "__main__":
