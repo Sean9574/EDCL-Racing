@@ -476,6 +476,7 @@ evaluation is one individual driving its generation's three tracks.
 - ES and seeded ES: 550 evaluations per generation, or approximately 364 generations.
 
 Wall-clock time is also reported. It covers the whole run, including the final controller selection.
+Each run starts with new worker processes, so every run includes the same cost of generating its tracks.
 
 **Logging:** each run writes to its own directory, `results/runs/<approach>/seed<k>/`. Each generation
 is recorded in a CSV file with:
@@ -729,7 +730,8 @@ taken for each of them, and tables report the mean and standard deviation across
     driving.
 
   Inference is timed after all parallel work has finished, so no other process competes for the
-  processor.
+  processor. All controllers are timed with the same prediction settings (no XLA compilation, one
+  batch per call).
 - **Training time:**
   - baseline: training time per seed
   - Keras Tuner methods: search time (one search per method) and retraining time per seed, reported
