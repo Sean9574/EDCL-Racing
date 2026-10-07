@@ -129,7 +129,7 @@ def worker_count(environ=os.environ):
     return int(value)
 
 
-N_JOBS = worker_count()      # results do not depend on it (spec §9.5); recorded in results/run_info.json
+N_JOBS = worker_count()      # results do not depend on it (spec §9.10); recorded in results/run_info.json
 
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3

@@ -614,13 +614,13 @@ Every drive in training and evaluation is a time trial of three laps.
 - **Reference time.** A map's reference time is the expert's time for three laps. It serves only as a
   measure of the map's length and difficulty, so that one target factor applies to maps of any size.
 - **Target time.** The target time is f × reference time. The target factor f is 1.3 while a
-  population climbs the levels, the value of the revision 2.0 pace gate.
+  population climbs the levels, the factor within which an expert-like lap time is comfortably reachable.
 - **Success.** A car succeeds on a map if it completes all three laps within the target time.
 - **Laps in time.** For a car that does not succeed, the laps it completed before it crashed, stalled or
   reached the target time are counted.
 - **Simulation end.** A training drive ends at the target time. The five-second no-progress timeout is
   unchanged.
-- **Fitness.** Fitness keeps the revision 2.0 form with the target time as the time limit: the
+- **Fitness.** Fitness is based on the completed fraction of laps, with the target time as the time limit: the
   completed fraction of the three laps for a car that does not succeed, and 1 + (1 − finish time /
   target time) for a car that does. Every success therefore outranks every failure, and among
   successes the faster car ranks higher.
@@ -675,9 +675,9 @@ networks or its genome (`.json`) for NEAT.
 
 ### 9.6 Genetic algorithm
 
-The population size is 1,000. Children are produced as in revision 2.0: two parents are selected by
+The population size is 1,000. Children are produced as follows: two parents are selected by
 tournaments of size 5 over the whole population, combined by uniform crossover (p = 0.5) and mutated
-(each weight with p = 0.1, by a Gaussian of strength s). The strength follows the revision 2.0 rule
+(each weight with p = 0.1, by a Gaussian of strength s). The strength follows the rule
 s = s_min + (s_max − s_min)(1 − c), where c is the share of the previous generation's children that
 succeeded on every map, s_max = 0.1 and s_min = s_max / 100. Fewer successful children raise the
 strength and more lower it.
@@ -695,8 +695,7 @@ The population size is 550. Each child is a copy of one of the 50 fittest cars o
 at random, with Gaussian noise of standard deviation σ added to every weight. σ starts at 0.1 and
 follows two rules:
 
-- **Learning phase.** While fewer than 90% of the 50 fittest cars succeed on every map, σ follows the
-  1/5 success rule of revision 2.0, with a tie counted as half a success.
+- **Learning phase.** While fewer than 90% of the 50 fittest cars succeed on every map, σ follows the 1/5 success rule (σ is divided by 0.82 when more than a fifth of the children outperform their parent and multiplied by it when fewer do), with a tie counted as half a success.
 - **Reliability phase.** Once at least 90% of the 50 fittest succeed, σ is multiplied by 0.82 when fewer
   than 90% of the children succeed and divided by 0.82 otherwise.
 
@@ -967,8 +966,15 @@ speed.
 4. **Imitation stages.** Test results of the imitation methods after initial training, after DAgger and
    after the speed push.
 5. **Course comparison.** Test accuracy, parameters, batch inference time, single-sample latency and
-   search and training time, as required by the course and measured as in revision 2.0.
-6. **Search cost, dataset and driving-selected controllers.** Unchanged from revision 2.0.
+   search and training time, as required by the course. Test accuracy is the share of rows of the expert-labelled test split for
+   which the controller predicts the expert's class. Parameters are as in §11.2. Batch inference time is the
+   Keras `predict` time per sample on 10,000 test rows, averaged over five runs; single-sample latency is the
+   median of 1,000 calls on one row (§11.2). Search and training time is the training time of §11.2.
+6. **Search cost, dataset and driving-selected controllers.** *Search cost:* per Keras Tuner method, the
+   number of trials, the number of distinct configurations, the total epochs, the trials that reached the
+   epoch limit and the search time (§8.2). *Dataset:* the rows of each split and the collection time (§7.3).
+   *Driving-selected controllers:* per Keras Tuner method, the configuration chosen by validation driving
+   (§8.3), its parameters, validation accuracy, test maps completed (of 20), mean lap time and crashes.
 
 ### 11.4 Figures
 
@@ -980,7 +986,9 @@ speed.
   so that the structure evolved by NEAT appears as it is. The 15 actions, labelled by steering and
   throttle, are on the right. Connections are blue when positive and red when negative, with width and
   opacity proportional to the weight's magnitude.
-- **Step sizes and Keras Tuner trials.** Unchanged from revision 2.0.
+- **Step sizes.** GA mutation strength and ES step size σ across generations, one line per seed.
+- **Keras Tuner trials.** Validation accuracy against parameter count for every Keras Tuner trial, with each
+  method's selected model marked.
 
 ## 12. Verification
 

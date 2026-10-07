@@ -99,12 +99,29 @@ faster. A live status line shows the current run, level, generation, the worst m
 streak and the elapsed time; level-ups, mastery goals, target reductions and finished runs are printed as permanent
 lines and kept in `results/run_log.txt`.
 
-To run it in the background, so the terminal can be closed:
+Under WSL 2, Windows can stop the Linux distribution when no WSL terminal is open, which would end the run. Keep a
+WSL terminal open for the whole run (it may be minimized). The recommended way is `tmux`, which also lets a terminal
+window be replaced without stopping the run:
+
+```bash
+sudo apt install tmux                                # once
+tmux new -s ec-racing                                # starts a session
+conda activate ec-racing
+python scripts/run_notebooks.py                      # runs in the foreground inside the session
+```
+
+Detach with Ctrl+b then d (the run continues), and reattach with `tmux attach -t ec-racing`. Alternatively, run it with
+`nohup`, writing the console output to a log file; a WSL window must still stay open:
 
 ```bash
 mkdir -p results
 nohup python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
-python -m racing.progress                            # live status from any terminal; Ctrl+C stops watching only
+```
+
+From another terminal, watch the run with:
+
+```bash
+python -m racing.progress                            # live status; Ctrl+C stops watching only
 ```
 
 - **Stopping and resuming:** stop with Ctrl+C (or `kill` the background process). Start the same command again to
