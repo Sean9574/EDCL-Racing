@@ -62,28 +62,43 @@ The experiment runs on Linux. On Windows it runs in the Windows Subsystem for Li
 
    If `conda` asks to accept the terms of service of its default channels, run the command it prints and repeat
    `conda create`. Activate the environment (`conda activate ec-racing`) in every new terminal.
-6. **Keep Windows awake.** WSL pauses while Windows sleeps. Set Settings → System → Power → *Screen and sleep* →
-   "When plugged in, put my device to sleep after" to *Never* (or run `powercfg /change standby-timeout-ac 0` in
-   PowerShell) for the duration of the run.
-7. **Choose the number of worker processes** for this machine:
+6. **Keep Windows awake and without restarts.** WSL pauses while Windows sleeps. Set Settings → System → Power →
+   *Screen and sleep* → "When plugged in, put my device to sleep after" to *Never* (or run
+   `powercfg /change standby-timeout-ac 0` in PowerShell) for the duration of the run. Pause Windows Update for the
+   duration of the run as well (Settings → Windows Update → *Pause updates*): an update restart stops the run, which
+   then has to be resumed by hand.
+7. **Give WSL enough memory.** WSL 2 may use only about half of the machine's memory by default, and every worker
+   process holds its own Python, NumPy and track cache (up to 8 built tracks; an Extra hard track takes 10–14 MB).
+   To raise the limit, create `%UserProfile%\.wslconfig` in Windows with, for example,
+
+   ```ini
+   [wsl2]
+   memory=24GB
+   ```
+
+   sized for the machine (leave a few GB for Windows), then run `wsl --shutdown` in PowerShell and open Ubuntu again
+   to apply it. Check the memory with `free -h` during the first hour at Extra hard (notebook 03 reaches it first);
+   if *available* falls below about 2 GB, stop the run, lower `EC_RACING_JOBS` and resume.
+8. **Choose the number of worker processes** for this machine:
 
    ```bash
    python -m racing.bench generation
    ```
 
    It times one generation for each worker count up to the number of logical processors and ends with a line such as
-   `export EC_RACING_JOBS=16`. Make it permanent:
+   `export EC_RACING_JOBS=16`. The recommendation measures speed only and does not check memory (step 7). Make it
+   permanent:
 
    ```bash
    echo 'export EC_RACING_JOBS=16' >> ~/.bashrc       # use the number the benchmark printed
    source ~/.bashrc
    ```
 
-To update the code later: `git pull`.
+To update the code later: `git pull`, but never while a run is in progress (see below).
 
 ## Setup on Linux
 
-On a Linux machine follow steps 2–7 without WSL. On the development laptop the Conda base environment is used
+On a Linux machine follow steps 2–8 without WSL. On the development laptop the Conda base environment is used
 instead of `ec-racing`, with `~/miniconda3/bin/python` in place of `python`.
 
 ## Running the experiment
@@ -127,6 +142,16 @@ python -m racing.progress                            # live status; Ctrl+C stops
 - **Stopping and resuming:** stop with Ctrl+C (or `kill` the background process). Start the same command again to
   continue: finished runs are skipped and an interrupted run continues from its last checkpoint, losing at most one
   generation. A resumed run produces exactly the results of an uninterrupted one.
+- **One runner at a time:** a second `run_notebooks.py` on the same `results/` stops at once with exit code 4 and
+  names the process that holds `results/.runner.lock`.
+- **After a crash or power loss:** if a result file was cut short, the runner lists it and exits with code 3. Delete
+  only the files it lists and start again; the steps they belong to are redone. Do not use `--fresh` for this.
+- **A stopped run:** when the status has not changed for ten minutes, the status line ends with
+  "(no update for N min)": the run may have stopped, or be in a step without status updates such as the evaluation.
+  Check whether the runner is still running (`tmux attach -t ec-racing`, or `ps`).
+- **During the run:** do not `git pull` or edit the code (the runner records the commit of every start and warns
+  when it changed), and do not use the viewer's training view, which competes for the processors and inflates the
+  reported times.
 - **From a notebook:** `python scripts/run_notebooks.py --from 04` starts at notebook 04.
 - **Starting over:** `python scripts/run_notebooks.py --fresh` removes the earlier results (runs, controllers,
   dataset, tables, figures and run record; pilots, viewer runs and the archive are kept) and starts from notebook 01.
