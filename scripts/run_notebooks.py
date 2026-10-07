@@ -20,13 +20,10 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
-from racing import config  # noqa: E402
+from racing import checkpoint, config  # noqa: E402
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
-SETTINGS = ("N_JOBS", "STEPS_PER_EXECUTION", "JIT_COMPILE", "GA_S_MAX", "GA_S_MIN", "PACE_FACTOR",
-            "LEVEL_UP_FRACTION", "GA_KEPT", "GA_KEEP_MAX_FRACTION",
-            "MAX_EPOCHS", "RUN_SEEDS", "EVAL_BUDGET")
 
 
 def now():
@@ -70,8 +67,8 @@ def versions():
 
 
 def settings():
-    """The configuration values that shape the reported run."""
-    return {name: getattr(config, name) for name in SETTINGS}
+    """The configuration values that shape the reported run: the checkpoint settings record (revision 3 §8.2)."""
+    return checkpoint.settings_record()
 
 
 def git(*args):
