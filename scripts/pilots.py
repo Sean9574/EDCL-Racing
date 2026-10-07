@@ -60,8 +60,7 @@ def pilot_seeded(out_root, generations=100, pop_size=config.ES_POP, n_jobs=confi
         dataset = folder / "dataset.npz"
         if not dataset.exists():
             collect_dataset(dataset, n_jobs=n_jobs)
-    imitation.train_baseline(imitation.load_dataset(dataset), out_dir=folder / "baseline",
-                             champion_dir=folder / "champions", seed=0)
+    imitation.train_baseline(imitation.load_dataset(dataset), out_dir=folder / "baseline", seed=0)
     initial = es.trained_baseline(0, champion_dir=folder / "champions")
     return pilot_es(folder, generations, pop_size, n_jobs, initial=initial, name="Seeded ES", folder="es_seeded")
 

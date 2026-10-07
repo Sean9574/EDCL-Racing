@@ -178,10 +178,11 @@ def trainer_main(approach, size, seed, level, reports, running):
               "mean": float(fitness.mean()), "worst": float(fitness.min()), "leveled_up": False})
 
     if approach == "baseline":
-        imitation.train_baseline(data, out_dir=out_dir, champion_dir=None, seed=seed,
+        imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
     else:
-        imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False)
+        imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False,
+                            resume=False)
 
 
 def watch_parent(parent, kill, interval=1.0):

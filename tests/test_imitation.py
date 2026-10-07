@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from racing import config, imitation, nets, paths
+from racing import checkpoint, config, imitation, nets, paths
 
 
 @pytest.fixture
@@ -56,43 +56,70 @@ def test_load_dataset_round_trip(tmp_path, toy_data):
     assert set(loaded) == set(toy_data) and np.array_equal(loaded["y_val"], toy_data["y_val"])
 
 
-def test_train_baseline_learns_reports_and_saves(toy_data, tmp_path):
+def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     seen = []
-    summary = imitation.train_baseline(toy_data, out_dir=tmp_path / "run", champion_dir=tmp_path / "champions",
+    summary = imitation.train_baseline(toy_data, out_dir=tmp_path / "run",
                                        on_epoch=lambda epoch, model, acc: seen.append((epoch, acc)), epochs=5,
                                        seed=2)
-    assert paths.champion_path("baseline", 2, champion_dir=tmp_path / "champions").exists()
+    stage = tmp_path / "run" / "imitation.keras"
+    assert stage.exists() and summary["stage_path"] == str(stage)
     assert len(seen) == summary["epochs"] and summary["val_accuracy"] > 0.2 and summary["seed"] == 2
+    assert summary["learning_rate"] == config.LEARNING_RATE
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 431
+    assert checkpoint.completed(tmp_path / "run")["val_accuracy"] == summary["val_accuracy"]
 
 
-def test_train_baseline_default_directory_is_per_seed(monkeypatch, toy_data, tmp_path):
-    monkeypatch.setattr(config, "RUNS_DIR", tmp_path)
-    imitation.train_baseline(toy_data, champion_dir=None, epochs=1, seed=1)
-    assert (tmp_path / "baseline" / "seed1" / "summary.json").exists()
+def test_train_baseline_saves_its_stage_per_seed_and_no_final_controller(monkeypatch, toy_data, tmp_path):
+    monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(config, "CHAMPIONS_DIR", tmp_path / "champions")
+    imitation.train_baseline(toy_data, epochs=1, seed=1)
+    assert paths.stage_path("baseline", 1, "imitation").exists()
+    assert (tmp_path / "runs" / "baseline" / "seed1" / "summary.json").exists()
+    assert not (tmp_path / "champions").exists()
 
 
 def test_interrupted_training_leaves_no_stale_results(monkeypatch, toy_data, tmp_path):
-    run, champions = tmp_path / "run", tmp_path / "champions"
+    run = tmp_path / "run"
     run.mkdir()
     (run / "summary.json").write_text("{}")
-    stale = paths.champion_path("baseline", 0, champion_dir=champions)
-    stale.parent.mkdir(parents=True)
-    stale.write_bytes(b"stale")
+    (run / "imitation.keras").write_bytes(b"stale")
 
     def interrupted(*args, **kwargs):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(imitation, "fit", interrupted)
     with pytest.raises(KeyboardInterrupt):
-        imitation.train_baseline(toy_data, out_dir=run, champion_dir=champions, epochs=1)
-    assert not (run / "summary.json").exists() and not stale.exists()
+        imitation.train_baseline(toy_data, out_dir=run, epochs=1, resume=False)
+    assert not (run / "summary.json").exists() and not (run / "imitation.keras").exists()
 
 
 def test_train_baseline_is_reproducible_with_a_seed(toy_data, tmp_path):
-    runs = [imitation.train_baseline(toy_data, out_dir=tmp_path / f"run{i}", champion_dir=None, epochs=3, seed=3)
-            for i in range(2)]
+    runs = [imitation.train_baseline(toy_data, out_dir=tmp_path / f"run{i}", epochs=3, seed=3) for i in range(2)]
     assert runs[0]["val_accuracy"] == runs[1]["val_accuracy"]
+
+
+def test_complete_training_is_not_repeated(monkeypatch, toy_data, tmp_path):
+    first = imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
+    monkeypatch.setattr(imitation, "fit", lambda *args, **kwargs: pytest.fail("trained again"))
+    again = imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
+    assert again == json.loads(json.dumps(first))
+
+
+def test_training_without_resume_or_without_its_stage_file_trains_again(monkeypatch, toy_data, tmp_path):
+    imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
+    real_fit, calls = imitation.fit, []
+    monkeypatch.setattr(imitation, "fit", lambda *args, **kwargs: calls.append(1) or real_fit(*args, **kwargs))
+    imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0, resume=False)
+    (tmp_path / "run" / "imitation.keras").unlink()
+    imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
+    assert len(calls) == 2
+
+
+def test_training_recorded_with_other_settings_is_refused(monkeypatch, toy_data, tmp_path):
+    imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
+    monkeypatch.setattr(checkpoint, "settings_record", lambda: {"MAX_EPOCHS": 1})
+    with pytest.raises(checkpoint.SettingsMismatch):
+        imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
 
 
 def test_tuner_settings(tmp_path):
@@ -108,10 +135,18 @@ def test_retrain_builds_the_chosen_architecture(toy_data, tmp_path):
     search.mkdir()
     chosen = {"layers": 2, "units_0": 8, "units_1": 4, "activation": "tanh", "dropout": 0.0, "learning_rate": 0.003}
     (search / "summary.json").write_text(json.dumps({"chosen_hyperparameters": chosen}))
-    summary = imitation.retrain("kt_random", toy_data, seed=1, search=search, out_dir=tmp_path / "run",
-                                champion_dir=tmp_path / "champions", epochs=2)
+    summary = imitation.retrain("kt_random", toy_data, seed=1, search=search, out_dir=tmp_path / "run", epochs=2)
     assert summary["params"] == nets.n_params((8, 4)) and summary["seed"] == 1 and summary["wall_time"] > 0
-    assert paths.champion_path("kt_random", 1, champion_dir=tmp_path / "champions").exists()
+    assert summary["learning_rate"] == 0.003 and (tmp_path / "run" / "imitation.keras").exists()
+
+
+def test_a_complete_search_is_not_run_again(monkeypatch, toy_data, tmp_path):
+    out = tmp_path / "kt_random"
+    out.mkdir()
+    done = {"approach": "kt_random", "wall_time": 12.5, "settings": checkpoint.settings_record()}
+    (out / "summary.json").write_text(json.dumps(done))
+    monkeypatch.setattr(imitation, "make_tuner", lambda *args, **kwargs: pytest.fail("searched again"))
+    assert imitation.run_tuner("kt_random", toy_data, out_dir=out)["wall_time"] == 12.5
 
 
 def run_small_search(approach, toy_data, tmp_path, seen=None):
@@ -131,6 +166,7 @@ def test_trial_epochs_are_the_epochs_trained(approach, toy_data, tmp_path):
     assert summary["total_epochs"] == 3 * len(trials) and summary["trials_at_limit"] == len(trials)
     assert summary["configurations"] == len(trials) and (trials["trial_id"] == trials["config_id"]).all()
     assert len(list((tmp_path / approach / "models").glob("*.keras"))) == len(trials)
+    assert checkpoint.completed(tmp_path / approach)["trials"] == summary["trials"]
 
 
 @pytest.mark.slow

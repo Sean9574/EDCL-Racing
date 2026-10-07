@@ -43,4 +43,4 @@ def test_seeded_pilot_trains_its_own_baseline(pilots, monkeypatch, tmp_path):
     monkeypatch.setattr(pilots.es, "trained_baseline",
                         lambda seed, champion_dir: nets.init_population(np.random.default_rng(0), 1)[0])
     row = pilots.pilot_seeded(tmp_path, generations=1, pop_size=20, n_jobs=1)
-    assert row["pilot"] == "Seeded ES" and trained[0]["champion_dir"] == tmp_path / "seeded" / "champions"
+    assert row["pilot"] == "Seeded ES" and trained[0]["out_dir"] == tmp_path / "seeded" / "baseline"

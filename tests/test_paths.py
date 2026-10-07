@@ -1,3 +1,5 @@
+import pytest
+
 from racing import config, paths
 
 
@@ -38,3 +40,19 @@ def test_revision_parameters():
     assert config.GA_S_MIN == config.GA_S_MAX / 100
     assert list(config.DIFFICULTIES) == [1, 2, 3, 4] and config.PLAYBACK_BASE == 2.0
     assert config.DATASET_INFO_PATH == config.DATASET_PATH.with_name(f"{config.DATASET_PATH.stem}_info.json")
+
+
+def test_stage_paths_and_speed_directory(tmp_path):
+    assert paths.stage_path("baseline", 1, "imitation", tmp_path) == tmp_path / "baseline" / "seed1" / "imitation.keras"
+    assert paths.stage_path("kt_random", 0, "dagger", tmp_path) == tmp_path / "kt_random" / "seed0" / "dagger.keras"
+    assert paths.speed_dir("kt_bayesian", 2, tmp_path) == tmp_path / "kt_bayesian" / "seed2" / "speed"
+
+
+def test_stage_paths_follow_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
+    assert paths.stage_path("baseline", 0, "dagger") == tmp_path / "runs" / "baseline" / "seed0" / "dagger.keras"
+
+
+def test_unknown_stage_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="stage"):
+        paths.stage_path("baseline", 0, "final", tmp_path)

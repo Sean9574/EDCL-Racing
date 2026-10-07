@@ -11,11 +11,11 @@ def test_pipeline_end_to_end(tmp_path):
     data, _ = expert.collect_dataset(data_path, splits={"train": [(0, 1), (0, 2)], "val": [(80, 4)],
                                                         "test": [(1000, 4)]}, n_jobs=2)
     for seed in (0, 1):
-        imitation.train_baseline(data, out_dir=paths.run_dir("baseline", seed, runs), champion_dir=champions,
+        imitation.train_baseline(data, out_dir=paths.run_dir("baseline", seed, runs),
                                  epochs=2, seed=seed)
     imitation.run_tuner("kt_random", data, out_dir=paths.search_dir("kt_random", runs), max_trials=2, max_epochs=2)
     imitation.retrain("kt_random", data, seed=0, search=paths.search_dir("kt_random", runs),
-                      out_dir=paths.run_dir("kt_random", 0, runs), champion_dir=champions, epochs=2)
+                      out_dir=paths.run_dir("kt_random", 0, runs), epochs=2)
     ga.run_ga(pop_size=20, max_generations=2, seed=0, out_dir=paths.run_dir("ga", 0, runs), champion_dir=champions)
     es.run_es(pop_size=20, max_generations=2, seed=0, out_dir=paths.run_dir("es", 0, runs), champion_dir=champions)
     es.run_es(pop_size=20, max_generations=2, seed=1, initial=es.trained_baseline(1, champion_dir=champions),

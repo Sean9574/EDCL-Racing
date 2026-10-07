@@ -2,7 +2,7 @@ import json
 import numpy as np
 import pytest
 
-from racing import config, expert, sim, tracks
+from racing import checkpoint, config, expert, sim, tracks
 from racing.actions import class_to_controls, controls_to_class
 
 
@@ -116,15 +116,63 @@ def test_labels_are_the_expert_choice_during_kicks(monkeypatch, circle_track):
 
 
 @pytest.mark.slow
-def test_expert_drives_every_seed():
-    for level, seeds in config.TRAIN_DATA_TRACKS.items():
-        for seed in seeds:
-            tracks.get_track(seed, level)
-    for seed in config.TRAIN_SEEDS:
-        tracks.get_track(seed, 2)
-        tracks.get_track(seed, 3)
+def test_expert_drives_every_dataset_and_held_out_map():
+    for seed, level in expert.dataset_seeds():
+        tracks.get_track(seed, level)
     for seed in list(config.VAL_SEEDS) + list(config.TEST_SEEDS):
-        tracks.get_track(seed, 4)
+        tracks.get_track(seed, config.MAX_LEVEL)
+
+
+def test_dataset_maps_are_fresh_distinct_seeds_with_the_level_mix():
+    items = expert.dataset_seeds()
+    assert len(items) == sum(config.DATASET_TRACKS.values()) == 121
+    for level, count in config.DATASET_TRACKS.items():
+        assert sum(1 for _, map_level in items if map_level == level) == count
+    seeds = [seed for seed, _ in items]
+    low, high = config.DATASET_SEED_RANGE
+    assert len(set(seeds)) == len(seeds) and all(low <= seed < high for seed in seeds)
+    assert high <= config.TRAIN_SEED_START                      # never a training map of an evolutionary run
+    assert not set(seeds) & (set(config.VAL_SEEDS) | set(config.TEST_SEEDS))
+    assert expert.dataset_seeds() == items                       # drawn once: the same maps every time
+
+
+def test_default_splits_use_the_dataset_maps_and_the_fixed_held_out_maps():
+    splits = expert.default_splits()
+    assert splits["train"] == expert.dataset_seeds()
+    assert splits["val"] == [(seed, config.MAX_LEVEL) for seed in config.VAL_SEEDS]
+    assert splits["test"] == [(seed, config.MAX_LEVEL) for seed in config.TEST_SEEDS]
+
+
+SMALL_SPLITS = {"train": [(0, 1)], "val": [(0, 1)], "test": [(0, 1)]}
+
+
+def test_a_complete_dataset_is_not_collected_again(monkeypatch, tmp_path):
+    first, summary = expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
+    monkeypatch.setattr(expert, "_collect_track", lambda seed, level: pytest.fail("collected again"))
+    second, again = expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
+    assert again == summary and set(first) == set(second)
+    assert all(np.array_equal(first[key], second[key]) for key in first)
+
+
+def test_other_maps_or_no_resume_collect_again(monkeypatch, tmp_path):
+    expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
+    real, calls = expert._collect_track, []
+    monkeypatch.setattr(expert, "_collect_track", lambda seed, level: calls.append((seed, level)) or real(seed, level))
+    other = {**SMALL_SPLITS, "train": [(1, 1)]}
+    expert.collect_dataset(tmp_path / "d.npz", splits=other)                  # other maps: collected
+    expert.collect_dataset(tmp_path / "d.npz", splits=other, resume=False)    # no resume: collected again
+    assert len(calls) == 6
+
+
+def test_a_dataset_collected_with_other_settings_is_refused(monkeypatch, tmp_path):
+    expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
+    monkeypatch.setattr(checkpoint, "settings_record", lambda: {"TARGET_FACTOR": 9.9})
+    with pytest.raises(checkpoint.SettingsMismatch):
+        expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
+
+
+def test_dataset_settings_are_recorded():
+    assert {"DATASET_SEED_RANGE", "DATASET_TRACKS", "DATASET_SALT"} <= set(checkpoint.settings_record())
 
 
 def test_parallel_collection_matches_serial(tmp_path):

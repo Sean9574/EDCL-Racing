@@ -438,6 +438,16 @@ def test_trainer_main_uses_the_reported_dataset(monkeypatch, tmp_path):
     assert collected == [] and list(trained[0]["y_train"]) == [7]
 
 
+def test_trainer_main_trains_imitation_afresh_and_saves_no_final_controller(monkeypatch, tmp_path):
+    from racing import imitation
+    fake_imitation(monkeypatch, tmp_path)
+    options = []
+    monkeypatch.setattr(imitation, "train_baseline", lambda data, **kwargs: options.append(kwargs))
+    run_baseline_trainer()
+    assert options[0]["resume"] is False and "champion_dir" not in options[0]
+    assert options[0]["out_dir"] == tmp_path / "app_runs" / "baseline" / "seed0"
+
+
 def test_trainer_main_passes_seed_level_and_seeded_start(monkeypatch, tmp_path):
     from racing import es, ga
     monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)

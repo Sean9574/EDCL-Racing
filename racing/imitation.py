@@ -1,5 +1,5 @@
 """Imitation-learning controllers (spec §8): a baseline network, three Keras Tuner searches, and retraining of the
-selected architectures with each run seed."""
+selected architectures with each run seed. Each trained network is saved as its imitation stage (revision 3 §6.5)."""
 import csv
 import json
 import time
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import config, nets, paths
+from racing import checkpoint, config, nets, paths
 from racing.backend import keras_cpu
 
 TUNER_CLASSES = {"kt_random": "RandomSearch", "kt_hyperband": "Hyperband", "kt_bayesian": "BayesianOptimization"}
@@ -88,35 +88,52 @@ def fit(model, data, epochs, on_epoch=None):
     return history, time.time() - start
 
 
-def finish_run(approach, seed, model, history, wall_time, out_dir, champion_dir, extra=None):
-    """Write the summary of one training run and save its final controller."""
+STAGE_FILE = "imitation.keras"     # the trained network in its run directory (revision 3 §6.5)
+
+
+def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None):
+    """Save the trained network as the imitation stage, then write the run's summary. The summary records the
+    settings and is written last, so its presence marks a complete run (revision 3 §8.2). The final controller of an
+    imitation method comes from its speed push (revision 3 §6.4), not from here."""
+    stage = Path(out_dir) / STAGE_FILE
+    model.save(stage)
     summary = {"approach": approach, "seed": seed, "epochs": len(history.history["val_accuracy"]),
                "val_accuracy": float(max(history.history["val_accuracy"])), "params": int(model.count_params()),
-               "wall_time": wall_time, **(extra or {})}
-    if champion_dir is not None:
-        path = paths.champion_path(approach, seed, champion_dir=champion_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        model.save(path)
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+               "wall_time": wall_time, "stage_path": str(stage), **(extra or {}),
+               "settings": checkpoint.settings_record()}
+    (Path(out_dir) / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
 
 
-def start_run(approach, seed, out_dir, champion_dir):
-    """Remove this run's earlier summary and final controller, so an interrupted run leaves neither behind."""
-    paths.remove(out_dir / "summary.json")
-    if champion_dir is not None:
-        paths.remove(paths.champion_path(approach, seed, champion_dir=champion_dir))
+def start_run(out_dir):
+    """Remove this run's earlier summary and stage file, so an interrupted run leaves neither behind."""
+    out_dir = Path(out_dir)
+    paths.remove(out_dir / "summary.json", out_dir / STAGE_FILE)
     out_dir.mkdir(parents=True, exist_ok=True)
 
 
-def train_baseline(data, out_dir=None, champion_dir=config.CHAMPIONS_DIR, on_epoch=None, epochs=config.MAX_EPOCHS,
-                   seed=0):
+def previous_run(out_dir, resume):
+    """The summary of a complete earlier run in out_dir with the current settings, or None. A summary recorded with
+    other settings raises checkpoint.SettingsMismatch (revision 3 §8.2)."""
+    if not resume:
+        return None
+    summary = checkpoint.completed(out_dir)
+    if summary is not None and (Path(out_dir) / STAGE_FILE).exists():
+        return summary
+    return None
+
+
+def train_baseline(data, out_dir=None, on_epoch=None, epochs=config.MAX_EPOCHS, seed=0, resume=True):
     out_dir = Path(out_dir or paths.run_dir("baseline", seed))
-    start_run("baseline", seed, out_dir, champion_dir)
+    done = previous_run(out_dir, resume)
+    if done is not None:
+        return done
+    start_run(out_dir)
     keras_cpu().utils.set_random_seed(seed)
     model = build_baseline()
     history, wall_time = fit(model, data, epochs, on_epoch)
-    return finish_run("baseline", seed, model, history, wall_time, out_dir, champion_dir)
+    return finish_run("baseline", seed, model, history, wall_time, out_dir,
+                      extra={"learning_rate": config.LEARNING_RATE})
 
 
 def make_tuner(approach, directory, seed=0, on_trial=None, max_trials=config.KT_TRIALS,
@@ -197,10 +214,15 @@ def most_trained(records):
 
 def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SEED, max_trials=config.KT_TRIALS,
               max_epochs=config.MAX_EPOCHS, hyperband_iterations=config.HYPERBAND_ITERATIONS,
-              bayes_initial=config.KT_BAYES_INITIAL, export_models=True):
+              bayes_initial=config.KT_BAYES_INITIAL, export_models=True, resume=True):
     """One Keras Tuner search (spec §8.2). Writes trials.csv, summary.json and, with export_models, the most-trained
-    model of every configuration. Final controllers come from retrain()."""
+    model of every configuration. Final controllers come from retrain(). With resume, a complete search recorded with
+    the current settings is returned instead of run again (revision 3 §8.2)."""
     out_dir = Path(out_dir or paths.search_dir(approach))
+    if resume:
+        done = checkpoint.completed(out_dir)
+        if done is not None:
+            return done
     paths.remove(out_dir / "trials.csv", out_dir / "summary.json", out_dir / "models")
     out_dir.mkdir(parents=True, exist_ok=True)
     keras_cpu().utils.set_random_seed(seed)
@@ -229,21 +251,24 @@ def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SE
                "trials_at_limit": int(sum(r["at_limit"] for r in records)), "max_epochs": max_epochs,
                "wall_time": wall_time, "best_val_accuracy": max(r["val_accuracy"] for r in records),
                "chosen_trial": chosen["trial_id"], "chosen_val_accuracy": chosen["val_accuracy"],
-               "chosen_params": chosen["params"], "chosen_hyperparameters": chosen["hyperparameters"]}
+               "chosen_params": chosen["params"], "chosen_hyperparameters": chosen["hyperparameters"],
+               "settings": checkpoint.settings_record()}
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
 
 
-def retrain(approach, data, seed, search=None, out_dir=None, champion_dir=config.CHAMPIONS_DIR,
-            epochs=config.MAX_EPOCHS):
+def retrain(approach, data, seed, search=None, out_dir=None, epochs=config.MAX_EPOCHS, resume=True):
     """Train the architecture selected by a search from scratch with `seed` (spec §8.3)."""
     search = Path(search or paths.search_dir(approach))
-    chosen = json.loads((search / "summary.json").read_text())["chosen_hyperparameters"]
     out_dir = Path(out_dir or paths.run_dir(approach, seed))
-    start_run(approach, seed, out_dir, champion_dir)
+    done = previous_run(out_dir, resume)
+    if done is not None:
+        return done
+    chosen = json.loads((search / "summary.json").read_text())["chosen_hyperparameters"]
+    start_run(out_dir)
     keras_cpu().utils.set_random_seed(seed)
     model = build_network(architecture(chosen), chosen["activation"], float(chosen["dropout"]),
                           float(chosen["learning_rate"]))
     history, wall_time = fit(model, data, epochs)
-    return finish_run(approach, seed, model, history, wall_time, out_dir, champion_dir,
-                      extra={"hyperparameters": chosen})
+    return finish_run(approach, seed, model, history, wall_time, out_dir,
+                      extra={"hyperparameters": chosen, "learning_rate": float(chosen["learning_rate"])})

@@ -1,4 +1,4 @@
-"""Scripted expert driver (spec §7.1) and imitation dataset collection (spec §7.2-7.3)."""
+"""Scripted expert driver (spec §7.1) and imitation dataset collection on freshly generated maps (spec §7.2-7.3, revision 3 §6.1)."""
 import json
 import os
 import time
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import config, sim
+from racing import checkpoint, config, sim
 from racing.actions import class_to_controls, controls_to_class
 from racing.tracks import get_track
 
@@ -92,9 +92,21 @@ def collect_rows(track, rng):
     return np.array(inputs), np.array(labels, dtype=np.int64), respawns
 
 
+def dataset_seeds():
+    """(seed, level) of the imitation dataset's maps (revision 3 §6.1): config.DATASET_TRACKS maps per level, with
+    distinct seeds drawn once from config.DATASET_SEED_RANGE, so every collection uses the same maps."""
+    low, high = config.DATASET_SEED_RANGE
+    total = sum(config.DATASET_TRACKS.values())
+    seeds = low + np.random.default_rng(config.DATASET_SALT).choice(high - low, total, replace=False)
+    items, position = [], 0
+    for level, count in sorted(config.DATASET_TRACKS.items()):
+        items += [(int(seed), level) for seed in seeds[position:position + count]]
+        position += count
+    return items
+
+
 def default_splits():
-    train = [(seed, level) for level, seeds in config.TRAIN_DATA_TRACKS.items() for seed in seeds]
-    return {"train": train,
+    return {"train": dataset_seeds(),
             "val": [(seed, config.MAX_LEVEL) for seed in config.VAL_SEEDS],
             "test": [(seed, config.MAX_LEVEL) for seed in config.TEST_SEEDS]}
 
@@ -104,25 +116,40 @@ def _collect_track(seed, level):
     return collect_rows(get_track(seed, level), np.random.default_rng([seed, level, config.DATASET_SALT]))
 
 
-def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky"):
+def _write_json(path, data):
+    """Write JSON so that an interruption cannot leave a partial file behind."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(data, indent=2))
+    os.replace(temporary, path)
+
+
+def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky", resume=True):
     """Collect the train/val/test rows (spec §7.3) and save them as a compressed .npz file. Tracks are distributed
     across worker processes; each has its own random number generator, so the rows do not depend on n_jobs.
     Returns the arrays and a summary per split (tracks, rows, respawns after crashes) and records the collection
-    time in <stem>_info.json next to the dataset."""
+    time, the maps and the settings in <stem>_info.json next to the dataset. With resume, a complete dataset of the
+    same maps recorded with the current settings is loaded instead of collected again (revision 3 §8.2)."""
     path = Path(config.DATASET_PATH if path is None else path)
     splits = default_splits() if splits is None else splits
+    items = {name: [[int(seed), int(level)] for seed, level in entries] for name, entries in splits.items()}
+    info_path = path.with_name(f"{path.stem}_info.json")
+    if resume and path.exists():
+        info = checkpoint.completed(path.parent, name=info_path.name)
+        if info is not None and info.get("items") == items:
+            with np.load(path) as stored:
+                return {key: stored[key] for key in stored.files}, info["splits"]
     start = time.time()
     data, summary = {}, {}
-    for name, items in splits.items():
+    for name, entries in splits.items():
         if n_jobs == 1:
-            parts = [_collect_track(seed, level) for seed, level in items]
+            parts = [_collect_track(seed, level) for seed, level in entries]
         else:
             from joblib import Parallel, delayed
             parts = Parallel(n_jobs=n_jobs, backend=backend)(
-                delayed(_collect_track)(seed, level) for seed, level in items)
+                delayed(_collect_track)(seed, level) for seed, level in entries)
         data[f"X_{name}"] = np.concatenate([p[0] for p in parts]).astype(np.float32)
         data[f"y_{name}"] = np.concatenate([p[1] for p in parts]).astype(np.int64)
-        summary[name] = {"tracks": len(items), "rows": len(data[f"y_{name}"]),
+        summary[name] = {"tracks": len(entries), "rows": len(data[f"y_{name}"]),
                          "respawns": int(sum(p[2] for p in parts))}
     wall_time = time.time() - start
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,6 +161,6 @@ def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky"):
     finally:
         if temporary.exists():
             temporary.unlink()
-    info = {"wall_time": wall_time, "n_jobs": n_jobs, "splits": summary}
-    path.with_name(f"{path.stem}_info.json").write_text(json.dumps(info, indent=2))
+    _write_json(info_path, {"wall_time": wall_time, "n_jobs": n_jobs, "splits": summary, "items": items,
+                            "settings": checkpoint.settings_record()})
     return data, summary
