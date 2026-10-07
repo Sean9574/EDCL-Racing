@@ -4171,3 +4171,221 @@ These steps run in the controller's session, in order. They are not delegated.
    changed any documented value.
 7. **Integration.** Run the full suite once more, then merge `build` into `master` (superpowers
    finishing-a-development-branch).
+
+---
+
+## Addendum: Level advancement on the whole generation
+
+The calibration pilots (Controller Step 4) showed that with the original rule (kept individuals 100% and new
+individuals ≥ 80% finishing at pace) neither the GA nor the ES leaves level 1 within 100 generations: selection pushes
+parents to the grip limit, so their mutated offspring crash 30–60% of the time. After review of the pilot data, the
+rule was changed: level advancement is measured on the whole generation (≥ 50% of all individuals finish at pace,
+three generations in a row), and the GA keeps every individual that finishes at pace (fittest first, at most half the
+population, at least the 50 fittest). With this rule, throwaway pilots reached level 4 within 100 generations for the
+GA (s_max 0.1 and 0.2), the ES and the seeded ES; s_max = 0.1 progressed fastest. Task 14 implements the rule.
+
+### Task 14: Whole-generation level advancement and GA survivors at pace
+
+**Files:**
+- Modify: `racing/config.py`, `racing/curriculum.py`, `racing/ga.py`, `racing/es.py`, `racing/population.py`,
+  `racing/app.py`, `scripts/pilots.py`, `scripts/make_notebooks.py` (then regenerate `notebooks/`),
+  `scripts/run_notebooks.py`
+- Test: `tests/test_curriculum.py`, `tests/test_ga.py`, `tests/test_es.py`, `tests/test_population.py`,
+  `tests/test_app.py`, `tests/test_runner.py`, `tests/test_pilots.py` (only if it breaks)
+
+**Interfaces:**
+- config: remove `LEVEL_UP_NEW_FRACTION`; add `LEVEL_UP_FRACTION = 0.5` and `GA_KEEP_MAX_FRACTION = 0.5`; set
+  `GA_S_MAX = 0.1` (comment: chosen by the pilot runs from 0.5, 0.2 and 0.1, fastest level progression);
+  `GA_KEPT = 50` now means the minimum number of survivors.
+- `curriculum.LevelTracker(level=1, streak_needed=config.LEVEL_UP_STREAK, threshold=config.LEVEL_UP_FRACTION,
+  max_level=config.MAX_LEVEL)`; `update(pace_fraction) -> bool` (one argument: the share of the whole generation that
+  finished at pace).
+- `ga.survivors(fitness, at_pace, kept_min, keep_max) -> np.ndarray` of indices;
+  `ga.next_generation(rng, weights, fitness, at_pace, kept_min, keep_max, strength) -> (weights, is_kept)`;
+  `ga.run_ga(..., kept=config.GA_KEPT, keep_max_fraction=config.GA_KEEP_MAX_FRACTION, ...)`; result keys `kept_min`,
+  `keep_max` replace `kept`.
+- `population.make_report(..., whole_pace=nan)` adds `whole_pace` and `n_kept` (number of kept individuals) to the
+  report; `RunLogger.FIELDS` gains `whole_pace` and `n_kept` after `worst`.
+- ES and seeded ES: `tracker.update(float(np.mean(at_pace)))`; selection unchanged.
+
+**Code:**
+
+```python
+# racing/curriculum.py
+class LevelTracker:
+    """Advances one level after `streak_needed` consecutive generations in which at least `threshold` of the whole
+    generation finished at pace (spec §9.1)."""
+
+    def __init__(self, level=1, streak_needed=config.LEVEL_UP_STREAK, threshold=config.LEVEL_UP_FRACTION,
+                 max_level=config.MAX_LEVEL):
+        self.level = level
+        self.streak = 0
+        self.streak_needed = streak_needed
+        self.threshold = threshold
+        self.max_level = max_level
+
+    def update(self, pace_fraction):
+        """Record the share of one generation that finished at pace. Returns True if the level advanced."""
+        if self.level >= self.max_level:
+            return False
+        if pace_fraction >= self.threshold:
+            self.streak += 1
+        else:
+            self.streak = 0
+        if self.streak >= self.streak_needed:
+            self.level += 1
+            self.streak = 0
+            return True
+        return False
+```
+
+```python
+# racing/ga.py
+def survivors(fitness, at_pace, kept_min, keep_max):
+    """Individuals kept unchanged (spec §9.2): every one that finished at pace, fittest first, at most keep_max; then
+    the fittest others until at least kept_min are kept."""
+    order = np.argsort(-fitness, kind="stable")
+    chosen = [int(i) for i in order if at_pace[i]][:keep_max]
+    for i in order:
+        if len(chosen) >= kept_min:
+            break
+        if not at_pace[i]:
+            chosen.append(int(i))
+    return np.array(chosen, dtype=np.int64)
+
+
+def next_generation(rng, weights, fitness, at_pace, kept_min, keep_max, strength):
+    """The survivors unchanged (first), then children made by uniform crossover and Gaussian mutation."""
+    n, p = weights.shape
+    keep = survivors(fitness, at_pace, kept_min, keep_max)
+    n_new = n - len(keep)
+    mother = weights[tournament(rng, fitness, n_new)]
+    father = weights[tournament(rng, fitness, n_new)]
+    children = np.where(rng.random((n_new, p)) < config.GA_CROSSOVER_P, mother, father)
+    mutate = rng.random((n_new, p)) < config.GA_MUTATION_P
+    children = children + mutate * rng.normal(0.0, strength, (n_new, p))
+    is_kept = np.arange(n) < len(keep)
+    return np.concatenate([weights[keep], children]), is_kept
+```
+
+In `run_ga`: add the parameter `keep_max_fraction=config.GA_KEEP_MAX_FRACTION`; compute
+`keep_max = int(keep_max_fraction * pop_size)` and raise `ValueError` ("... must keep at most ... at least ...") when
+`keep_max < kept`; in the loop compute `whole_pace = float(np.mean(at_pace))`, call `tracker.update(whole_pace)`, pass
+`whole_pace=whole_pace` to `make_report`, and call `next_generation(rng, weights, fitness, at_pace, kept, keep_max,
+strength)`. The mutation strength still uses `new_finish` (the children's finishing rate). Result keys `kept_min`
+and `keep_max` replace `kept`. In `run_es`: `whole_pace = float(np.mean(at_pace))`, `tracker.update(whole_pace)`, and
+pass `whole_pace` to `make_report`.
+
+In `population.make_report` add the keyword `whole_pace=float("nan")` and the report entries
+`"whole_pace": float(whole_pace), "n_kept": int(np.sum(is_kept))`; `RunLogger.FIELDS` becomes
+`["generation", "level", "evals", "best", "mean", "worst", "whole_pace", "n_kept", "kept_finish", "new_finish",
+"kept_pace", "new_pace", "step_size", "strict_success", "tie_fraction", "seeds", "elapsed", "leveled_up"]`.
+
+Viewer (`draw_stats`): the at-pace line becomes
+`f"At pace: all {percent(r.get('whole_pace', nan))}  kept {percent(r.get('kept_pace', nan))}  new {percent(r.get('new_pace', nan))}"`
+(it must still fit the panel; the panel-fit test covers it).
+
+Pilots (`scripts/pilots.py`): each summary row adds `whole_pace_last20` (mean of the last 20 rows of `whole_pace`).
+
+Notebooks (`scripts/make_notebooks.py`): the progress line prints `at pace {report['whole_pace']:.2f}` instead of the
+new individuals' rate; regenerate with `$PY scripts/make_notebooks.py`.
+
+Runner (`scripts/run_notebooks.py`): the recorded settings replace `LEVEL_UP_NEW_FRACTION` with `LEVEL_UP_FRACTION`
+and add `GA_KEPT` and `GA_KEEP_MAX_FRACTION`.
+
+**Tests (write first, see them fail, then implement):**
+
+```python
+# tests/test_curriculum.py — replace the LevelTracker tests
+def test_level_up_on_third_consecutive_qualifying_generation():
+    t = LevelTracker()
+    f = config.LEVEL_UP_FRACTION
+    assert not t.update(f)
+    assert not t.update(min(1.0, f + 0.2))
+    assert t.update(1.0)
+    assert t.level == 2
+
+
+def test_streak_resets_below_the_threshold():
+    t = LevelTracker()
+    f = config.LEVEL_UP_FRACTION
+    t.update(1.0)
+    t.update(1.0)
+    assert not t.update(f - 0.01)
+    assert not t.update(1.0)
+    assert not t.update(1.0)
+    assert t.update(1.0)
+
+
+def test_below_threshold_never_qualifies():
+    t = LevelTracker()
+    for _ in range(5):
+        assert not t.update(config.LEVEL_UP_FRACTION - 0.01)
+    assert t.level == 1
+
+
+def test_level_stops_at_max():
+    t = LevelTracker(level=config.MAX_LEVEL)
+    for _ in range(5):
+        assert not t.update(1.0)
+    assert t.level == config.MAX_LEVEL
+```
+
+```python
+# tests/test_ga.py — new and changed tests
+def test_survivors_keep_every_car_at_pace_up_to_the_cap():
+    fitness = np.arange(10.0)
+    at_pace = np.array([True, False, True, True, False, False, True, False, False, True])
+    assert list(ga.survivors(fitness, at_pace, 2, 3)) == [9, 6, 3]
+
+
+def test_survivors_fill_with_the_fittest_when_few_are_at_pace():
+    fitness = np.arange(10.0)
+    at_pace = np.zeros(10, dtype=bool)
+    at_pace[2] = True
+    assert list(ga.survivors(fitness, at_pace, 3, 5)) == [2, 9, 8]
+
+
+def test_next_generation_keeps_survivors_first_and_unchanged():
+    rng = np.random.default_rng(1)
+    weights = rng.normal(size=(30, 8))
+    fitness = rng.random(30)
+    at_pace = rng.random(30) < 0.5
+    new, is_kept = ga.next_generation(rng, weights, fitness, at_pace, 5, 15, 0.1)
+    keep = ga.survivors(fitness, at_pace, 5, 15)
+    assert new.shape == weights.shape and is_kept.sum() == len(keep) and np.all(is_kept[:len(keep)])
+    assert np.array_equal(new[:len(keep)], weights[keep])
+```
+
+Update the other GA tests to the new `next_generation` signature (zero-strength test:
+`ga.next_generation(rng, weights, rng.random(20), np.zeros(20, dtype=bool), 2, 2, 0.0)`; sphere test:
+`ga.next_generation(rng, weights, fitness, np.zeros(100, dtype=bool), 5, 5, 0.05)`). The fake `evaluate_population`
+results with everyone at pace now qualify from generation 0, so
+`test_level_advances_after_three_generations_at_pace` expects levels `[1, 1, 1, 2, 2]` and `reports[2]["leveled_up"]`.
+Add:
+
+```python
+def test_survivor_count_follows_the_cars_at_pace(monkeypatch, tmp_path):
+    def fake(w, seeds, level, n_jobs=1):
+        n = len(w)
+        return np.arange(n, dtype=float), np.ones(n, dtype=bool), np.arange(n) < 12
+    monkeypatch.setattr(ga, "evaluate_population", fake)
+    reports = []
+    ga.run_ga(pop_size=20, kept=2, keep_max_fraction=0.5, budget=40, out_dir=tmp_path, on_generation=reports.append,
+              champion_dir=None)
+    assert reports[1]["n_kept"] == 10 and reports[0]["whole_pace"] == 0.6
+
+
+def test_keep_cap_must_cover_the_minimum(tmp_path):
+    with pytest.raises(ValueError, match="at most"):
+        ga.run_ga(pop_size=20, kept=15, keep_max_fraction=0.5, budget=40, out_dir=tmp_path, champion_dir=None)
+```
+
+In `tests/test_population.py`, the `report` helper passes `whole_pace=0.3`, and the logger test asserts
+`log.loc[0, "whole_pace"] == 0.3` and `log.loc[0, "n_kept"] == 0`. In `tests/test_app.py`, `ga_report` adds
+`"whole_pace": 0.0`. In `tests/test_runner.py`, the expected settings keys follow the runner. ES tests should pass
+unchanged; if a fake relies on the old kept/new rule, adjust it to the whole-generation rule and say so.
+
+**Verification:** the affected test files, then the full fast suite and
+`$PY -m pytest -m slow tests/test_end_to_end.py tests/test_runner.py -q`. Commit path-scoped with the trailer
+`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not run pilots, benchmarks or notebooks.
