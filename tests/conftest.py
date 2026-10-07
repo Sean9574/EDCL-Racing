@@ -18,3 +18,13 @@ def circle_track():
     track = build_track(np.column_stack([50 * np.cos(a), 50 * np.sin(a)]), 16.0, seed=0, level=1)
     track.expert_lap_time = 20.0
     return track
+
+
+@pytest.fixture(autouse=True)
+def private_progress_files(tmp_path_factory, monkeypatch):
+    """The status file and the run log of every test live in a temporary folder, never in results/
+    (revision 3 §8.3)."""
+    from racing import config
+    folder = tmp_path_factory.mktemp("progress")
+    monkeypatch.setattr(config, "STATUS_PATH", folder / "status.json")
+    monkeypatch.setattr(config, "RUN_LOG_PATH", folder / "run_log.txt")

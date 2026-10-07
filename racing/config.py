@@ -118,10 +118,16 @@ SIZE_RULE_TOLERANCE = 0.01
 STEPS_PER_EXECUTION = 64     # batches per training-function call; racing/bench.py, s/epoch with XLA: 1: 0.367, 4: 0.201, 16: 0.134, 64: 0.128
 JIT_COMPILE = True           # XLA compilation; racing/bench.py: faster than without at every steps_per_execution (64: 0.128 vs 0.144 s)
 
+# --- DAgger (revision 3 §6.3) ---
+DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and checked after it
+DAGGER_STREAK = 3            # consecutive rounds that must reach the goal
+
 # --- Approaches and colors (spec §10.1) ---
 APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga", "es_seeded")
 TUNER_APPROACHES = ("kt_random", "kt_hyperband", "kt_bayesian")
 EVOLUTION_APPROACHES = ("ga", "es", "es_seeded")
+IMITATION_APPROACHES = ("baseline", *TUNER_APPROACHES)
+RUN_ORDER = tuple((a, s) for a in (*IMITATION_APPROACHES, *EVOLUTION_APPROACHES) for s in RUN_SEEDS)  # revision 3 §8.3
 LABELS = {"baseline": "Baseline", "kt_random": "KT Random", "kt_hyperband": "KT Hyperband",
           "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA", "es_seeded": "Seeded ES"}
 COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E9",
@@ -152,3 +158,4 @@ BEST_SEEDS_NAME = "best_seeds.json"
 PILOTS_DIR = RESULTS_DIR / "pilots"
 RUN_INFO_PATH = RESULTS_DIR / "run_info.json"
 RUN_LOG_PATH = RESULTS_DIR / "run_log.txt"
+STATUS_PATH = RESULTS_DIR / "status.json"
