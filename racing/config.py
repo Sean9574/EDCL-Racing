@@ -58,11 +58,14 @@ TRAIN_SEEDS = range(0, 80)
 VAL_SEEDS = range(80, 100)
 TEST_SEEDS = range(1000, 1020)
 TRAIN_DATA_TRACKS = {1: (0,), 2: tuple(range(20)), 3: tuple(range(20)), 4: tuple(TRAIN_SEEDS)}
+RUN_SEEDS = (0, 1, 2)        # every method is run once per seed (spec §11)
+SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 
 # --- Curriculum (spec §9.1) ---
 TRACKS_PER_GEN = 3
 LEVEL_UP_NEW_FRACTION = 0.8
 LEVEL_UP_STREAK = 3
+PACE_FACTOR = 1.3            # finishing at pace: lap time ≤ PACE_FACTOR × expert lap time; confirmed by pilots
 
 # --- Genetic algorithm (spec §9.2) ---
 GA_POP = 1000
@@ -70,8 +73,8 @@ GA_KEPT = 50
 GA_TOURNAMENT = 5
 GA_CROSSOVER_P = 0.5
 GA_MUTATION_P = 0.1
-GA_S_MAX = 0.5
-GA_S_MIN = 0.005
+GA_S_MAX = 0.5               # chosen by the pilot runs (scripts/pilots.py) from 0.5, 0.2 and 0.1
+GA_S_MIN = GA_S_MAX / 100
 
 # --- Evolution strategy (spec §9.3) ---
 ES_MU = 50
@@ -88,19 +91,24 @@ N_JOBS = 8                   # worker processes for population evaluation; measu
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 256
-MAX_EPOCHS = 50
+MAX_EPOCHS = 150
 PATIENCE = 5
 KT_TRIALS = 30
+KT_BAYES_INITIAL = 10        # random trials before Bayesian optimization uses its model
 HYPERBAND_FACTOR = 3
-HYPERBAND_ITERATIONS = 2
+HYPERBAND_ITERATIONS = 1
 SIZE_RULE_TOLERANCE = 0.01
+STEPS_PER_EXECUTION = 1      # batches per call into the compiled training function; set from racing/bench.py
+JIT_COMPILE = True           # XLA compilation; set from racing/bench.py
 
 # --- Approaches and colors (spec §10.1) ---
-APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga")
+APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga", "es_seeded")
+TUNER_APPROACHES = ("kt_random", "kt_hyperband", "kt_bayesian")
+EVOLUTION_APPROACHES = ("ga", "es", "es_seeded")
 LABELS = {"baseline": "Baseline", "kt_random": "KT Random", "kt_hyperband": "KT Hyperband",
-          "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA"}
+          "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA", "es_seeded": "Seeded ES"}
 COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E9",
-          "kt_bayesian": "#CC79A7", "es": "#009E73", "ga": "#D55E00"}
+          "kt_bayesian": "#CC79A7", "es": "#009E73", "ga": "#D55E00", "es_seeded": "#0072B2"}
 
 # --- Application (spec §10) ---
 WINDOW_SIZE = (1280, 800)
@@ -108,15 +116,22 @@ PANEL_WIDTH = 380
 FPS = 60
 POPULATION_PRESETS = (100, 250, 500, 1000, 2000)
 SPEEDS = (1, 2, 4, 8)
+PLAYBACK_BASE = 2.0          # simulated seconds per real second at 1× playback
 MAX_STEPS_PER_FRAME = 10     # simulation steps per drawn frame; a stalled frame cannot trigger a burst
 DEFAULT_SHOWN = 100
 KT_VIEW_SEED = 80
 RACE_LAPS = 3
+DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
 
 # --- Paths ---
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 RESULTS_DIR = PROJECT_DIR / "results"
 DATASET_PATH = RESULTS_DIR / "dataset.npz"
+DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"
 RUNS_DIR = RESULTS_DIR / "runs"
 APP_RUNS_DIR = RESULTS_DIR / "app_runs"
 CHAMPIONS_DIR = RESULTS_DIR / "champions"
+BEST_SEEDS_NAME = "best_seeds.json"
+PILOTS_DIR = RESULTS_DIR / "pilots"
+RUN_INFO_PATH = RESULTS_DIR / "run_info.json"
+RUN_LOG_PATH = RESULTS_DIR / "run_log.txt"

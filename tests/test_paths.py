@@ -1,0 +1,40 @@
+from racing import config, paths
+
+
+def test_run_and_search_directories(tmp_path):
+    assert paths.run_dir("ga", 2, tmp_path) == tmp_path / "ga" / "seed2"
+    assert paths.search_dir("kt_random", tmp_path) == tmp_path / "kt_random" / "search"
+
+
+def test_default_directories_follow_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(config, "CHAMPIONS_DIR", tmp_path / "champions")
+    assert paths.run_dir("es", 0) == tmp_path / "runs" / "es" / "seed0"
+    assert paths.champion_path("es", 1) == tmp_path / "champions" / "es" / "seed1.keras"
+    assert paths.best_seeds_path() == tmp_path / "champions" / "best_seeds.json"
+
+
+def test_champion_path_suffix(tmp_path):
+    assert paths.champion_path("ga", 0, ".npy", tmp_path) == tmp_path / "ga" / "seed0.npy"
+
+
+def test_remove_files_directories_and_missing(tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / "d" / "e").mkdir(parents=True)
+    (tmp_path / "d" / "e" / "f.txt").write_text("y")
+    paths.remove(tmp_path / "a.txt", tmp_path / "d", tmp_path / "missing.txt")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_seeded_es_is_an_approach_with_its_own_color():
+    assert config.APPROACHES[-1] == "es_seeded"
+    assert config.LABELS["es_seeded"] == "Seeded ES" and config.COLORS["es_seeded"] == "#0072B2"
+    assert set(config.TUNER_APPROACHES) | set(config.EVOLUTION_APPROACHES) | {"baseline"} == set(config.APPROACHES)
+
+
+def test_revision_parameters():
+    assert config.MAX_EPOCHS == 150 and config.HYPERBAND_ITERATIONS == 1 and config.KT_BAYES_INITIAL == 10
+    assert config.RUN_SEEDS == (0, 1, 2) and config.SEARCH_SEED == 0
+    assert config.GA_S_MIN == config.GA_S_MAX / 100
+    assert list(config.DIFFICULTIES) == [1, 2, 3, 4] and config.PLAYBACK_BASE == 2.0
+    assert config.DATASET_INFO_PATH == config.DATASET_PATH.with_name(f"{config.DATASET_PATH.stem}_info.json")
