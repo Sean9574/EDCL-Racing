@@ -133,8 +133,13 @@ STEPS_PER_EXECUTION = 64     # batches per training-function call; racing/bench.
 JIT_COMPILE = True           # XLA compilation; racing/bench.py: faster than without at every steps_per_execution (64: 0.128 vs 0.144 s)
 
 # --- DAgger (revision 3 §6.3) ---
-DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and checked after it
-DAGGER_STREAK = 3            # consecutive rounds that must reach the goal
+DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and as many more for the round's check
+DAGGER_EPOCHS = 30           # at most, per round
+DAGGER_HOLDOUT = 0.1         # share of the aggregated rows held out for early stopping
+DAGGER_GOAL = 18             # successful checks out of DAGGER_MAPS ...
+DAGGER_STREAK = 3            # ... in this many consecutive rounds
+DAGGER_PATIENCE = 10         # rounds without a new best check result before the refinement stops
+DAGGER_SALT = 31             # a refinement's random generator: default_rng([run seed, method index, DAGGER_SALT])
 
 # --- Approaches and colors (spec §10.1) ---
 APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga", "es_seeded", "neat")

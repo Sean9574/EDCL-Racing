@@ -2,11 +2,14 @@ import json
 
 import pytest
 
-from racing import es, evaluate, expert, ga, imitation, paths
+from racing import config, dagger, es, evaluate, expert, ga, imitation, nets, paths
+from racing.backend import keras_cpu
 
 
 @pytest.mark.slow
-def test_pipeline_end_to_end(tmp_path):
+def test_pipeline_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DAGGER_MAPS", 2)
+    monkeypatch.setattr(config, "DAGGER_EPOCHS", 2)
     runs, champions, data_path = tmp_path / "runs", tmp_path / "champions", tmp_path / "dataset.npz"
     data, _ = expert.collect_dataset(data_path, splits={"train": [(0, 1), (0, 2)], "val": [(80, 4)],
                                                         "test": [(1000, 4)]}, n_jobs=2)
@@ -18,7 +21,15 @@ def test_pipeline_end_to_end(tmp_path):
                       out_dir=paths.run_dir("kt_random", 0, runs), epochs=2)
     ga.run_ga(pop_size=20, max_generations=2, seed=0, out_dir=paths.run_dir("ga", 0, runs), champion_dir=champions)
     es.run_es(pop_size=20, max_generations=2, seed=0, out_dir=paths.run_dir("es", 0, runs), champion_dir=champions)
-    es.run_es(pop_size=20, max_generations=2, seed=1, initial=es.trained_baseline(1, champion_dir=champions),
+    for approach, seed in (("baseline", 0), ("baseline", 1), ("kt_random", 0)):
+        dagger.refine(approach, seed, data, runs_dir=runs, max_rounds=1)
+        refined = keras_cpu().models.load_model(paths.stage_path(approach, seed, "dagger", runs), compile=False)
+        hidden, activation = nets.dense_spec(refined)
+        # what dagger.speed_push does, with 20 cars instead of config.ES_POP
+        es.run_es(pop_size=20, max_generations=1, seed=seed, start_level=config.MAX_LEVEL,
+                  initial=nets.to_flat(refined), approach=approach, hidden=hidden, activation=activation,
+                  out_dir=paths.speed_dir(approach, seed, runs), champion_dir=champions)
+    es.run_es(pop_size=20, max_generations=2, seed=1, initial=es.dagger_baseline(1, runs_dir=runs),
               approach="es_seeded", out_dir=paths.run_dir("es_seeded", 1, runs), champion_dir=champions)
     results = evaluate.main(champions_dir=champions, runs_dir=runs, data_path=data_path, out_dir=tmp_path / "out",
                             test_seeds=[1000], val_seeds=[80], n_jobs=2, latency_calls=20)
