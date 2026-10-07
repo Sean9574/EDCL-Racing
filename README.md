@@ -33,9 +33,13 @@ One command runs the six notebooks in order and saves their outputs into the not
 The run takes several hours. To run it in the background and follow its progress:
 
 ```bash
-nohup ~/miniconda3/bin/python scripts/run_notebooks.py > /dev/null 2>&1 &
+mkdir -p results
+nohup ~/miniconda3/bin/python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
 tail -f results/run_log.txt
 ```
+
+The console output, including any error, is kept in `results/run_console.txt`. The per-generation progress of
+each evolutionary run is in `results/runs/<method>/seed<k>/log.csv`.
 
 After an interruption, resume from a notebook, for example the GA:
 
@@ -44,8 +48,8 @@ After an interruption, resume from a notebook, for example the GA:
 ```
 
 Run the experiment on an otherwise idle machine with a fixed power profile (`powerprofilesctl set performance`),
-because training times are reported. The processor, power profile, package versions and notebook times are
-recorded in `results/run_info.json`.
+because training times are reported. The processor, power profile, package versions, main settings, code version
+(git commit) and notebook times are recorded in `results/run_info.json`.
 
 | Notebook | Purpose |
 |---|---|
@@ -69,7 +73,7 @@ Results are written to `results/`, which is not under version control:
 | `results/champions/<method>/seed<k>.keras` | Final controllers (evolutionary ones also as `.npy`) |
 | `results/champions/best_seeds.json` | Each method's best seed on the validation tracks |
 | `results/tables/`, `results/figures/` | Results tables (CSV and Markdown) and figures |
-| `results/run_info.json`, `results/run_log.txt` | Record and log of the experiment run |
+| `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Record, log and console output of the experiment run |
 
 ## Calibration and benchmarks
 
