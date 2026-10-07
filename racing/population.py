@@ -28,10 +28,10 @@ def split_tasks(n, seeds, n_jobs):
 
 
 def _evaluate_track(weights, seed, level):
-    """Fitness, finishing and finishing at pace (spec §9.1) of every network on one track."""
+    """Fitness, finishing and finishing at pace (spec §9.1) of every network over config.LAPS laps of one track."""
     track = get_track(seed, level)
-    result = sim.simulate(track, nets.population_policy(weights), len(weights))
-    pace_limit = config.PACE_FACTOR * track.expert_lap_time + config.TIME_EPS
+    result = sim.simulate(track, nets.population_policy(weights), len(weights), laps=config.LAPS)
+    pace_limit = config.PACE_FACTOR * track.expert_lap_time * config.LAPS + config.TIME_EPS
     at_pace = result.finished & (np.nan_to_num(result.finish_time, nan=np.inf) <= pace_limit)
     return result.fitness, result.finished, at_pace
 

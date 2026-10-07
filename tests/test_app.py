@@ -60,6 +60,12 @@ def test_camera_keeps_the_track_inside_the_view(circle_track):
         assert sx.min() >= 0 and sx.max() <= 900 and sy.min() >= 0 and sy.max() <= 800
 
 
+def test_training_playback_drives_all_laps(window):
+    window.receive(ga_report())
+    window.update(1 / 60)
+    assert window.playback.cars.laps == config.LAPS
+
+
 def test_app_plays_a_report(window):
     window.receive(ga_report())
     for _ in range(120):

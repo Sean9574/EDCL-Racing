@@ -10,6 +10,7 @@ YAW_MIN_SPEED = 1.0          # m/s, speed floor used only in the yaw-rate formul
 SPEED_SCALE = 40.0           # m/s, input normalization only; not a speed limit
 STALL_TIME = 5.0             # s without progress ends a run
 TIME_LIMIT_FACTOR = 2.0      # lap time limit = factor × expert lap time
+LAPS = 3                     # laps per run in training and evaluation (spec §5.4)
 TIME_EPS = 1e-9              # tolerance for comparisons of accumulated simulation time
 
 # --- Sensors (spec §5.2) ---

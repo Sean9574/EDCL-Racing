@@ -416,7 +416,8 @@ class App:
     def start_playback(self, report, track):
         fitness = np.asarray(report["fitness"], dtype=float)
         self.indices = select_indices(fitness, self.show, self.shown, sample_seed=report["generation"])
-        self.playback = Playback(track, report_policy(report, self.indices), len(self.indices))
+        self.playback = Playback(track, report_policy(report, self.indices), len(self.indices),
+                             laps=config.LAPS)
         self.best_slot = int(np.argmax(fitness[self.indices]))
         self.playback_generation = report["generation"]
         self.step_budget = 0.0

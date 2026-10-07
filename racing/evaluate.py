@@ -10,20 +10,21 @@ import pandas as pd
 from racing import config, nets, paths, sim
 from racing.tracks import get_track
 
-DRIVE_COLUMNS = ["approach", "run_seed", "track", "finished", "crashed", "lap_time", "progress", "fitness"]
+DRIVE_COLUMNS = ["approach", "run_seed", "track", "finished", "crashed", "race_time", "lap_time", "progress", "fitness"]
 
 
 def _drive_track(drivers, track_seed, level):
-    """One lap for every controller on one track, simulated together (cars never interact)."""
+    """All config.LAPS laps for every controller on one track, simulated together (cars never interact)."""
     track = get_track(track_seed, level)
     keys = list(drivers)
-    result = sim.simulate(track, nets.mixed_policy([drivers[k] for k in keys]), len(keys))
+    result = sim.simulate(track, nets.mixed_policy([drivers[k] for k in keys]), len(keys), laps=config.LAPS)
     rows = []
     for i, (approach, run_seed) in enumerate(keys):
+        race_time = float(result.finish_time[i])
         rows.append({"approach": approach, "run_seed": run_seed, "track": track_seed,
                      "finished": bool(result.finished[i]), "crashed": bool(result.crashed[i]),
-                     "lap_time": float(result.finish_time[i]), "progress": float(result.progress[i]),
-                     "fitness": float(result.fitness[i])})
+                     "race_time": race_time, "lap_time": race_time / config.LAPS,
+                     "progress": float(result.progress[i]), "fitness": float(result.fitness[i])})
     return rows
 
 

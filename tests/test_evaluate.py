@@ -18,6 +18,21 @@ def drivers(n=3, seed=0):
     return {("ga", k): nets.from_flat(flats[k]) for k in range(n)}
 
 
+def test_controllers_drive_all_laps(monkeypatch, fake_tracks):
+    seen = []
+    real = evaluate.sim.simulate
+
+    def recording(track, policy, n, laps=1, **kwargs):
+        seen.append(laps)
+        return real(track, policy, n, laps=laps, **kwargs)
+
+    monkeypatch.setattr(evaluate.sim, "simulate", recording)
+    frame = evaluate.driving_results(drivers(), [1000])
+    assert seen == [config.LAPS]
+    done = frame[frame["finished"]]
+    assert np.allclose(done["lap_time"], done["race_time"] / config.LAPS)
+
+
 def test_driving_results_columns_and_rows(fake_tracks):
     frame = evaluate.driving_results(drivers(), [1000, 1001])
     assert list(frame.columns) == evaluate.DRIVE_COLUMNS and len(frame) == 6
@@ -114,10 +129,10 @@ def test_comparison_table():
 
 def test_driving_table_aggregates_seeds():
     per_track = pd.DataFrame([
-        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "lap_time": 50.0},
-        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
-        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "lap_time": 54.0},
-        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "lap_time": 60.0}])
+        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "race_time": 150.0, "lap_time": 50.0},
+        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
+        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "race_time": 162.0, "lap_time": 54.0},
+        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "race_time": 180.0, "lap_time": 60.0}])
     table = evaluate.driving_table(per_track, metrics_frame())
     row = table.iloc[0]
     assert row["Method"] == "GA" and row["Seeds"] == 2 and row["Tracks completed (of 2)"] == "1.5 ± 0.7"
@@ -127,20 +142,20 @@ def test_driving_table_aggregates_seeds():
 
 def test_driving_table_names_the_seeds_a_lap_time_covers():
     per_track = pd.DataFrame([
-        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "lap_time": 50.0},
-        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
-        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "lap_time": 54.0},
-        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "lap_time": 60.0},
-        {"approach": "ga", "run_seed": 2, "track": 1000, "finished": False, "crashed": True, "lap_time": np.nan},
-        {"approach": "ga", "run_seed": 2, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
-        {"approach": "es", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "lap_time": 52.0},
-        {"approach": "es", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
-        {"approach": "es", "run_seed": 1, "track": 1000, "finished": False, "crashed": True, "lap_time": np.nan},
-        {"approach": "es", "run_seed": 1, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "race_time": 150.0, "lap_time": 50.0},
+        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
+        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "race_time": 162.0, "lap_time": 54.0},
+        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "race_time": 180.0, "lap_time": 60.0},
+        {"approach": "ga", "run_seed": 2, "track": 1000, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
+        {"approach": "ga", "run_seed": 2, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
+        {"approach": "es", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "race_time": 156.0, "lap_time": 52.0},
+        {"approach": "es", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
+        {"approach": "es", "run_seed": 1, "track": 1000, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
+        {"approach": "es", "run_seed": 1, "track": 1001, "finished": False, "crashed": True, "race_time": np.nan, "lap_time": np.nan},
         {"approach": "es_seeded", "run_seed": 0, "track": 1000, "finished": False, "crashed": True,
-         "lap_time": np.nan},
+         "race_time": np.nan, "lap_time": np.nan},
         {"approach": "es_seeded", "run_seed": 0, "track": 1001, "finished": False, "crashed": True,
-         "lap_time": np.nan}])
+         "race_time": np.nan, "lap_time": np.nan}])
     table = evaluate.driving_table(per_track, metrics_frame()).set_index("Method")
     assert table.loc["GA", "Seeds"] == 3 and table.loc["GA", "Tracks completed (of 2)"] == "1.0 ± 1.0"
     assert table.loc["GA", "Mean lap time (s)"] == "53.50 ± 4.95 (2 of 3 seeds)"

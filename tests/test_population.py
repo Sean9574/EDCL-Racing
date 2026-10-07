@@ -92,9 +92,11 @@ def test_resimulating_a_subset_reproduces_logged_fitness(fake_tracks):
 
 
 def test_at_pace_requires_finishing_within_the_pace_factor(monkeypatch, fake_tracks):
-    limit = config.PACE_FACTOR * fake_tracks.expert_lap_time
+    limit = config.PACE_FACTOR * fake_tracks.expert_lap_time * config.LAPS
+    seen = []
 
-    def fake_simulate(track, policy, n):
+    def fake_simulate(track, policy, n, laps=1):
+        seen.append(laps)
         return sim.RunResult(fitness=np.array([1.5, 1.2, 0.4]), finished=np.array([True, True, False]),
                              crashed=np.array([False, False, True]), progress=np.array([1.0, 1.0, 0.4]),
                              finish_time=np.array([limit - 1.0, limit + 1.0, np.nan]), steps=10)
@@ -102,6 +104,7 @@ def test_at_pace_requires_finishing_within_the_pace_factor(monkeypatch, fake_tra
     monkeypatch.setattr(population.sim, "simulate", fake_simulate)
     w = nets.init_population(np.random.default_rng(0), 3)
     _, finished, at_pace = population.evaluate_population(w, [0], 1)
+    assert seen == [config.LAPS]
     assert list(finished) == [True, True, False] and list(at_pace) == [True, False, False]
 
 
