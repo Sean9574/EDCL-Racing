@@ -12,7 +12,7 @@ EVOLUTION_PROGRESS = (
     "def progress(report):\n"
     "    if report['generation'] % 10 == 0 or report['leveled_up']:\n"
     "        print(f\"gen {report['generation']:4d}  level {report['level']}  best {report['best']:.3f}  \"\n"
-    "              f\"new finish {report['new_finish']:.2f}  at pace {report['new_pace']:.2f}  \"\n"
+    "              f\"new finish {report['new_finish']:.2f}  at pace {report['whole_pace']:.2f}  \"\n"
     "              f\"step {report['step_size']:.4f}\")\n")
 
 NOTEBOOKS = {

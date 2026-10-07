@@ -32,7 +32,8 @@ def ga_report(generation=0, n=30):
     return {"approach": "ga", "generation": generation, "level": 1, "seeds": [0, 1, 2],
             "weights": nets.init_population(rng, n), "hidden": [16], "activation": "relu",
             "fitness": fitness, "finished": np.zeros(n, dtype=bool), "is_kept": np.zeros(n, dtype=bool),
-            "kept_finish": float("nan"), "new_finish": 0.0, "kept_pace": float("nan"), "new_pace": 0.0, "step_size": 0.5, "best": float(fitness.max()),
+            "kept_finish": float("nan"), "new_finish": 0.0, "kept_pace": float("nan"), "new_pace": 0.0, "whole_pace": 0.0,
+            "step_size": 0.5, "best": float(fitness.max()),
             "mean": float(fitness.mean()), "worst": float(fitness.min()), "evals": n, "elapsed": 1.0,
             "leveled_up": False}
 

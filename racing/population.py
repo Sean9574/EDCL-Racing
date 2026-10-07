@@ -69,12 +69,13 @@ def finish_fractions(finished, is_kept):
 
 def make_report(*, approach, generation, level, seeds, weights, fitness, finished, is_kept, kept_finish,
                 new_finish, kept_pace, new_pace, step_size, evals, elapsed, leveled_up,
-                strict_success=float("nan"), tie_fraction=float("nan")):
+                whole_pace=float("nan"), strict_success=float("nan"), tie_fraction=float("nan")):
     """One generation's results, for logging and for the training view."""
     return {"approach": approach, "generation": int(generation), "level": int(level), "seeds": list(seeds),
             "weights": weights, "hidden": list(config.BASELINE_HIDDEN), "activation": "relu",
             "fitness": fitness, "finished": finished, "is_kept": is_kept,
             "kept_finish": kept_finish, "new_finish": new_finish, "kept_pace": kept_pace, "new_pace": new_pace,
+            "whole_pace": float(whole_pace), "n_kept": int(np.sum(is_kept)),
             "step_size": float(step_size), "strict_success": float(strict_success),
             "tie_fraction": float(tie_fraction),
             "best": float(fitness.max()), "mean": float(fitness.mean()), "worst": float(fitness.min()),
@@ -83,8 +84,8 @@ def make_report(*, approach, generation, level, seeds, weights, fitness, finishe
 
 class RunLogger:
     """Writes one CSV row and the best network after every generation, and a summary at the end."""
-    FIELDS = ["generation", "level", "evals", "best", "mean", "worst", "kept_finish", "new_finish", "kept_pace",
-              "new_pace", "step_size", "strict_success", "tie_fraction", "seeds", "elapsed", "leveled_up"]
+    FIELDS = ["generation", "level", "evals", "best", "mean", "worst", "whole_pace", "n_kept", "kept_finish",
+              "new_finish", "kept_pace", "new_pace", "step_size", "strict_success", "tie_fraction", "seeds", "elapsed", "leveled_up"]
 
     def __init__(self, out_dir):
         self.dir = Path(out_dir)

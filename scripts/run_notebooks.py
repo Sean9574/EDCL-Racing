@@ -25,7 +25,8 @@ from racing import config  # noqa: E402
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
 SETTINGS = ("N_JOBS", "STEPS_PER_EXECUTION", "JIT_COMPILE", "GA_S_MAX", "GA_S_MIN", "PACE_FACTOR",
-            "LEVEL_UP_NEW_FRACTION", "MAX_EPOCHS", "RUN_SEEDS", "EVAL_BUDGET")
+            "LEVEL_UP_FRACTION", "GA_KEPT", "GA_KEEP_MAX_FRACTION",
+            "MAX_EPOCHS", "RUN_SEEDS", "EVAL_BUDGET")
 
 
 def now():

@@ -112,7 +112,7 @@ def report(generation, n=5):
     return population.make_report(approach="ga", generation=generation, level=1, seeds=[0, 1, 2], weights=w,
                                   fitness=fitness, finished=fitness > 0.5, is_kept=np.zeros(n, dtype=bool),
                                   kept_finish=float("nan"), new_finish=0.4, kept_pace=float("nan"), new_pace=0.2,
-                                  step_size=0.5, evals=n * (generation + 1), elapsed=1.0, leveled_up=False)
+                                  whole_pace=0.3, step_size=0.5, evals=n * (generation + 1), elapsed=1.0, leveled_up=False)
 
 
 def test_logger_records_pace_and_es_fractions(tmp_path):
@@ -120,6 +120,7 @@ def test_logger_records_pace_and_es_fractions(tmp_path):
     logger.log(report(0))
     log = pd.read_csv(tmp_path / "log.csv")
     assert list(log.columns) == population.RunLogger.FIELDS
+    assert log.loc[0, "whole_pace"] == 0.3 and log.loc[0, "n_kept"] == 0
     assert log.loc[0, "new_pace"] == 0.2 and math.isnan(log.loc[0, "strict_success"])
 
 

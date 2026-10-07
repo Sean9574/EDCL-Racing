@@ -14,34 +14,35 @@ def test_mutation_strength_endpoints_and_midpoint():
 
 def test_level_up_on_third_consecutive_qualifying_generation():
     t = LevelTracker()
-    assert not t.update(1.0, 0.9)
-    assert not t.update(1.0, 0.85)
-    assert t.update(1.0, 0.8)
+    f = config.LEVEL_UP_FRACTION
+    assert not t.update(f)
+    assert not t.update(min(1.0, f + 0.2))
+    assert t.update(1.0)
     assert t.level == 2
 
 
-def test_streak_resets_after_a_non_qualifying_generation():
+def test_streak_resets_below_the_threshold():
     t = LevelTracker()
-    t.update(1.0, 0.9)
-    t.update(1.0, 0.9)
-    assert not t.update(0.98, 0.9)          # one kept individual failed
-    assert not t.update(1.0, 0.9)
-    assert not t.update(1.0, 0.9)
-    assert t.update(1.0, 0.9)
-    assert t.level == 2
+    f = config.LEVEL_UP_FRACTION
+    t.update(1.0)
+    t.update(1.0)
+    assert not t.update(f - 0.01)
+    assert not t.update(1.0)
+    assert not t.update(1.0)
+    assert t.update(1.0)
 
 
-def test_no_kept_individuals_never_qualifies():
+def test_below_threshold_never_qualifies():
     t = LevelTracker()
     for _ in range(5):
-        assert not t.update(float("nan"), 1.0)
+        assert not t.update(config.LEVEL_UP_FRACTION - 0.01)
     assert t.level == 1
 
 
 def test_level_stops_at_max():
     t = LevelTracker(level=config.MAX_LEVEL)
     for _ in range(5):
-        assert not t.update(1.0, 1.0)
+        assert not t.update(1.0)
     assert t.level == config.MAX_LEVEL
 
 

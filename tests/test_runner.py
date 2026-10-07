@@ -66,8 +66,8 @@ def test_run_record_holds_the_settings_and_code_version(runner, tmp_path, monkey
     assert run_main(runner, tmp_path, []) == 0
     info = json.loads((tmp_path / "info.json").read_text())
     assert list(info["settings"]) == ["N_JOBS", "STEPS_PER_EXECUTION", "JIT_COMPILE", "GA_S_MAX", "GA_S_MIN",
-                                      "PACE_FACTOR", "LEVEL_UP_NEW_FRACTION", "MAX_EPOCHS", "RUN_SEEDS",
-                                      "EVAL_BUDGET"]
+                                      "PACE_FACTOR", "LEVEL_UP_FRACTION", "GA_KEPT", "GA_KEEP_MAX_FRACTION",
+                                      "MAX_EPOCHS", "RUN_SEEDS", "EVAL_BUDGET"]
     assert info["settings"]["RUN_SEEDS"] == list(runner.config.RUN_SEEDS)
     assert info["settings"]["N_JOBS"] == runner.config.N_JOBS
     assert len(info["git_commit"]) == 40 and int(info["git_commit"], 16) >= 0

@@ -766,7 +766,8 @@ class App:
         size_name = "Mutation strength" if r["approach"] == "ga" else "σ"
         for line in (f"Level {r['level']}    {unit} {r['generation']}",
                      f"Finished: kept {percent(r['kept_finish'])}   new {percent(r['new_finish'])}",
-                     f"At pace: kept {percent(r.get('kept_pace', nan))}   new {percent(r.get('new_pace', nan))}",
+                     f"At pace: all {percent(r.get('whole_pace', nan))}  kept {percent(r.get('kept_pace', nan))}  "
+                     f"new {percent(r.get('new_pace', nan))}",
                      f"{size_name}: {number(r['step_size'])}",
                      f"Best {r['best']:.3f}    Mean {r['mean']:.3f}"):
             y = self.text(line, x, y, self.small)

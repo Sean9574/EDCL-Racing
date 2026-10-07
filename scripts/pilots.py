@@ -30,6 +30,7 @@ def pilot_ga(s_max, out_root, generations=100, pop_size=config.GA_POP, kept=conf
     log = pd.read_csv(out / "log.csv")
     return {"pilot": f"GA s_max={s_max}", "generations": result["generations"],
             "level_reached": result["level_reached"], "level_ups": level_ups(log),
+            "whole_pace_last20": round(float(log["whole_pace"].tail(20).mean()), 2),
             "new_finish_last": round(float(log["new_finish"].iloc[-1]), 2),
             "new_pace_last": round(float(log["new_pace"].iloc[-1]), 2),
             "best_last": round(float(log["best"].iloc[-1]), 3), "minutes": round(result["wall_time"] / 60, 1)}
@@ -45,6 +46,7 @@ def pilot_es(out_root, generations=100, mu=config.ES_MU, lam=config.ES_LAMBDA, n
     recent = log.tail(20)
     return {"pilot": name, "generations": result["generations"], "level_reached": result["level_reached"],
             "level_ups": level_ups(log), "new_pace_last": round(float(log["new_pace"].iloc[-1]), 2),
+            "whole_pace_last20": round(float(recent["whole_pace"].mean()), 2),
             "sigma_min": float(log["step_size"].min()), "sigma_last": float(log["step_size"].iloc[-1]),
             "strict_success": round(float(recent["strict_success"].mean()), 3),
             "tie_fraction": round(float(recent["tie_fraction"].mean()), 3),

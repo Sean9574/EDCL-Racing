@@ -25,20 +25,34 @@ def test_tournament_prefers_fitter_individuals():
     assert winners.mean() > 75
 
 
-def test_next_generation_keeps_elite_first_and_unchanged():
+def test_survivors_keep_every_car_at_pace_up_to_the_cap():
+    fitness = np.arange(10.0)
+    at_pace = np.array([True, False, True, True, False, False, True, False, False, True])
+    assert list(ga.survivors(fitness, at_pace, 2, 3)) == [9, 6, 3]
+
+
+def test_survivors_fill_with_the_fittest_when_few_are_at_pace():
+    fitness = np.arange(10.0)
+    at_pace = np.zeros(10, dtype=bool)
+    at_pace[2] = True
+    assert list(ga.survivors(fitness, at_pace, 3, 5)) == [2, 9, 8]
+
+
+def test_next_generation_keeps_survivors_first_and_unchanged():
     rng = np.random.default_rng(1)
     weights = rng.normal(size=(30, 8))
     fitness = rng.random(30)
-    new, is_kept = ga.next_generation(rng, weights, fitness, 5, 0.1)
-    top = weights[np.argsort(-fitness, kind="stable")[:5]]
-    assert new.shape == weights.shape and is_kept.sum() == 5 and np.all(is_kept[:5])
-    assert np.array_equal(new[:5], top)
+    at_pace = rng.random(30) < 0.5
+    new, is_kept = ga.next_generation(rng, weights, fitness, at_pace, 5, 15, 0.1)
+    keep = ga.survivors(fitness, at_pace, 5, 15)
+    assert new.shape == weights.shape and is_kept.sum() == len(keep) and np.all(is_kept[:len(keep)])
+    assert np.array_equal(new[:len(keep)], weights[keep])
 
 
 def test_zero_strength_children_only_recombine_parent_genes():
     rng = np.random.default_rng(2)
     weights = rng.normal(size=(20, 6))
-    new, _ = ga.next_generation(rng, weights, rng.random(20), 2, 0.0)
+    new, _ = ga.next_generation(rng, weights, rng.random(20), np.zeros(20, dtype=bool), 2, 2, 0.0)
     for j in range(6):
         assert set(new[2:, j]).issubset(set(weights[:, j]))
 
@@ -49,7 +63,7 @@ def test_operators_solve_the_sphere_function():
     start = np.min(np.sum(weights ** 2, axis=1))
     for _ in range(80):
         fitness = -np.sum(weights ** 2, axis=1)
-        weights, _ = ga.next_generation(rng, weights, fitness, 5, 0.05)
+        weights, _ = ga.next_generation(rng, weights, fitness, np.zeros(100, dtype=bool), 5, 5, 0.05)
     assert np.min(np.sum(weights ** 2, axis=1)) < start / 10
 
 
@@ -88,8 +102,8 @@ def test_level_advances_after_three_generations_at_pace(monkeypatch, tmp_path):
     monkeypatch.setattr(ga, "evaluate_population", fake_evaluation(True, True))
     reports = []
     ga.run_ga(pop_size=20, kept=5, budget=100, out_dir=tmp_path, on_generation=reports.append, champion_dir=None)
-    assert [r["level"] for r in reports] == [1, 1, 1, 1, 2]       # generation 0 has no kept individuals
-    assert reports[3]["leveled_up"]
+    assert [r["level"] for r in reports] == [1, 1, 1, 2, 2]
+    assert reports[2]["leveled_up"]
 
 
 def test_finishing_slower_than_pace_never_advances(monkeypatch, tmp_path):
@@ -143,3 +157,19 @@ def test_default_output_directory_is_per_seed(monkeypatch, tmp_path):
     monkeypatch.setattr(ga, "evaluate_population", fake_evaluation(False, False))
     ga.run_ga(pop_size=20, kept=5, budget=20, seed=2, champion_dir=None)
     assert (tmp_path / "ga" / "seed2" / "log.csv").exists()
+
+
+def test_survivor_count_follows_the_cars_at_pace(monkeypatch, tmp_path):
+    def fake(w, seeds, level, n_jobs=1):
+        n = len(w)
+        return np.arange(n, dtype=float), np.ones(n, dtype=bool), np.arange(n) < 12
+    monkeypatch.setattr(ga, "evaluate_population", fake)
+    reports = []
+    ga.run_ga(pop_size=20, kept=2, keep_max_fraction=0.5, budget=40, out_dir=tmp_path, on_generation=reports.append,
+              champion_dir=None)
+    assert reports[1]["n_kept"] == 10 and reports[0]["whole_pace"] == 0.6
+
+
+def test_keep_cap_must_cover_the_minimum(tmp_path):
+    with pytest.raises(ValueError, match="at most"):
+        ga.run_ga(pop_size=20, kept=15, keep_max_fraction=0.5, budget=40, out_dir=tmp_path, champion_dir=None)

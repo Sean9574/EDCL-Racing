@@ -78,12 +78,13 @@ def run_es(mu=config.ES_MU, lam=config.ES_LAMBDA, budget=config.EVAL_BUDGET, see
         evals += mu + lam
         kept_finish, new_finish = finish_fractions(finished, is_kept)
         kept_pace, new_pace = finish_fractions(at_pace, is_kept)
-        leveled_up = tracker.update(kept_pace, new_pace)
+        whole_pace = float(np.mean(at_pace))
+        leveled_up = tracker.update(whole_pace)
         child, parent = fitness[mu:], fitness[:mu][parent_of]
         report = make_report(approach=approach, generation=generation, level=level, seeds=seeds,
                              weights=individuals, fitness=fitness, finished=finished, is_kept=is_kept,
                              kept_finish=kept_finish, new_finish=new_finish, kept_pace=kept_pace,
-                             new_pace=new_pace, step_size=sigma, evals=evals, elapsed=time.time() - start,
+                             new_pace=new_pace, whole_pace=whole_pace, step_size=sigma, evals=evals, elapsed=time.time() - start,
                              leveled_up=leveled_up, strict_success=float(np.mean(child > parent)),
                              tie_fraction=float(np.mean(child == parent)))
         logger.log(report)

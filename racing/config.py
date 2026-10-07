@@ -63,17 +63,18 @@ SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 
 # --- Curriculum (spec §9.1) ---
 TRACKS_PER_GEN = 3
-LEVEL_UP_NEW_FRACTION = 0.8
+LEVEL_UP_FRACTION = 0.5     # share of the whole generation that must finish at pace to count toward a level-up
 LEVEL_UP_STREAK = 3
 PACE_FACTOR = 1.3            # finishing at pace: lap time ≤ PACE_FACTOR × expert lap time; confirmed by pilots
 
 # --- Genetic algorithm (spec §9.2) ---
 GA_POP = 1000
-GA_KEPT = 50
+GA_KEPT = 50                 # the minimum number of survivors
+GA_KEEP_MAX_FRACTION = 0.5   # survivors are at most this share of the population
 GA_TOURNAMENT = 5
 GA_CROSSOVER_P = 0.5
 GA_MUTATION_P = 0.1
-GA_S_MAX = 0.5               # chosen by the pilot runs (scripts/pilots.py) from 0.5, 0.2 and 0.1
+GA_S_MAX = 0.1               # chosen by the pilot runs (scripts/pilots.py) from 0.5, 0.2 and 0.1, fastest level progression
 GA_S_MIN = GA_S_MAX / 100
 
 # --- Evolution strategy (spec §9.3) ---
