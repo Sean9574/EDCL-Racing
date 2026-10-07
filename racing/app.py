@@ -28,11 +28,37 @@ MUTED = (91, 100, 116)
 BUTTON = (228, 232, 238)
 BUTTON_ACTIVE = (55, 62, 78)     # dark neutral: never mistaken for an approach (spec §10.1)
 RAY = (255, 196, 0)
+WHITE = (255, 255, 255)
+MIN_LINE_CONTRAST = 3.0          # a plot line with less contrast against white gets a dark outline (WCAG 2)
 
 
 def hex_to_rgb(code):
     code = code.lstrip("#")
     return tuple(int(code[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def luminance(rgb):
+    """Relative luminance of an sRGB color (WCAG 2): 0 for black, 1 for white."""
+    c = np.asarray(rgb[:3], dtype=float) / 255.0
+    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return float(c @ np.array([0.2126, 0.7152, 0.0722]))
+
+
+def contrast(a, b):
+    """Contrast ratio of two colors (WCAG 2), from 1 to 21."""
+    light, dark = sorted((luminance(a), luminance(b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def ink_for(fill):
+    """Text color on `fill`: dark ink on light colors such as NEAT's yellow, white on dark ones, whichever
+    contrasts more."""
+    return INK if contrast(fill, INK) >= contrast(fill, WHITE) else WHITE
+
+
+def needs_outline(color, background=WHITE):
+    """Whether a line or swatch in `color` needs a dark outline to stand out from `background`."""
+    return contrast(color, background) < MIN_LINE_CONTRAST
 
 
 def select_indices(fitness, mode, count, sample_seed=0):
@@ -708,13 +734,20 @@ class App:
         self.screen.blit(surface, (x, y))
         return y + surface.get_height() + 4
 
+    def swatch(self, approach, rect):
+        """An approach's color square; a light color gets a dark outline on the light panel."""
+        color = hex_to_rgb(config.COLORS[approach])
+        pygame.draw.rect(self.screen, color, rect)
+        if needs_outline(color, PANEL_BG):
+            pygame.draw.rect(self.screen, INK, rect, 1)
+
     def button(self, rect, label, action, active=False, enabled=True, color=None):
         fill = hex_to_rgb(color) if (color and active) else (BUTTON_ACTIVE if active else BUTTON)
         pygame.draw.rect(self.screen, fill if enabled else (238, 240, 243), rect, border_radius=6)
         if color and not active:
             pygame.draw.rect(self.screen, hex_to_rgb(color), pygame.Rect(rect.left, rect.top, 5, rect.height),
                              border_top_left_radius=6, border_bottom_left_radius=6)
-        ink = (255, 255, 255) if active else (INK if enabled else MUTED)
+        ink = ink_for(fill) if active else (INK if enabled else MUTED)
         label_surface = self.small.render(label, True, ink)
         self.screen.blit(label_surface, label_surface.get_rect(center=rect.center))
         if enabled:
@@ -840,8 +873,10 @@ class App:
             pygame.draw.line(self.screen, BUTTON_ACTIVE, (rect.left + 6, y), (rect.right - 6, y), 1)
         if not np.isnan(second).all():
             pygame.draw.lines(self.screen, MUTED, False, [point(g, v) for g, v in zip(gens, second)], 1)
-        pygame.draw.lines(self.screen, hex_to_rgb(config.COLORS[self.approach]), False,
-                          [point(g, v) for g, v in zip(gens, main)], 2)
+        color, points = hex_to_rgb(config.COLORS[self.approach]), [point(g, v) for g, v in zip(gens, main)]
+        if needs_outline(color):                           # NEAT's yellow on the white plot
+            pygame.draw.lines(self.screen, INK, False, points, 4)
+        pygame.draw.lines(self.screen, color, False, points, 2)
 
     def draw_race_panel(self, x, y, w):
         if not self.race_available:
@@ -861,7 +896,7 @@ class App:
         y += 42
         y = self.text("Controllers", x, y, self.small, MUTED)
         for approach in self.race_available:
-            pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[approach]), pygame.Rect(x, y + 8, 10, 10))
+            self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
             self.text(config.LABELS[approach], x + 16, y + 5, self.small)
             self.button(pygame.Rect(x + 140, y, w - 140, 24), self.choice_label(approach),
                         lambda a=approach: self.cycle_choice(a), enabled=idle)
@@ -871,7 +906,7 @@ class App:
         y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)", x, y, self.small, MUTED)
         for position, i, laps, last, best, status in leaderboard(self.race, len(self.lineup)):
             approach, seed = self.lineup[i]
-            pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[approach]), pygame.Rect(x, y + 3, 10, 10))
+            self.swatch(approach, pygame.Rect(x, y + 3, 10, 10))
             y = self.text(leaderboard_line(position, approach, seed, laps, last, best, status), x + 16, y,
                           self.small)
 

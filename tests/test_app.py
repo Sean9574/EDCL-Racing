@@ -50,6 +50,34 @@ def neat_report(generation=0, n=20):
     return ga_report(generation, n, approach="neat", population_=neat.NeatPopulation(genomes), species=3)
 
 
+def test_button_text_is_dark_on_light_colors_and_white_on_dark_ones():
+    """NEAT's yellow is too light for white text (revision 3 §9)."""
+    rgb = viewer.hex_to_rgb
+    assert viewer.ink_for(rgb(config.COLORS["neat"])) == viewer.INK
+    assert viewer.ink_for(rgb(config.COLORS["es_seeded"])) == viewer.WHITE         # dark blue
+    assert viewer.ink_for(viewer.BUTTON_ACTIVE) == viewer.WHITE
+    assert viewer.ink_for(viewer.WHITE) == viewer.INK
+    for color in config.COLORS.values():                                       # the better of the two inks
+        fill = rgb(color)
+        assert viewer.contrast(fill, viewer.ink_for(fill)) == max(viewer.contrast(fill, viewer.INK),
+                                                                   viewer.contrast(fill, viewer.WHITE))
+
+
+def test_light_plot_lines_get_a_dark_outline():
+    rgb = viewer.hex_to_rgb
+    assert viewer.needs_outline(rgb(config.COLORS["neat"]))
+    assert not viewer.needs_outline(rgb(config.COLORS["es_seeded"])) and not viewer.needs_outline(viewer.INK)
+
+
+def test_the_selected_neat_button_has_dark_text(window):
+    rect = pygame.Rect(10, 10, 160, 28)
+    window.screen.fill((0, 0, 0))
+    window.button(rect, "NEAT", lambda: None, active=True, color=config.COLORS["neat"])
+    pixels = {tuple(window.screen.get_at((x, y)))[:3] for x in range(rect.left, rect.right)
+              for y in range(rect.top, rect.bottom)}
+    assert viewer.INK in pixels and (255, 255, 255) not in pixels
+
+
 def test_select_indices_modes():
     fitness = np.array([0.3, 0.9, 0.1, 0.5])
     assert list(viewer.select_indices(fitness, "best", 2)) == [1, 3]
@@ -869,3 +897,12 @@ def test_trainer_main_starts_each_viewer_run_afresh(monkeypatch, tmp_path):
     running.set()
     viewer.trainer_main("ga", 30, 0, 1, queue.Queue(), running)
     assert seen == [False]
+
+
+def test_a_light_color_swatch_is_outlined(window):
+    rect = pygame.Rect(10, 10, 10, 10)
+    for approach, outlined in (("neat", True), ("es_seeded", False)):
+        window.screen.fill(viewer.PANEL_BG)
+        window.swatch(approach, rect)
+        assert (tuple(window.screen.get_at(rect.topleft))[:3] == viewer.INK) == outlined
+        assert tuple(window.screen.get_at(rect.center))[:3] == viewer.hex_to_rgb(config.COLORS[approach])
