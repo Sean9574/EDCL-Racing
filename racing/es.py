@@ -1,41 +1,103 @@
-"""(μ+λ) evolution strategy over network weights with the 1/5 success rule (spec §9.3), and the seeded ES that
-starts from a trained network (spec §9.4)."""
-import time
-from pathlib import Path
-
+"""Evolution strategy over dense network weights (revision 3 §5.2): each child is one of the fittest cars plus
+Gaussian noise of size σ, with the two-phase step-size rule. Started from a trained network it is the seeded ES
+(revision 3 §5.3) or the speed push of an imitation method (revision 3 §6.4)."""
 import numpy as np
 
-from racing import config, nets, paths
-from racing.curriculum import LevelTracker, draw_seeds, success_fraction
-from racing.population import (RunLogger, clear_champion, finish_fractions, fresh_workers, make_report,
-                               save_champion, select_champion)
-from racing.population import evaluate_weights as evaluate_population   # revision 2.0 evaluation until plan Task 6
+from racing import config, evolution, nets, paths, population
+from racing.curriculum import StepSize, success_fraction
+from racing.nets import DensePopulation
 
 
-def make_offspring(rng, parents, sigma, lam):
-    """λ offspring, each a random parent plus N(0, σ²) on every weight; also returns each one's parent index."""
-    parent_of = rng.integers(0, len(parents), lam)
-    return parents[parent_of] + rng.normal(0.0, sigma, (lam, parents.shape[1])), parent_of
-
-
-def select_parents(population, fitness, mu):
-    """The μ fittest of parents ∪ offspring."""
-    return population[np.argsort(-fitness, kind="stable")[:mu]]
-
-
-def one_fifth_rule(sigma, success_rate):
-    """Grow σ when more than 1/5 of offspring beat their parent, shrink it when fewer do."""
-    if success_rate > 0.2:
-        sigma = sigma / config.ES_FACTOR
-    elif success_rate < 0.2:
-        sigma = sigma * config.ES_FACTOR
-    return float(np.clip(sigma, config.ES_SIGMA_MIN, config.ES_SIGMA_MAX))
-
-
-def seeded_parents(rng, flat, mu, sigma=config.ES_SIGMA0):
-    """The trained network itself, then μ − 1 copies with N(0, σ²) added to every weight (spec §9.4)."""
+def seeded_population(rng, flat, n, sigma):
+    """The trained network itself, then n − 1 copies with N(0, σ²) added to every weight."""
     flat = np.asarray(flat, dtype=float)
-    return np.vstack([flat, flat + rng.normal(0.0, sigma, (mu - 1, len(flat)))])
+    return np.vstack([flat, flat + rng.normal(0.0, sigma, (n - 1, len(flat)))])
+
+
+class ES:
+    """The ES as a method of the evolution loop (racing/evolution.py). Every car has an id; a child records its
+    parent's id, so the 1/5 rule compares each child with its own parent."""
+
+    def __init__(self, approach="es", pop_size=config.ES_POP, parents=config.ES_MU, hidden=config.BASELINE_HIDDEN,
+                 activation="relu", initial=None, sigma0=config.ES_SIGMA0):
+        if pop_size < 2:
+            raise ValueError(f"population size ({pop_size}) must be at least 2")
+        self.approach = approach
+        self.pop_size = pop_size
+        self.parents = parents
+        self.hidden = tuple(hidden)
+        self.activation = activation
+        self.initial = None if initial is None else np.asarray(initial, dtype=float)
+        self.sigma0 = sigma0
+        self.step = StepSize(sigma0)
+        self.population = None
+        self.is_kept = None
+        self.ids = None
+        self.parent_ids = None
+        self.next_id = 0
+
+    @property
+    def step_size(self):
+        return self.step.sigma
+
+    def initialize(self, rng):
+        if self.initial is None:
+            weights = nets.init_population(rng, self.pop_size, self.hidden)
+        else:
+            weights = seeded_population(rng, self.initial, self.pop_size, self.sigma0)
+        self.population = DensePopulation(weights, self.hidden, self.activation)
+        self.is_kept = np.zeros(self.pop_size, dtype=bool)
+        self.ids = np.arange(self.pop_size)
+        self.parent_ids = np.full(self.pop_size, -1)
+        self.next_id = self.pop_size
+        self.step = StepSize(self.sigma0)
+
+    def success_rate(self, fitness):
+        """Share of this generation's children that beat their own parent, a tie counting half, over the children
+        whose parent is still in the population (revision 3 §5.2); nan if there are none."""
+        position = {int(i): k for k, i in enumerate(self.ids)}
+        children = [k for k in np.flatnonzero(~self.is_kept) if int(self.parent_ids[k]) in position]
+        if not children:
+            return float("nan")
+        parents = [position[int(self.parent_ids[k])] for k in children]
+        return success_fraction(fitness[children], fitness[parents])
+
+    def advance(self, rng, result, kept, event):
+        """Adapt σ, then keep the survivors first and unchanged and add children of the ES_MU fittest cars."""
+        weights = self.population.weights
+        n, p = weights.shape
+        top = np.argsort(-result.fitness, kind="stable")[:min(self.parents, n)]
+        children_before = ~self.is_kept
+        child_success = float(result.all_success[children_before].mean()) if children_before.any() else float("nan")
+        self.step.update(float(result.all_success[top].mean()), child_success, self.success_rate(result.fitness))
+        if event == "level_up":
+            self.step.reset()                           # restart the step size on the harder maps
+        n_new = n - len(kept)
+        chosen = top[rng.integers(0, len(top), n_new)]
+        children = weights[chosen] + rng.normal(0.0, self.step.sigma, (n_new, p))
+        self.population = DensePopulation(np.concatenate([weights[kept], children]), self.hidden, self.activation)
+        self.parent_ids = np.concatenate([self.parent_ids[kept], self.ids[chosen]])
+        self.ids = np.concatenate([self.ids[kept], np.arange(self.next_id, self.next_id + n_new)])
+        self.next_id += n_new
+        self.is_kept = np.arange(n) < len(kept)
+
+    def state(self):
+        return {"weights": self.population.weights, "is_kept": self.is_kept, "ids": self.ids,
+                "parent_ids": self.parent_ids, "next_id": self.next_id, "step": self.step.state(),
+                "hidden": self.hidden, "activation": self.activation}
+
+    def load_state(self, state):
+        self.hidden, self.activation = tuple(state["hidden"]), state["activation"]
+        self.population = DensePopulation(state["weights"], self.hidden, self.activation)
+        self.is_kept, self.ids, self.parent_ids = state["is_kept"], state["ids"], state["parent_ids"]
+        self.next_id = state["next_id"]
+        self.step = StepSize.from_state(state["step"])
+
+    def save_champion(self, index, seed, champion_dir):
+        return population.save_dense_champion(self.approach, seed, self.population, index, champion_dir)
+
+    def log_fields(self):
+        return {}
 
 
 def trained_baseline(seed, champion_dir=config.CHAMPIONS_DIR):
@@ -47,56 +109,21 @@ def trained_baseline(seed, champion_dir=config.CHAMPIONS_DIR):
     return nets.to_flat(keras_cpu().models.load_model(path))
 
 
-def run_es(mu=config.ES_MU, lam=config.ES_LAMBDA, budget=config.EVAL_BUDGET, seed=0, out_dir=None,
-           on_generation=None, n_jobs=1, champion_dir=config.CHAMPIONS_DIR, start_level=1, initial=None,
-           approach="es"):
-    """(μ+λ)-ES. With `initial`, the flat weights of a trained network, it is the seeded ES (spec §9.4)."""
-    if budget < mu + lam:
-        raise ValueError(f"budget ({budget}) is smaller than one generation (μ + λ = {mu + lam} evaluations)")
-    fresh_workers(n_jobs)                              # every run builds its own tracks (spec §9.1)
-    start = time.time()
-    rng = np.random.default_rng(seed)
-    if champion_dir is not None:
-        clear_champion(approach, seed, champion_dir)
-    logger = RunLogger(Path(out_dir or paths.run_dir(approach, seed)))
-    tracker = LevelTracker(level=start_level)
-    parents = nets.init_population(rng, mu) if initial is None else seeded_parents(rng, initial, mu)
-    sigma = config.ES_SIGMA0
-    evals, generation = 0, 0
-    while evals + mu + lam <= budget:
-        level = tracker.level
-        seeds = draw_seeds(rng)
-        offspring, parent_of = make_offspring(rng, parents, sigma, lam)
-        individuals = np.concatenate([parents, offspring])
-        is_kept = np.arange(mu + lam) < mu
-        fitness, finished, at_pace = evaluate_population(individuals, seeds, level, n_jobs=n_jobs)
-        evals += mu + lam
-        kept_finish, new_finish = finish_fractions(finished, is_kept)
-        kept_pace, new_pace = finish_fractions(at_pace, is_kept)
-        whole_pace = float(np.mean(at_pace))
-        leveled_up = tracker.update(whole_pace)
-        child, parent = fitness[mu:], fitness[:mu][parent_of]
-        report = make_report(approach=approach, generation=generation, level=level, seeds=seeds,
-                             weights=individuals, fitness=fitness, finished=finished, is_kept=is_kept,
-                             kept_finish=kept_finish, new_finish=new_finish, kept_pace=kept_pace,
-                             new_pace=new_pace, whole_pace=whole_pace, step_size=sigma, evals=evals, elapsed=time.time() - start,
-                             leveled_up=leveled_up, strict_success=float(np.mean(child > parent)),
-                             tie_fraction=float(np.mean(child == parent)))
-        logger.log(report)
-        if on_generation is not None:
-            on_generation(report)
-        sigma = one_fifth_rule(sigma, success_fraction(child, parent))
-        if leveled_up:
-            sigma = config.ES_SIGMA0                        # restart the step size on the harder tracks
-        parents = select_parents(individuals, fitness, mu)
-        generation += 1
-    result = {"approach": approach, "seed": seed, "generations": generation, "evals": evals,
-              "level_reached": tracker.level, "start_level": start_level, "mu": mu, "lam": lam,
-              "seeded": initial is not None}
-    if champion_dir is not None:
-        champion, val_fitness = select_champion(parents, n_jobs=n_jobs)
-        result["val_fitness"] = val_fitness
-        result["champion_path"] = str(save_champion(approach, seed, champion, champion_dir))
-    result["wall_time"] = time.time() - start          # includes the final selection (spec §9.1)
-    logger.summary(result)
-    return result
+def dagger_baseline(seed, runs_dir=None):
+    """Flat float64 weights of the baseline after its DAgger refinement, the start of the seeded ES (revision 3
+    §5.3)."""
+    from racing.backend import keras_cpu
+    path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"     # paths.stage_path(..., "dagger"), Task 10
+    if not path.exists():
+        raise FileNotFoundError(f"no refined baseline for seed {seed} at {path}; run notebook 03 first")
+    return nets.to_flat(keras_cpu().models.load_model(path))
+
+
+def run_es(seed=0, pop_size=config.ES_POP, out_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1,
+           on_generation=None, start_level=1, max_generations=None, initial=None, approach="es",
+           hidden=config.BASELINE_HIDDEN, activation="relu"):
+    """The ES with run seed `seed`; with `initial`, the flat weights of a trained network of architecture
+    (hidden, activation), it starts from that network. Returns the run's summary (racing/evolution.py)."""
+    method = ES(approach=approach, pop_size=pop_size, hidden=hidden, activation=activation, initial=initial)
+    return evolution.run(method, seed, out_dir or paths.run_dir(approach, seed), champion_dir, n_jobs,
+                         on_generation, start_level, max_generations)

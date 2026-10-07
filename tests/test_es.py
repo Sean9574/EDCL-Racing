@@ -1,117 +1,129 @@
 import math
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from racing import config, es, nets, paths, population
+from racing.population import TrialResult
 
 
-@pytest.fixture
-def fake_tracks(monkeypatch, circle_track):
-    monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
+def result(fitness, success):
+    fitness = np.asarray(fitness, dtype=float)
+    success = np.tile(np.asarray(success, dtype=bool), (config.TRACKS_PER_GEN, 1))
+    return TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 0),
+                       finish_time=np.where(success, 90.0, np.nan))
 
 
-def test_one_fifth_rule():
-    assert math.isclose(es.one_fifth_rule(0.1, 0.3), 0.1 / config.ES_FACTOR)
-    assert math.isclose(es.one_fifth_rule(0.1, 0.1), 0.1 * config.ES_FACTOR)
-    assert es.one_fifth_rule(0.1, 0.2) == 0.1
-    assert es.one_fifth_rule(config.ES_SIGMA_MAX, 1.0) == config.ES_SIGMA_MAX
-    assert es.one_fifth_rule(config.ES_SIGMA_MIN, 0.0) == config.ES_SIGMA_MIN
+def no_success(population, seeds, level, factor, n_jobs=1, backend="loky"):
+    n = len(population)
+    return result(np.arange(n, dtype=float), np.zeros(n))
 
 
-def test_offspring_come_from_their_parents():
-    rng = np.random.default_rng(0)
-    parents = rng.normal(size=(4, 5))
-    offspring, parent_of = es.make_offspring(rng, parents, 1e-9, 12)
-    assert offspring.shape == (12, 5)
-    assert np.allclose(offspring, parents[parent_of], atol=1e-6)
+def first_candidate(population, candidates, factor, n_jobs=1):
+    return int(candidates[0]), 0, 0.5
 
 
-def test_operators_solve_the_sphere_function():
-    rng = np.random.default_rng(1)
-    parents = rng.normal(size=(10, 20))
-    sigma = 0.3
-    start = np.min(np.sum(parents ** 2, axis=1))
-    for _ in range(80):
-        offspring, parent_of = es.make_offspring(rng, parents, sigma, 70)
-        pop = np.concatenate([parents, offspring])
-        fitness = -np.sum(pop ** 2, axis=1)
-        sigma = es.one_fifth_rule(sigma, es.success_fraction(fitness[10:], fitness[:10][parent_of]))
-        parents = es.select_parents(pop, fitness, 10)
-    assert np.min(np.sum(parents ** 2, axis=1)) < start / 10
+def started(pop_size=20, **kwargs):
+    method = es.ES(pop_size=pop_size, **kwargs)
+    method.initialize(np.random.default_rng(0))
+    return method
 
 
-def test_budget_must_cover_one_generation(tmp_path):
-    with pytest.raises(ValueError, match="smaller than one generation"):
-        es.run_es(mu=4, lam=16, budget=10, out_dir=tmp_path, champion_dir=None)
+def test_initial_population_and_step_size():
+    method = started(parents=4)
+    assert method.population.weights.shape == (20, 431) and not method.is_kept.any()
+    assert method.step_size == config.ES_SIGMA0 and method.approach == "es" and method.log_fields() == {}
 
 
-def test_small_run_reports_every_generation(fake_tracks, tmp_path):
-    reports = []
-    result = es.run_es(mu=4, lam=16, budget=60, out_dir=tmp_path, on_generation=reports.append, champion_dir=None)
-    assert result["generations"] == len(reports) == 3 and result["evals"] == 60
-    assert reports[0]["step_size"] == config.ES_SIGMA0
-    assert all(r["is_kept"].sum() == 4 for r in reports)
-    assert (tmp_path / "log.csv").exists()
+def test_seeded_population_starts_from_the_trained_network():
+    flat = np.random.default_rng(1).normal(size=431)
+    method = started(pop_size=50, initial=flat, approach="es_seeded")
+    weights = method.population.weights
+    assert np.array_equal(weights[0], flat) and not np.any(np.all(weights[1:] == flat, axis=1))
+    assert 0.05 < np.std(weights[1:] - flat) < 0.2 and method.approach == "es_seeded"
 
 
-def test_sigma_follows_the_one_fifth_rule(monkeypatch, tmp_path):
-    def fake(w, seeds, level, n_jobs=1):
-        fitness = np.zeros(len(w))
-        fitness[4:] = 1.0                                   # every offspring beats its parent
-        return fitness, np.zeros(len(w), dtype=bool), np.zeros(len(w), dtype=bool)
-    monkeypatch.setattr(es, "evaluate_population", fake)
-    reports = []
-    es.run_es(mu=4, lam=16, budget=40, out_dir=tmp_path, on_generation=reports.append, champion_dir=None)
-    assert math.isclose(reports[1]["step_size"], config.ES_SIGMA0 / config.ES_FACTOR)
+def test_children_are_noisy_copies_of_the_fittest_cars():
+    method = started(parents=4, sigma0=config.ES_SIGMA_MIN)          # σ is never below ES_SIGMA_MIN
+    before = method.population.weights.copy()
+    method.advance(np.random.default_rng(2), result(-np.arange(20.0), np.zeros(20)), np.arange(10), None)
+    for child in method.population.weights[10:]:                  # cars 0-3 were the fittest
+        assert np.any(np.all(np.isclose(child, before[:4], atol=10 * config.ES_SIGMA_MIN), axis=1))
 
 
-def test_success_fraction_counts_ties_as_half():
-    child = np.array([2.0, 1.0, 1.0, 0.0])
-    parent = np.array([1.0, 1.0, 0.0, 1.0])
-    assert es.success_fraction(child, parent) == (1.0 + 0.5 + 1.0 + 0.0) / 4
+def test_children_remember_their_parents():
+    method = started(parents=4)
+    ids = method.ids.copy()
+    method.advance(np.random.default_rng(8), result(-np.arange(20.0), np.zeros(20)), np.arange(10), None)
+    assert np.array_equal(method.ids[:10], ids[:10]) and set(method.ids[10:]).isdisjoint(ids)
+    assert set(method.parent_ids[10:]) <= set(ids[:4])
 
 
-def test_full_tie_generation_increases_sigma(monkeypatch, tmp_path):
-    monkeypatch.setattr(es, "evaluate_population",
-                        lambda w, seeds, level, n_jobs=1: (np.zeros(len(w)), np.zeros(len(w), dtype=bool),
-                                                           np.zeros(len(w), dtype=bool)))
-    reports = []
-    es.run_es(mu=4, lam=16, budget=40, out_dir=tmp_path, on_generation=reports.append, champion_dir=None)
-    assert math.isclose(reports[1]["step_size"], config.ES_SIGMA0 / config.ES_FACTOR)
+def test_learning_phase_follows_the_one_fifth_rule():
+    method = started(parents=4)
+    method.advance(np.random.default_rng(3), result(-np.arange(20.0), np.zeros(20)), np.arange(10), None)
+    assert method.step_size == config.ES_SIGMA0                    # no child has a parent yet
+    fitness = np.zeros(20)
+    fitness[10:] = 1.0                                             # every child beats its own parent
+    method.advance(np.random.default_rng(4), result(fitness, np.zeros(20)), np.arange(10), None)
+    assert math.isclose(method.step_size, config.ES_SIGMA0 / config.ES_FACTOR)
 
 
-def test_sigma_resets_after_a_level_up(monkeypatch, tmp_path):
-    def fake(w, seeds, level, n_jobs=1):
-        fitness = np.zeros(len(w))
-        fitness[4:] = 1.0                                   # every offspring beats its parent
-        return fitness, np.ones(len(w), dtype=bool), np.ones(len(w), dtype=bool)   # all finish at pace
-    monkeypatch.setattr(es, "evaluate_population", fake)
-    reports = []
-    es.run_es(mu=4, lam=16, budget=100, out_dir=tmp_path, on_generation=reports.append, champion_dir=None)
-    assert [r["leveled_up"] for r in reports] == [False, False, True, False, False]
-    assert reports[2]["step_size"] > config.ES_SIGMA0
-    assert reports[3]["step_size"] == config.ES_SIGMA0 and reports[3]["level"] == 2
-    assert math.isclose(reports[4]["step_size"], config.ES_SIGMA0 / config.ES_FACTOR)
+def test_reliability_phase_follows_the_childrens_success():
+    method = started(parents=4)
+    success = np.arange(20) < 15                                    # every parent, 75% of the children
+    method.advance(np.random.default_rng(5), result(-np.arange(20.0), success), np.arange(10), None)
+    assert math.isclose(method.step_size, config.ES_SIGMA0 * config.ES_FACTOR)
+    method.advance(np.random.default_rng(6), result(-np.arange(20.0), np.ones(20)), np.arange(10), None)
+    assert math.isclose(method.step_size, config.ES_SIGMA0)
 
 
-def test_seeded_parents_start_from_the_trained_network():
-    rng = np.random.default_rng(0)
-    flat = rng.normal(size=431)
-    parents = es.seeded_parents(rng, flat, 50)
-    assert parents.shape == (50, 431) and np.array_equal(parents[0], flat)
-    assert not np.any(np.all(parents[1:] == flat, axis=1))
-    assert 0.05 < np.std(parents[1:] - flat) < 0.2                 # σ₀ = 0.1
+def test_step_size_resets_on_a_level_up():
+    method = started(parents=4)
+    method.advance(np.random.default_rng(7), result(-np.arange(20.0), np.ones(20)), np.arange(10), "level_up")
+    assert method.step_size == config.ES_SIGMA0
 
 
-def test_seeded_run_starts_from_the_initial_weights(fake_tracks, tmp_path):
+def test_state_round_trip_continues_identically():
+    first = started(parents=4)
+    second = es.ES(pop_size=20, parents=4)
+    second.load_state(first.state())
+    trial = result(-np.arange(20.0), np.arange(20) < 3)
+    first.advance(np.random.default_rng(9), trial, np.arange(10), None)
+    second.advance(np.random.default_rng(9), trial, np.arange(10), None)
+    assert np.array_equal(first.population.weights, second.population.weights)
+    assert np.array_equal(first.parent_ids, second.parent_ids) and first.step_size == second.step_size
+
+
+def test_run_es_seeded_starts_from_the_initial_weights(monkeypatch, tmp_path):
+    monkeypatch.setattr(population, "evaluate_population", no_success)
     flat = nets.init_population(np.random.default_rng(1), 1)[0]
     reports = []
-    result = es.run_es(mu=4, lam=16, budget=20, initial=flat, approach="es_seeded", out_dir=tmp_path,
-                       on_generation=reports.append, champion_dir=None)
-    assert np.array_equal(reports[0]["weights"][0], flat) and reports[0]["approach"] == "es_seeded"
-    assert result["approach"] == "es_seeded" and result["seeded"]
+    summary = es.run_es(pop_size=20, max_generations=1, initial=flat, approach="es_seeded", out_dir=tmp_path,
+                        on_generation=reports.append, champion_dir=None)
+    assert np.array_equal(reports[0]["population"].weights[0], flat) and reports[0]["approach"] == "es_seeded"
+    assert summary["approach"] == "es_seeded"
+
+
+def test_run_es_returns_a_completed_run(monkeypatch, tmp_path):
+    monkeypatch.setattr(population, "evaluate_population", no_success)
+    es.run_es(pop_size=20, max_generations=1, out_dir=tmp_path, champion_dir=None)
+    again = es.run_es(pop_size=20, max_generations=1, out_dir=tmp_path, champion_dir=None,
+                      on_generation=lambda report: pytest.fail("trained again"))
+    assert again["generations"] == 1
+
+
+def test_run_es_any_architecture_round_trips_its_champion(monkeypatch, tmp_path):
+    monkeypatch.setattr(population, "evaluate_population", no_success)
+    monkeypatch.setattr(population, "select_final", first_candidate)
+    flat = nets.init_population(np.random.default_rng(1), 1, (8, 4))[0]
+    summary = es.run_es(seed=1, pop_size=20, max_generations=1, initial=flat, approach="kt_random", hidden=(8, 4),
+                        activation="tanh", out_dir=tmp_path / "run", champion_dir=tmp_path / "champions")
+    model, driver = nets.load_champion("kt_random", 1, tmp_path / "champions")
+    saved = np.load(paths.champion_path("kt_random", 1, ".npy", tmp_path / "champions"))
+    obs = np.random.default_rng(2).random((5, config.N_INPUTS))
+    assert np.array_equal(driver.act(obs), nets.from_flat(saved, (8, 4), "tanh").act(obs))
+    assert nets.dense_spec(model) == ((8, 4), "tanh") and summary["approach"] == "kt_random"
 
 
 def test_trained_baseline_reads_the_baseline_controller(tmp_path):
@@ -129,44 +141,16 @@ def test_trained_baseline_missing(tmp_path):
         es.trained_baseline(0, champion_dir=tmp_path)
 
 
-def test_log_records_strict_successes_and_ties(monkeypatch, tmp_path):
-    def fake(w, seeds, level, n_jobs=1):
-        fitness = np.zeros(len(w))
-        fitness[4:12] = 1.0                      # 8 of 16 offspring beat their parent (all parents score 0)
-        return fitness, np.zeros(len(w), dtype=bool), np.zeros(len(w), dtype=bool)
-    monkeypatch.setattr(es, "evaluate_population", fake)
-    reports = []
-    es.run_es(mu=4, lam=16, budget=20, out_dir=tmp_path, on_generation=reports.append, champion_dir=None)
-    assert reports[0]["strict_success"] == 0.5 and reports[0]["tie_fraction"] == 0.5
-    log = pd.read_csv(tmp_path / "log.csv")
-    assert list(log["strict_success"]) == [0.5] and list(log["tie_fraction"]) == [0.5]
+def test_dagger_baseline_reads_the_refined_baseline(tmp_path):
+    from racing import imitation
+    model = imitation.build_baseline()
+    path = paths.run_dir("baseline", 1, tmp_path) / "dagger.keras"
+    path.parent.mkdir(parents=True)
+    model.save(path)
+    flat = es.dagger_baseline(1, runs_dir=tmp_path)
+    assert flat.shape == (431,) and np.array_equal(flat, nets.to_flat(model))
 
 
-def test_each_run_starts_with_fresh_workers_before_its_timer(monkeypatch, tmp_path):
-    events = []
-
-    class Clock:
-        @staticmethod
-        def time():
-            events.append("clock")
-            return 0.0
-
-    monkeypatch.setattr(es, "fresh_workers", lambda n_jobs: events.append(("fresh", n_jobs)))
-    monkeypatch.setattr(es, "time", Clock)
-    monkeypatch.setattr(es, "evaluate_population",
-                        lambda w, seeds, level, n_jobs=1: (np.zeros(len(w)), np.zeros(len(w), bool),
-                                                           np.zeros(len(w), bool)))
-    es.run_es(mu=4, lam=16, budget=20, out_dir=tmp_path, champion_dir=None, n_jobs=3)
-    assert events[:2] == [("fresh", 3), "clock"] and events.count(("fresh", 3)) == 1
-
-
-def test_es_champion_per_seed(monkeypatch, tmp_path):
-    monkeypatch.setattr(es, "evaluate_population",
-                        lambda w, seeds, level, n_jobs=1: (np.zeros(len(w)), np.zeros(len(w), bool),
-                                                           np.zeros(len(w), bool)))
-    monkeypatch.setattr(es, "select_champion", lambda candidates, n_jobs=1: (candidates[0], 0.25))
-    result = es.run_es(mu=4, lam=16, budget=20, seed=1, approach="es_seeded",
-                       initial=nets.init_population(np.random.default_rng(2), 1)[0],
-                       out_dir=tmp_path / "run", champion_dir=tmp_path / "champions")
-    assert result["champion_path"] == str(paths.champion_path("es_seeded", 1, champion_dir=tmp_path / "champions"))
-    assert paths.champion_path("es_seeded", 1, ".npy", tmp_path / "champions").exists()
+def test_dagger_baseline_missing(tmp_path):
+    with pytest.raises(FileNotFoundError, match="notebook 03"):
+        es.dagger_baseline(0, runs_dir=tmp_path)

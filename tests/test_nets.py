@@ -94,7 +94,7 @@ def test_champion_seeds_ignores_other_file_names(tmp_path):
 
 def test_load_champion_drives_with_float64_weights(tmp_path):
     flat = nets.init_population(np.random.default_rng(5), 1)[0]
-    population.save_champion("es", 0, flat, tmp_path)
+    population.save_dense_champion("es", 0, nets.DensePopulation(flat[None, :]), 0, tmp_path)
     model, driver = nets.load_champion("es", 0, tmp_path)
     assert model.count_params() == 431
     assert np.array_equal(np.concatenate([np.concatenate([w.ravel(), b]) for w, b in driver.layers]), flat)

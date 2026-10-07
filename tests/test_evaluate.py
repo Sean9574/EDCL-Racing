@@ -245,7 +245,7 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     champions, runs = tmp_path / "champions", tmp_path / "runs"
     rng = np.random.default_rng(5)
     for approach, seed in (("ga", 0), ("ga", 2), ("es", 1)):
-        population.save_champion(approach, seed, nets.init_population(rng, 1)[0], champions)
+        population.save_dense_champion(approach, seed, nets.DensePopulation(nets.init_population(rng, 1)), 0, champions)
     folder = paths.run_dir("ga", 0, runs)
     folder.mkdir(parents=True)
     (folder / "summary.json").write_text(json.dumps({"wall_time": 12.0, "level_reached": 2}))
@@ -257,3 +257,13 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     assert json.loads((champions / "best_seeds.json").read_text()).keys() == {"ga", "es"}
     for name in ("comparison", "driving", "search_cost", "driving_selected", "dataset"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
+
+
+def test_figures_read_revision_3_logs(tmp_path):
+    folder = tmp_path / "runs" / "ga" / "seed0"
+    folder.mkdir(parents=True)
+    pd.DataFrame({"generation": [0, 1, 2], "evals": [20, 40, 60], "best": [0.5, 1.2, 1.4],
+                  "step_size": [np.nan, 0.1, 0.09], "event": ["", "level_up", ""]}).to_csv(folder / "log.csv",
+                                                                                          index=False)
+    written = evaluate.figures(tmp_path / "runs", tmp_path / "figures")
+    assert tmp_path / "figures" / "fitness_curves.png" in written

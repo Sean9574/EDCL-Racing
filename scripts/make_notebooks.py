@@ -10,10 +10,9 @@ SETUP = "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path.cwd
 
 EVOLUTION_PROGRESS = (
     "def progress(report):\n"
-    "    if report['generation'] % 10 == 0 or report['leveled_up']:\n"
-    "        print(f\"gen {report['generation']:4d}  level {report['level']}  best {report['best']:.3f}  \"\n"
-    "              f\"new finish {report['new_finish']:.2f}  at pace {report['whole_pace']:.2f}  \"\n"
-    "              f\"step {report['step_size']:.4f}\")\n")
+    "    if report['generation'] % 50 == 0 or report['event']:\n"
+    "        print(f\"gen {report['generation']:5d}  level {report['level']}  best {report['best']:.3f}  \"\n"
+    "              f\"worst map {report['min_share']:.2f}  step {report['step_size']:.4f}  {report['event'] or ''}\")\n")
 
 NOTEBOOKS = {
     "01_dataset.ipynb": [

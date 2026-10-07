@@ -16,9 +16,9 @@ def test_pipeline_end_to_end(tmp_path):
     imitation.run_tuner("kt_random", data, out_dir=paths.search_dir("kt_random", runs), max_trials=2, max_epochs=2)
     imitation.retrain("kt_random", data, seed=0, search=paths.search_dir("kt_random", runs),
                       out_dir=paths.run_dir("kt_random", 0, runs), champion_dir=champions, epochs=2)
-    ga.run_ga(pop_size=20, kept=5, budget=40, seed=0, out_dir=paths.run_dir("ga", 0, runs), champion_dir=champions)
-    es.run_es(mu=4, lam=16, budget=40, seed=0, out_dir=paths.run_dir("es", 0, runs), champion_dir=champions)
-    es.run_es(mu=4, lam=16, budget=40, seed=1, initial=es.trained_baseline(1, champion_dir=champions),
+    ga.run_ga(pop_size=20, max_generations=2, seed=0, out_dir=paths.run_dir("ga", 0, runs), champion_dir=champions)
+    es.run_es(pop_size=20, max_generations=2, seed=0, out_dir=paths.run_dir("es", 0, runs), champion_dir=champions)
+    es.run_es(pop_size=20, max_generations=2, seed=1, initial=es.trained_baseline(1, champion_dir=champions),
               approach="es_seeded", out_dir=paths.run_dir("es_seeded", 1, runs), champion_dir=champions)
     results = evaluate.main(champions_dir=champions, runs_dir=runs, data_path=data_path, out_dir=tmp_path / "out",
                             test_seeds=[1000], val_seeds=[80], n_jobs=2, latency_calls=20)

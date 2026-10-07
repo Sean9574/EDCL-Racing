@@ -264,6 +264,13 @@ def evolution_logs(runs_dir):
     return logs
 
 
+def level_events(log):
+    """Rows at which a run advanced a level: the revision 3 `event` column, or revision 2.0's `leveled_up`."""
+    if "event" in log:
+        return log["event"].fillna("").isin(["level_up", "goal"])
+    return log["leveled_up"].astype(bool)
+
+
 def figures(runs_dir, out_dir):
     """Fitness curves and step sizes (one line per seed) and Keras Tuner trials; only figures with data are written."""
     import matplotlib
@@ -281,7 +288,7 @@ def figures(runs_dir, out_dir):
             for k, (seed, log) in enumerate(per_seed.items()):
                 ax.plot(log["evals"], log["best"], color=color, linewidth=1.0, alpha=0.85,
                         label=f"{config.LABELS[approach]} best" if k == 0 else None)
-                for evals in log.loc[log["leveled_up"].astype(bool), "evals"]:
+                for evals in log.loc[level_events(log), "evals"]:
                     ax.axvline(evals, color=color, alpha=0.25, linewidth=0.7)
         ax.set_xlabel("Individual evaluations")
         ax.set_ylabel("Best fitness")

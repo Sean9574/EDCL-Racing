@@ -108,6 +108,8 @@ class Playback:
 
 def report_policy(report, indices):
     """Policy for the chosen members of a training report."""
+    if "population" in report:
+        return report["population"].subset(indices).policy()
     if "weights" in report:
         return nets.population_policy(report["weights"][indices], tuple(report["hidden"]), report["activation"])
     return nets.mixed_policy([report["nets"][i] for i in indices])
@@ -146,13 +148,15 @@ def trainer_main(approach, size, seed, level, reports, running):
         running.wait()                      # training holds here while the viewer is paused
 
     out_dir = config.APP_RUNS_DIR / approach / f"seed{seed}"
+    if approach in config.EVOLUTION_APPROACHES:
+        paths.remove(out_dir)              # a viewer run always starts afresh, never from an old checkpoint
     if approach == "ga":
         ga.run_ga(pop_size=size, seed=seed, start_level=level, out_dir=out_dir, on_generation=send,
                   champion_dir=None, n_jobs=config.N_JOBS)
         return
     if approach in ("es", "es_seeded"):
         initial = es.trained_baseline(seed) if approach == "es_seeded" else None
-        es.run_es(lam=size, seed=seed, start_level=level, initial=initial, approach=approach, out_dir=out_dir,
+        es.run_es(pop_size=size, seed=seed, start_level=level, initial=initial, approach=approach, out_dir=out_dir,
                   on_generation=send, champion_dir=None, n_jobs=config.N_JOBS)
         return
     path = config.DATASET_PATH
@@ -216,7 +220,7 @@ def stats_lines(report, approach):
     unit = "Trial" if approach.startswith("kt") else ("Epoch" if approach == "baseline" else "Generation")
     size_name = "Mutation strength" if approach == "ga" else "σ"
     return (f"Level {report['level']}    {unit} {report['generation']}",
-            f"Finished: kept {percent(report['kept_finish'])}   new {percent(report['new_finish'])}",
+            f"Finished: kept {percent(report.get('kept_finish', report.get('kept_success', nan)))}   new {percent(report.get('new_finish', report.get('child_success', nan)))}",
             f"At pace: all {percent(report.get('whole_pace', nan))}  kept {percent(report.get('kept_pace', nan))}  "
             f"new {percent(report.get('new_pace', nan))}",
             f"{size_name}: {number(report['step_size'])}",
@@ -249,7 +253,7 @@ class App:
         self.approach = "ga"
         self.run_seed = config.RUN_SEEDS[0]
         self.difficulty = 1
-        self.population = {"ga": config.GA_POP, "es": config.ES_LAMBDA, "es_seeded": config.ES_LAMBDA}
+        self.population = {"ga": config.GA_POP, "es": config.ES_POP, "es_seeded": config.ES_POP}
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
@@ -373,7 +377,7 @@ class App:
 
     def receive(self, report):
         self.latest = report
-        self.history.append((report["generation"], report["best"], report["mean"], report["leveled_up"]))
+        self.history.append((report["generation"], report["best"], report["mean"], report.get("leveled_up", report.get("event") in ("level_up", "goal"))))
 
     # ----- settings (changeable only while no training runs) -----
     def select_approach(self, approach):

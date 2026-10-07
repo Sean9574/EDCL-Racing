@@ -69,11 +69,8 @@ RUN_SEEDS = (0, 1, 2)        # every method is run once per seed (spec §11)
 SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 TRAIN_SEED_START = 2_000_000  # fresh training maps: seeds drawn from here upwards, never repeated in a run (revision 3 §3.4)
 
-# --- Curriculum (spec §9.1) ---
+# --- Time trial, survival and levels (revision 3 §4) ---
 TRACKS_PER_GEN = 3
-LEVEL_UP_FRACTION = 0.5     # share of the whole generation that must finish at pace to count toward a level-up
-LEVEL_UP_STREAK = 3
-PACE_FACTOR = 1.3            # at pace: time for the LAPS laps ≤ PACE_FACTOR × LAPS × expert lap time
 TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LAPS expert laps (revision 3 §4.1)
 MASTERY_FRACTION = 0.9       # lowest map success share for a passing generation (revision 3 §4.3)
 MASTERY_STREAK = 3           # consecutive passing generations to advance a level or master a target
@@ -83,26 +80,23 @@ SAFETY_PATIENCE = 2000       # generations without a new best 3-generation mean 
 KEEP_MAX_FRACTION = 0.9      # kept cars fill at most this share of the population (revision 3 §4.2)
 ELITE_FLOOR = 50             # at least this many of the fittest cars are kept
 
-# --- Genetic algorithm (spec §9.2) ---
+# --- Genetic algorithm (revision 3 §5.1) ---
 GA_POP = 1000
-GA_KEPT = 50                 # the minimum number of survivors
-GA_KEEP_MAX_FRACTION = 0.5   # survivors are at most this share of the population
 GA_TOURNAMENT = 5
 GA_CROSSOVER_P = 0.5
 GA_MUTATION_P = 0.1
 GA_S_MAX = 0.1               # chosen by the pilot runs (scripts/pilots.py) from 0.5, 0.2 and 0.1, fastest level progression
 GA_S_MIN = GA_S_MAX / 100
 
-# --- Evolution strategy (spec §9.3) ---
-ES_MU = 50
-ES_LAMBDA = 500
+# --- Evolution strategy (revision 3 §5.2) ---
+ES_POP = 550
+ES_MU = 50                   # children are copies of one of the ES_MU fittest cars
 ES_SIGMA0 = 0.1
 ES_FACTOR = 0.82
 ES_SIGMA_MIN = 1e-4
 ES_SIGMA_MAX = 1.0
 
-# --- Budget and parallelism ---
-EVAL_BUDGET = 200_000
+# --- Parallelism ---
 N_JOBS = 6                   # worker processes; racing/bench.py, worst-case generation: 1: 6.87 s, 3: 2.61 s, 6: 1.88 s, 9: 3.12 s, 12: 2.94 s, 15: 2.74 s
 
 # --- Keras training (spec §8) ---

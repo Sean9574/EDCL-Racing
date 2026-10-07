@@ -194,7 +194,7 @@ def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, t
     viewer.trainer_main("ga", 30, 0, 1, reports, running)
     viewer.trainer_main("es", 12, 0, 1, reports, running)
     assert calls["ga"]["champion_dir"] is None and calls["ga"]["pop_size"] == 30
-    assert calls["es"]["champion_dir"] is None and calls["es"]["lam"] == 12
+    assert calls["es"]["champion_dir"] is None and calls["es"]["pop_size"] == 12
     assert calls["ga"]["out_dir"] == tmp_path / "ga" / "seed0" and calls["es"]["out_dir"] == tmp_path / "es" / "seed0"
     assert reports.get_nowait()["generation"] == 0 and reports.empty()
 
@@ -220,7 +220,7 @@ def test_pause_and_resume_toggle_the_running_event(window):
 def save_race_champions(directory, best=None):
     rng = np.random.default_rng(0)
     for approach, seed in (("es", 0), ("ga", 0), ("ga", 1)):
-        population.save_champion(approach, seed, nets.init_population(rng, 1)[0], directory)
+        population.save_dense_champion(approach, seed, nets.DensePopulation(nets.init_population(rng, 1)), 0, directory)
     if best is not None:
         (directory / "best_seeds.json").write_text(json.dumps(best))
 
@@ -720,3 +720,25 @@ def test_a_failed_background_build_is_reported_and_retried(monkeypatch, circle_t
         assert app.request_track(0, 1) is circle_track
     finally:
         pygame.quit()
+
+
+def test_a_report_with_a_population_plays_back(window):
+    report = ga_report()
+    report["population"] = nets.DensePopulation(report.pop("weights"))
+    window.receive(report)
+    window.update(1 / 60)
+    assert window.playback is not None and window.playback.cars.laps == config.LAPS
+
+
+def test_trainer_main_starts_each_viewer_run_afresh(monkeypatch, tmp_path):
+    from racing import ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    stale = tmp_path / "ga" / "seed0" / "checkpoint.pkl"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"an earlier viewer run")
+    seen = []
+    monkeypatch.setattr(ga, "run_ga", lambda **kwargs: seen.append(stale.exists()))
+    running = threading.Event()
+    running.set()
+    viewer.trainer_main("ga", 30, 0, 1, queue.Queue(), running)
+    assert seen == [False]
