@@ -496,3 +496,53 @@ def test_training_panel_fits_the_window(window):
         window.draw()
         assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
         assert window.slider.bottom <= window.panel.bottom - 30
+    window.receive(ga_report())
+    window.update(1 / 60)
+    for approach in config.APPROACHES:
+        window.approach = approach
+        window.draw()
+        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
+        assert window.slider.bottom <= window.panel.bottom - 30, approach
+
+
+def test_a_failed_track_build_is_reported_and_retried(window, monkeypatch, circle_track):
+    calls = []
+
+    def flaky(seed, level):
+        calls.append(seed)
+        if len(calls) == 1:
+            raise RuntimeError("no drivable track")
+        return circle_track
+
+    monkeypatch.setattr(viewer, "get_track", flaky)
+    assert window.request_track(0, 1) is None and "seed 0" in window.status
+    assert window.request_track(0, 1) is circle_track
+
+
+def test_a_failed_background_build_is_reported_and_retried(monkeypatch, circle_track):
+    calls = []
+
+    def flaky(seed, level):
+        calls.append(seed)
+        if len(calls) == 1:
+            raise RuntimeError("no drivable track")
+        return circle_track
+
+    monkeypatch.setattr(viewer, "get_track", flaky)
+    pygame.init()
+    app = viewer.App(pygame.display.set_mode(config.WINDOW_SIZE))
+    try:
+        track = app.request_track(0, 1)
+        for _ in range(200):
+            if not app.building:
+                break
+            time.sleep(0.01)
+        assert track is None and "seed 0" in app.status and not app.building
+        track = app.request_track(0, 1)
+        for _ in range(200):
+            if app.request_track(0, 1) is not None:
+                break
+            time.sleep(0.01)
+        assert app.request_track(0, 1) is circle_track
+    finally:
+        pygame.quit()

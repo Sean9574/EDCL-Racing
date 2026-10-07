@@ -245,16 +245,21 @@ class App:
         if key in self.tracks:
             return self.tracks[key]
         if not self.background_tracks:
-            self.tracks[key] = get_track(*key)
-            return self.tracks[key]
+            self.build_track(key)
+            return self.tracks.get(key)
         if key not in self.building:
             self.building.add(key)
             threading.Thread(target=self.build_track, args=(key,), daemon=True).start()
         return None
 
     def build_track(self, key):
-        self.tracks[key] = get_track(*key)
-        self.building.discard(key)
+        """Build one track; a failure is shown in the status line and the next request tries again."""
+        try:
+            self.tracks[key] = get_track(*key)
+        except Exception as error:
+            self.status = f"Track seed {key[0]}, level {key[1]} could not be built: {error}"
+        finally:
+            self.building.discard(key)
 
     # ----- training process -----
     def start_training(self):
