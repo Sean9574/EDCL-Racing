@@ -54,6 +54,16 @@ def best_seeds(validation):
     return best
 
 
+def same_prediction_settings(model):
+    """Every controller is timed with the same prediction settings: no XLA compilation and one batch per call
+    (spec §11). A loaded imitation model would otherwise keep its training settings, an evolutionary one the
+    Keras default, which depends on the installed devices."""
+    model.jit_compile = False
+    model.steps_per_execution = 1
+    model.predict_function = None              # rebuilt with these settings by the next predict call
+    return model
+
+
 def accuracy(model, x, y):
     predicted = np.argmax(model.predict(x, batch_size=4096, verbose=0), axis=1)
     return float(np.mean(predicted == y))
@@ -93,6 +103,7 @@ def metrics_per_seed(models, data, runs_dir, latency_calls=1000):
     """One row per final controller: test accuracy, size, speed, training cost and curriculum level reached."""
     rows = []
     for (approach, run_seed), model in models.items():
+        same_prediction_settings(model)
         summary = read_json(paths.run_dir(approach, run_seed, runs_dir) / "summary.json")
         search = float("nan")
         if approach in config.TUNER_APPROACHES:
@@ -137,7 +148,8 @@ def comparison_table(metrics):
 
 
 def driving_table(per_track, metrics):
-    """Spec Table 5, driving performance: per seed, then mean ± std across seeds."""
+    """Spec Table 5, driving performance: per seed, then mean ± std across seeds. A seed that completed no track
+    has no lap time; the lap-time cell then states how many seeds it covers."""
     rows = []
     n_tracks = per_track["track"].nunique()
     for approach in config.APPROACHES:
@@ -150,12 +162,18 @@ def driving_table(per_track, metrics):
             completed.append(float(runs["finished"].sum()))
             lap_time.append(float(done["lap_time"].mean()) if len(done) else float("nan"))
             crashes.append(float(runs["crashed"].sum()))
+        n_seeds = len(lap_time)
+        with_time = sum(1 for v in lap_time if not np.isnan(v))
+        lap_cell = mean_std(lap_time, 2)
+        if 0 < with_time < n_seeds:
+            lap_cell += f" ({with_time} of {n_seeds} seeds)"
         level = "n/a"
         if approach in config.EVOLUTION_APPROACHES:
             levels = metrics[metrics["approach"] == approach]["level_reached"].dropna()
             level = ", ".join(str(int(v)) for v in levels) if len(levels) else "n/a"
-        rows.append({"Method": config.LABELS[approach], f"Tracks completed (of {n_tracks})": mean_std(completed, 1),
-                     "Mean lap time (s)": mean_std(lap_time, 2), "Crashes": mean_std(crashes, 1),
+        rows.append({"Method": config.LABELS[approach], "Seeds": n_seeds,
+                     f"Tracks completed (of {n_tracks})": mean_std(completed, 1),
+                     "Mean lap time (s)": lap_cell, "Crashes": mean_std(crashes, 1),
                      "Level reached (per seed)": level})
     return pd.DataFrame(rows)
 

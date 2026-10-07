@@ -56,6 +56,31 @@ def test_inference_warm_up_matches_the_timed_calls():
     assert calls == [(500, 500)] * 3
 
 
+def test_every_controller_is_timed_with_the_same_prediction_settings():
+    flat = nets.init_population(np.random.default_rng(9), 1)[0]
+    trained = nets.to_keras(flat)
+    trained.compile(optimizer="adam", loss="sparse_categorical_crossentropy", jit_compile=True,
+                    steps_per_execution=4)
+    x = np.random.default_rng(10).random((64, config.N_INPUTS)).astype(np.float32)
+    trained.predict(x, verbose=0)                       # builds a predict function with the training settings
+    for model in (trained, nets.to_keras(flat)):
+        evaluate.same_prediction_settings(model)
+        assert model.jit_compile is False and model.steps_per_execution == 1 and model.predict_function is None
+        assert model.predict(x, verbose=0).shape == (64, config.N_ACTIONS)
+
+
+def test_metrics_apply_the_prediction_settings_before_any_prediction(monkeypatch, tmp_path):
+    order = []
+    monkeypatch.setattr(evaluate, "same_prediction_settings", lambda model: order.append("settings"))
+    monkeypatch.setattr(evaluate, "accuracy", lambda model, x, y: order.append("accuracy") or 0.5)
+    monkeypatch.setattr(evaluate, "inference_time", lambda model, x: order.append("batch") or 1e-6)
+    monkeypatch.setattr(evaluate, "single_sample_latency", lambda model, x, calls: order.append("single") or 1e-3)
+    model = nets.to_keras(nets.init_population(np.random.default_rng(11), 1)[0])
+    data = {"X_test": np.zeros((4, config.N_INPUTS), np.float32), "y_test": np.zeros(4, int)}
+    evaluate.metrics_per_seed({("ga", 0): model}, data, tmp_path)
+    assert order == ["settings", "accuracy", "batch", "single"]
+
+
 def test_single_sample_latency_is_positive():
     model = nets.to_keras(nets.init_population(np.random.default_rng(3), 1)[0])
     x = np.random.default_rng(4).random((50, config.N_INPUTS)).astype(np.float32)
@@ -95,8 +120,32 @@ def test_driving_table_aggregates_seeds():
         {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "lap_time": 60.0}])
     table = evaluate.driving_table(per_track, metrics_frame())
     row = table.iloc[0]
-    assert row["Method"] == "GA" and row["Tracks completed (of 2)"] == "1.5 ± 0.7"
+    assert row["Method"] == "GA" and row["Seeds"] == 2 and row["Tracks completed (of 2)"] == "1.5 ± 0.7"
     assert row["Mean lap time (s)"] == "53.50 ± 4.95" and row["Level reached (per seed)"] == "4, 3"
+    assert list(table.columns[:2]) == ["Method", "Seeds"]
+
+
+def test_driving_table_names_the_seeds_a_lap_time_covers():
+    per_track = pd.DataFrame([
+        {"approach": "ga", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "lap_time": 50.0},
+        {"approach": "ga", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "ga", "run_seed": 1, "track": 1000, "finished": True, "crashed": False, "lap_time": 54.0},
+        {"approach": "ga", "run_seed": 1, "track": 1001, "finished": True, "crashed": False, "lap_time": 60.0},
+        {"approach": "ga", "run_seed": 2, "track": 1000, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "ga", "run_seed": 2, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "es", "run_seed": 0, "track": 1000, "finished": True, "crashed": False, "lap_time": 52.0},
+        {"approach": "es", "run_seed": 0, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "es", "run_seed": 1, "track": 1000, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "es", "run_seed": 1, "track": 1001, "finished": False, "crashed": True, "lap_time": np.nan},
+        {"approach": "es_seeded", "run_seed": 0, "track": 1000, "finished": False, "crashed": True,
+         "lap_time": np.nan},
+        {"approach": "es_seeded", "run_seed": 0, "track": 1001, "finished": False, "crashed": True,
+         "lap_time": np.nan}])
+    table = evaluate.driving_table(per_track, metrics_frame()).set_index("Method")
+    assert table.loc["GA", "Seeds"] == 3 and table.loc["GA", "Tracks completed (of 2)"] == "1.0 ± 1.0"
+    assert table.loc["GA", "Mean lap time (s)"] == "53.50 ± 4.95 (2 of 3 seeds)"
+    assert table.loc["ES", "Seeds"] == 2 and table.loc["ES", "Mean lap time (s)"] == "52.00 (1 of 2 seeds)"
+    assert table.loc["Seeded ES", "Mean lap time (s)"] == "–"
 
 
 def test_search_cost_and_dataset_tables(tmp_path):
