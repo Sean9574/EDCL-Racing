@@ -283,6 +283,31 @@ def test_race_draws_a_leaderboard_and_fits_the_window(window, tmp_path):
     assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
 
 
+def test_corrupt_best_seeds_falls_back_to_the_lowest_seed(window, tmp_path):
+    save_race_champions(tmp_path)
+    (tmp_path / "best_seeds.json").write_text('{"ga": ')
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    assert ("ga", 0) in window.lineup and "best_seeds.json" in window.status
+
+
+def test_best_seed_without_a_controller_falls_back(window, tmp_path):
+    race_window(window, tmp_path, {"ga": 5})
+    assert ("ga", 0) in window.lineup
+
+
+def test_unreadable_controller_is_skipped(window, tmp_path):
+    save_race_champions(tmp_path)
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    paths.champion_path("ga", 0, champion_dir=tmp_path).write_bytes(b"garbage")
+    paths.champion_path("ga", 0, ".npy", tmp_path).unlink()
+    window.update(1 / 60)
+    window.update(1 / 60)
+    assert ("ga", 0) not in window.lineup and window.race is not None
+    assert window.lineup == [("es", 0)] and "seed 0" in window.status and "GA" in window.status
+
+
 def test_leaderboard_orders_by_distance(circle_track):
     playback = viewer.Playback(circle_track, lambda obs, cars: np.zeros(len(cars.x), dtype=int), 2, laps=3)
     playback.cars.progress[:] = [10.0, 50.0]
@@ -301,6 +326,11 @@ def test_champions_saved_later_are_picked_up(window, tmp_path):
     save_race_champions(tmp_path)
     window.set_mode("race")
     assert window.race_available == {"es": [0], "ga": [0, 1]}
+    assert window.lineup == [("es", 0), ("ga", 0)]
+    (tmp_path / "best_seeds.json").write_text(json.dumps({"ga": 1}))
+    window.set_mode("train")
+    window.set_mode("race")
+    assert window.lineup == [("es", 0), ("ga", 1)]
 
 
 def test_step_burst_is_capped_and_budget_dropped(window):

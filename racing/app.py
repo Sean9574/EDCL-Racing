@@ -244,6 +244,7 @@ class App:
         self.lineup = []                    # (approach, seed) of the cars in the race
         self.race = None                    # Playback: the preview until the race starts
         self.racing = False
+        self.failed = set()                 # (approach, seed) whose controller file could not be loaded
 
     # ----- tracks -----
     def request_track(self, seed, level):
@@ -422,9 +423,10 @@ class App:
         return "Map: building the track"
 
     def set_mode(self, mode):
+        entering = mode != self.mode
         self.mode = mode
         self.step_budget = 0.0
-        if mode == "race" and not self.race_available:
+        if mode == "race" and (entering or not self.race_available):
             self.load_race()
         elif mode == "train" and self.status.startswith("No trained controllers"):
             self.status = "Training view."
@@ -433,15 +435,28 @@ class App:
     def load_race(self):
         """Find the saved final controllers and each approach's best run seed (spec §10.3)."""
         self.race_available = nets.champion_seeds(self.champions_dir)
-        best_path = paths.best_seeds_path(self.champions_dir)
+        self.drivers = {}
+        self.failed = set()
         self.best = {}
+        note = ""
+        best_path = paths.best_seeds_path(self.champions_dir)
         if best_path.exists():
-            self.best = {approach: int(seed) for approach, seed in json.loads(best_path.read_text()).items()}
-        self.race_choice = {approach: self.race_choice.get(approach, "best") for approach in self.race_available}
-        if self.race_available:
-            self.status = "Race view."
-        else:
+            try:
+                for approach, seed in json.loads(best_path.read_text()).items():
+                    if isinstance(seed, int) and not isinstance(seed, bool):
+                        self.best[approach] = seed
+            except (ValueError, TypeError, AttributeError, OSError):
+                self.best = {}
+                note = f"{best_path.name} could not be read; using the lowest seeds."
+        kept = self.race_choice
+        self.race_choice = {}
+        for approach, seeds in self.race_available.items():
+            choice = kept.get(approach, "best")
+            self.race_choice[approach] = choice if choice in ("best", "off", *seeds) else "best"
+        if not self.race_available:
             self.status = f"No trained controllers found in {self.champions_dir}."
+        else:
+            self.status = note or "Race view."
         self.reset_race()
 
     def chosen_seed(self, approach):
@@ -480,7 +495,7 @@ class App:
         self.lineup = []
         for approach in self.race_available:
             seed = self.chosen_seed(approach)
-            if seed is not None:
+            if seed is not None and (approach, seed) not in self.failed:
                 self.lineup.append((approach, seed))
 
     def driver(self, approach, seed):
@@ -496,8 +511,16 @@ class App:
         if self.race is None and self.lineup:
             track = self.race_track()
             if track is not None:
-                drivers = [self.driver(approach, seed) for approach, seed in self.lineup]
-                self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS)
+                drivers = []
+                for approach, seed in list(self.lineup):
+                    try:
+                        drivers.append(self.driver(approach, seed))
+                    except Exception:
+                        self.failed.add((approach, seed))
+                        self.lineup.remove((approach, seed))
+                        self.status = f"Controller {config.LABELS[approach]} seed {seed} could not be loaded; skipped."
+                if drivers:
+                    self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS)
 
     def start_race(self):
         self.prepare_race()
