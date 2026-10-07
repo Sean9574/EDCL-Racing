@@ -2,11 +2,14 @@
 mutation. A genome lists node genes (output and hidden nodes, each with a bias; the inputs are implicit) and
 connection genes. Every structural mutation is recorded for the whole run, so the same connection or split has the
 same innovation number or node id in every genome, which aligns genomes for crossover and speciation."""
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
-from racing import config
+from racing import config, paths
+from racing.backend import keras_cpu
 
 N_IN = config.N_INPUTS                         # 10
 N_OUT = config.N_ACTIONS                       # 15
@@ -250,3 +253,193 @@ def node_depths(genome):
             if indegree[d] == 0:
                 ready.append(d)
     return depth
+
+
+@dataclass(eq=False)
+class Compiled:
+    """A population of genomes as flat arrays (revision 3 §5.4). Values live in one vector: each genome has a block
+    of slots, its 10 inputs and then its nodes. Each level holds one depth: the slots it computes, their biases,
+    whether each is hidden (tanh) or an output (identity), and its enabled connections (source slot, position of the
+    target within the level, weight)."""
+    n: int
+    size: int
+    inputs: np.ndarray          # (n, 10) input slots
+    outputs: np.ndarray         # (n, 15) output slots, in output order
+    levels: list                # [(nodes, bias, hidden, src, target, weight)] for depths 1, 2, ...
+
+
+def compile_population(genomes):
+    """Flat arrays for the batched forward pass; compiled once per generation and task."""
+    n = len(genomes)
+    inputs = np.zeros((n, N_IN), dtype=np.int64)
+    outputs = np.zeros((n, N_OUT), dtype=np.int64)
+    node_slot, node_depth, node_bias, node_hidden = [], [], [], []
+    conn_src, conn_dst, conn_w, conn_depth = [], [], [], []
+    offset = 0
+    for g, genome in enumerate(genomes):
+        ids = genome.node_ids
+        depth = node_depths(genome)
+        depths = np.array([depth[node] for node in ids.tolist()], dtype=np.int64)
+        slots = offset + N_IN + np.arange(len(ids))
+        inputs[g] = offset + np.arange(N_IN)
+        outputs[g] = slots[np.searchsorted(ids, np.arange(N_IN, N_IN + N_OUT))]
+        node_slot.append(slots)
+        node_depth.append(depths)
+        node_bias.append(genome.bias)
+        node_hidden.append(ids >= FIRST_HIDDEN)
+        on = genome.enabled
+        src, dst = genome.src[on], genome.dst[on]
+        target = np.searchsorted(ids, dst)
+        conn_src.append(np.where(src < N_IN, offset + src, offset + N_IN + np.searchsorted(ids, src)))
+        conn_dst.append(slots[target])
+        conn_w.append(genome.weight[on])
+        conn_depth.append(depths[target])
+        offset += N_IN + len(ids)
+    if n == 0:
+        return Compiled(0, 0, inputs, outputs, [])
+    node_slot, node_depth = np.concatenate(node_slot), np.concatenate(node_depth)
+    node_bias, node_hidden = np.concatenate(node_bias), np.concatenate(node_hidden)
+    conn_src, conn_dst = np.concatenate(conn_src), np.concatenate(conn_dst)
+    conn_w, conn_depth = np.concatenate(conn_w), np.concatenate(conn_depth)
+    position = np.zeros(offset, dtype=np.int64)
+    levels = []
+    for d in range(1, int(node_depth.max()) + 1):
+        nodes = node_slot[node_depth == d]
+        position[nodes] = np.arange(len(nodes))
+        here = conn_depth == d                                  # boolean masks keep each genome's order
+        levels.append((nodes, node_bias[node_depth == d], node_hidden[node_depth == d], conn_src[here],
+                       position[conn_dst[here]], conn_w[here]))
+    return Compiled(n, offset, inputs, outputs, levels)
+
+
+def forward(compiled, obs):
+    """Output values (n, 15) of every genome for its own observation row: one gather, one bincount and one
+    activation per depth, with no loop over cars."""
+    v = np.zeros(compiled.size)
+    v[compiled.inputs] = obs
+    for nodes, bias, hidden, src, target, weight in compiled.levels:
+        total = np.bincount(target, weights=v[src] * weight, minlength=len(nodes)) + bias
+        v[nodes] = np.where(hidden, np.tanh(total), total)
+    return v[compiled.outputs]
+
+
+class NeatNet:
+    """One NEAT controller as one masked dense matrix per depth; drives a car like nets.DenseNet."""
+
+    def __init__(self, genome):
+        self.genome = genome
+        ids = genome.node_ids.tolist()
+        column = {i: i for i in INPUT_IDS}
+        column.update({node: N_IN + k for k, node in enumerate(ids)})
+        depth = node_depths(genome)
+        bias = dict(zip(ids, genome.bias.tolist()))
+        on = genome.enabled
+        conns = list(zip(genome.src[on].tolist(), genome.dst[on].tolist(), genome.weight[on].tolist()))
+        self.width = N_IN + len(ids)
+        self.output_columns = np.array([column[o] for o in OUTPUT_IDS])
+        self.levels = []
+        for d in range(1, max(depth[node] for node in ids) + 1):
+            nodes = [node for node in ids if depth[node] == d]
+            position = {node: j for j, node in enumerate(nodes)}
+            matrix = np.zeros((self.width, len(nodes)))
+            for s, t, w in conns:
+                if t in position:
+                    matrix[column[s], position[t]] += w
+            self.levels.append((np.array([column[node] for node in nodes]), matrix,
+                                np.array([bias[node] for node in nodes]),
+                                np.array([node >= FIRST_HIDDEN for node in nodes])))
+
+    @property
+    def n_params(self):
+        return self.genome.n_params
+
+    def outputs(self, obs):
+        obs = np.asarray(obs, dtype=float)
+        values = np.zeros((len(obs), self.width))
+        values[:, :N_IN] = obs
+        for columns, matrix, bias, hidden in self.levels:
+            total = values @ matrix + bias
+            values[:, columns] = np.where(hidden, np.tanh(total), total)
+        return values[:, self.output_columns]
+
+    def act(self, obs):
+        return np.argmax(self.outputs(obs), axis=1)
+
+    def policy(self):
+        return lambda obs, cars: self.act(obs)
+
+    @classmethod
+    def from_json(cls, path):
+        return cls(Genome.from_dict(json.loads(Path(path).read_text())))
+
+
+class NeatPopulation:
+    """A NEAT population with the population interface of nets.DensePopulation."""
+
+    def __init__(self, genomes):
+        self.genomes = list(genomes)
+
+    def __len__(self):
+        return len(self.genomes)
+
+    def subset(self, indices):
+        return NeatPopulation([self.genomes[int(i)] for i in np.asarray(indices).ravel()])
+
+    def policy(self):
+        """Policy for sim.simulate: car i is driven by genome i. Compiled once, here."""
+        compiled = compile_population(self.genomes)
+        return lambda obs, cars: np.argmax(forward(compiled, obs), axis=1)
+
+    def driver(self, i):
+        return NeatNet(self.genomes[int(i)])
+
+
+def to_keras(genome):
+    """Equivalent Keras model (revision 3 §5.4): per depth, a tanh Dense layer for the hidden nodes and a linear
+    Dense layer for the outputs, each applied to the concatenation of the inputs and all shallower nodes, with zero
+    weights where the genome has no connection; then a fixed selection layer that puts the outputs in output order,
+    with a softmax. Used for the accuracy and timing columns only."""
+    keras = keras_cpu()
+    depth = node_depths(genome)
+    ids = genome.node_ids.tolist()
+    bias = dict(zip(ids, genome.bias.tolist()))
+    on = genome.enabled
+    conns = list(zip(genome.src[on].tolist(), genome.dst[on].tolist(), genome.weight[on].tolist()))
+    x = keras.Input((N_IN,))
+    tensor, available = x, list(INPUT_IDS)                       # node id of each column of `tensor`
+    for d in range(1, max(depth[node] for node in ids) + 1):
+        row = {node: i for i, node in enumerate(available)}
+        new_tensors, new_ids = [], []
+        for hidden in (True, False):
+            group = [node for node in ids if depth[node] == d and (node >= FIRST_HIDDEN) == hidden]
+            if not group:
+                continue
+            col = {node: j for j, node in enumerate(group)}
+            kernel = np.zeros((len(available), len(group)))
+            for s, t, w in conns:
+                if t in col:
+                    kernel[row[s], col[t]] += w
+            layer = keras.layers.Dense(len(group), activation="tanh" if hidden else "linear")
+            new_tensors.append(layer(tensor))
+            layer.set_weights([kernel, np.array([bias[node] for node in group])])
+            new_ids += group
+        tensor = keras.layers.Concatenate()([tensor, *new_tensors])
+        available += new_ids
+    select = np.zeros((len(available), N_OUT))
+    index = {node: i for i, node in enumerate(available)}
+    for j, node in enumerate(OUTPUT_IDS):
+        select[index[node], j] = 1.0
+    layer = keras.layers.Dense(N_OUT, activation="softmax", trainable=False)
+    probabilities = layer(tensor)
+    layer.set_weights([select, np.zeros(N_OUT)])
+    return keras.Model(x, probabilities)
+
+
+def save_neat_champion(approach, seed, genome, champion_dir=config.CHAMPIONS_DIR):
+    """Final NEAT controller (revision 3 §5.4): its genome as <seed>.json, which drives, and the equivalent Keras
+    model as <seed>.keras. Returns the Keras file's path."""
+    path = paths.champion_path(approach, seed, champion_dir=champion_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    to_keras(genome).save(path)
+    paths.champion_path(approach, seed, ".json", champion_dir).write_text(json.dumps(genome.to_dict()))
+    return path

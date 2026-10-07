@@ -229,3 +229,120 @@ def test_genome_round_trips_through_a_dict():
     for name in neat.Genome.FIELDS:
         assert np.array_equal(getattr(copy, name), getattr(genome, name))
         assert getattr(copy, name).dtype == getattr(genome, name).dtype
+
+
+from racing import nets, sim  # noqa: E402  (appended imports)
+
+
+def reference_outputs(genome, row):
+    """Direct per-genome computation: each node from its enabled incoming connections, recursively."""
+    bias = dict(zip(genome.node_ids.tolist(), genome.bias.tolist()))
+    incoming = {}
+    for s, d, w, on in zip(genome.src.tolist(), genome.dst.tolist(), genome.weight.tolist(), genome.enabled.tolist()):
+        if on:
+            incoming.setdefault(d, []).append((s, w))
+    memo = {}
+
+    def value(node):
+        if node < neat.N_IN:
+            return row[node]
+        if node not in memo:
+            total = bias[node] + sum(w * value(s) for s, w in incoming.get(node, []))
+            memo[node] = np.tanh(total) if node >= neat.FIRST_HIDDEN else total
+        return memo[node]
+
+    return np.array([value(o) for o in neat.OUTPUT_IDS])
+
+
+def softmax(values):
+    e = np.exp(values - values.max(axis=1, keepdims=True))
+    return e / e.sum(axis=1, keepdims=True)
+
+
+@pytest.fixture
+def genomes():
+    rng = np.random.default_rng(20)
+    innovations = neat.Innovations()
+    return [grown(rng, innovations, rounds=int(r)) for r in rng.integers(0, 30, 12)]
+
+
+def test_batched_forward_matches_direct_computation(genomes):
+    rng = np.random.default_rng(21)
+    obs = rng.random((len(genomes), config.N_INPUTS))
+    out = neat.forward(neat.compile_population(genomes), obs)
+    assert out.shape == (len(genomes), config.N_ACTIONS)
+    for i, genome in enumerate(genomes):
+        assert np.allclose(out[i], reference_outputs(genome, obs[i]))
+
+
+def test_batched_forward_does_not_depend_on_the_other_genomes(genomes):
+    rng = np.random.default_rng(22)
+    obs = rng.random((len(genomes), config.N_INPUTS))
+    together = neat.forward(neat.compile_population(genomes), obs)
+    for i in (0, 5, 11):
+        alone = neat.forward(neat.compile_population([genomes[i]]), obs[i:i + 1])
+        assert np.array_equal(alone[0], together[i])
+
+
+def test_neat_net_matches_the_batched_forward_pass(genomes):
+    rng = np.random.default_rng(23)
+    rows = rng.random((50, config.N_INPUTS))
+    for genome in genomes[:4]:
+        net = neat.NeatNet(genome)
+        batched = neat.forward(neat.compile_population([genome] * 50), rows)
+        assert np.allclose(net.outputs(rows), batched)
+        assert np.array_equal(net.act(rows), np.argmax(batched, axis=1))
+        assert net.n_params == genome.n_params
+
+
+def test_population_interface(genomes):
+    population = neat.NeatPopulation(genomes)
+    assert len(population) == 12
+    part = population.subset([3, 1])
+    assert len(part) == 2 and part.genomes[0] is genomes[3] and part.genomes[1] is genomes[1]
+    obs = np.random.default_rng(24).random((2, config.N_INPUTS))
+    classes = part.policy()(obs, None)
+    assert classes.shape == (2,) and classes.min() >= 0 and classes.max() < config.N_ACTIONS
+    assert classes[0] == population.driver(3).act(obs[:1])[0]
+
+
+def test_a_neat_population_drives_in_the_simulator(genomes, circle_track):
+    result = sim.simulate(circle_track, neat.NeatPopulation(genomes).policy(), len(genomes), laps=1)
+    assert len(result.fitness) == len(genomes) and np.all(result.fitness >= 0.0)
+
+
+def test_keras_export_chooses_the_same_actions(genomes):
+    rng = np.random.default_rng(25)
+    obs = rng.random((300, config.N_INPUTS)).astype(np.float32)
+    for genome in (genomes[0], max(genomes, key=lambda g: len(g.node_ids))):
+        model = neat.to_keras(genome)
+        probabilities = model.predict(obs, verbose=0)
+        expected = softmax(neat.NeatNet(genome).outputs(obs.astype(float)))
+        assert np.allclose(probabilities, expected, atol=1e-4)
+        assert np.mean(np.argmax(probabilities, axis=1) == neat.NeatNet(genome).act(obs)) >= 0.99
+
+
+def test_saved_neat_champion_loads_as_its_genome(genomes, tmp_path):
+    genome = max(genomes, key=lambda g: len(g.node_ids))
+    path = neat.save_neat_champion("neat", 1, genome, tmp_path)
+    assert path == tmp_path / "neat" / "seed1.keras" and path.exists()
+    assert (tmp_path / "neat" / "seed1.json").exists()
+    assert nets.champion_seeds(tmp_path) == {"neat": [1]}
+    model, driver = nets.load_champion("neat", 1, tmp_path)
+    assert isinstance(driver, neat.NeatNet) and driver.n_params == genome.n_params
+    obs = np.random.default_rng(26).random((40, config.N_INPUTS))
+    assert np.array_equal(driver.act(obs), neat.NeatNet(genome).act(obs))
+    assert np.array_equal(neat.NeatNet.from_json(tmp_path / "neat" / "seed1.json").act(obs), driver.act(obs))
+
+
+def test_dense_champion_architecture_is_read_from_the_keras_model(tmp_path):
+    rng = np.random.default_rng(27)
+    flat = nets.init_population(rng, 1, hidden=(8,))[0] + rng.normal(0, 0.2, nets.n_params((8,)))
+    folder = tmp_path / "es"
+    folder.mkdir()
+    nets.to_keras(flat, (8,), "tanh").save(folder / "seed0.keras")
+    np.save(folder / "seed0.npy", flat)                     # dense champions write no .json (contract)
+    _, driver = nets.load_champion("es", 0, tmp_path)
+    obs = rng.random((30, config.N_INPUTS))
+    assert isinstance(driver, nets.DenseNet)
+    assert np.array_equal(driver.act(obs), nets.from_flat(flat, (8,), "tanh").act(obs))

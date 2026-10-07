@@ -1,5 +1,6 @@
 """Controller networks (spec §6): flat weight vectors for populations, a batched numpy forward pass,
 and conversion to and from Keras models."""
+import json
 import re
 from pathlib import Path
 
@@ -196,11 +197,18 @@ def champion_seeds(directory=None):
 
 
 def load_champion(approach, seed, directory=None):
-    """(Keras model, driver) of one final controller. Evolved dense controllers drive with the float64 weights saved
-    next to the Keras file (spec §6), in the architecture of that Keras file (revision 3 §6.4)."""
+    """(Keras model, driver) of one final controller. A NEAT controller drives with its genome (<seed>.json,
+    revision 3 §5.4); an evolved dense controller with its float64 weights (.npy) and the architecture of its Keras
+    file (dense_spec); an imitation controller with the Keras weights (spec §6)."""
     keras_path = paths.champion_path(approach, seed, champion_dir=directory)
     model = keras_cpu().models.load_model(keras_path)
+    genome_path = paths.champion_path(approach, seed, ".json", directory)
     flat_path = paths.champion_path(approach, seed, ".npy", directory)
-    if flat_path.exists():
-        return model, from_flat(np.load(flat_path), *dense_spec(model))
-    return model, from_keras(model)
+    if genome_path.exists():
+        from racing import neat                    # neat imports evolution lazily; nets stays import-light
+        driver = neat.NeatNet(neat.Genome.from_dict(json.loads(genome_path.read_text())))
+    elif flat_path.exists():
+        driver = from_flat(np.load(flat_path), *dense_spec(model))
+    else:
+        driver = from_keras(model)
+    return model, driver
