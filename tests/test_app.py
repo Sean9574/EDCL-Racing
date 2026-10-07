@@ -485,6 +485,66 @@ def test_stop_ends_the_trainer_process_group(window, monkeypatch):
     assert killed == [(4321, signal.SIGTERM)] and window.process is None and "Stopped" in window.status
 
 
+def test_trainer_ends_its_process_group_once_the_viewer_is_gone(monkeypatch):
+    parents = iter([100, 100, 1])                          # the viewer, the viewer, then the adopting process
+    monkeypatch.setattr(viewer.os, "getppid", lambda: next(parents))
+    killed = []
+    viewer.watch_parent(100, lambda pgid, sig: killed.append((pgid, sig)), interval=0)
+    assert killed == [(0, signal.SIGTERM)]
+
+
+def test_trainer_process_watches_the_viewer(monkeypatch):
+    events = []
+
+    class FakeThread:
+        def __init__(self, target, args, daemon):
+            self.call = (target, args, daemon)
+
+        def start(self):
+            events.append(self.call)
+
+    def fake_killpg(pgid, sig):                            # tests never signal real processes
+        pass
+
+    monkeypatch.setattr(viewer.os, "killpg", fake_killpg)
+    monkeypatch.setattr(viewer.os, "setpgrp", lambda: events.append("setpgrp"))
+    monkeypatch.setattr(viewer.os, "getppid", lambda: 4321)
+    monkeypatch.setattr(viewer.threading, "Thread", FakeThread)
+    monkeypatch.setattr(viewer, "trainer_main", lambda *args: events.append("train"))
+    viewer.trainer_process("ga", 10, 0, 1, None, None)
+    assert events == ["setpgrp", (viewer.watch_parent, (4321, fake_killpg), True), "train"]
+
+
+def test_leaderboard_lines_fit_the_panel(window):
+    width = window.panel.width - 16 - 16 - 16           # panel margins on both sides and the color swatch
+    for approach in config.APPROACHES:
+        for status in ("ready", "racing", "finished", "crashed", "stopped"):
+            line = viewer.leaderboard_line(len(config.APPROACHES), approach, max(config.RUN_SEEDS),
+                                           config.RACE_LAPS, 888.88, 999.99, status)
+            assert window.small.size(line)[0] <= width, line
+    line = viewer.leaderboard_line(1, "kt_hyperband", 0, 1, 52.31, 51.94, "racing")
+    assert line == "1. KT Hyperband s0  lap 1  52.3/51.9  racing"
+    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA s1  lap 0  –/–  ready"
+
+
+def test_race_panel_text_fits_the_panel(window, tmp_path, monkeypatch):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    window.update(1 / 60)
+    drawn, text = [], window.text
+
+    def recording_text(string, x, y, font=None, color=viewer.INK):
+        drawn.append((string, x, font or window.font))
+        return text(string, x, y, font, color)
+
+    monkeypatch.setattr(window, "text", recording_text)
+    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
+    assert any(string.startswith("1. ") for string, _, _ in drawn)
+    for string, x, font in drawn:
+        assert x + font.size(string)[0] <= window.panel.right - 16, string
+
+
 def test_settings_are_locked_while_training(window):
     class Alive:
         pid = 0

@@ -8,6 +8,7 @@ import os
 import queue
 import signal
 import threading
+import time
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
@@ -179,11 +180,26 @@ def trainer_main(approach, size, seed, level, reports, running):
         imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False)
 
 
+def watch_parent(parent, kill, interval=1.0):
+    """Waits until the process that started the trainer is gone (the parent process changes), then ends the
+    trainer's process group with kill(0, SIGTERM)."""
+    while os.getppid() == parent:
+        time.sleep(interval)
+    kill(0, signal.SIGTERM)
+
+
 def trainer_process(approach, size, seed, level, reports, running):
     """Entry point of the training process. It leads its own process group, so stopping it also stops the worker
-    processes it starts (spec §10.2)."""
+    processes it starts (spec §10.2). A watcher thread ends the group if the viewer exits without stopping it."""
     os.setpgrp()
+    threading.Thread(target=watch_parent, args=(os.getppid(), os.killpg), daemon=True).start()
     trainer_main(approach, size, seed, level, reports, running)
+
+
+def leaderboard_line(position, approach, seed, laps, last, best, status):
+    """One leaderboard row: position, method and seed, laps completed, last/best lap time (s), status."""
+    times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
+    return f"{position}. {config.LABELS[approach]} s{seed}  lap {laps}  {times}  {status}"
 
 
 def percent(value):
@@ -806,12 +822,12 @@ class App:
             y += 28
         y += 4
         y = self.draw_speed_buttons(x, y, w)
-        y = self.text(f"Leaderboard ({config.RACE_LAPS} laps)", x, y, self.small, MUTED)
+        y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)", x, y, self.small, MUTED)
         for position, i, laps, last, best, status in leaderboard(self.race, len(self.lineup)):
             approach, seed = self.lineup[i]
             pygame.draw.rect(self.screen, hex_to_rgb(config.COLORS[approach]), pygame.Rect(x, y + 3, 10, 10))
-            y = self.text(f"{position}. {config.LABELS[approach]} s{seed}  lap {laps}  last {number(last)}  "
-                          f"best {number(best)}  {status}", x + 16, y, self.small)
+            y = self.text(leaderboard_line(position, approach, seed, laps, last, best, status), x + 16, y,
+                          self.small)
 
 
 def main():
