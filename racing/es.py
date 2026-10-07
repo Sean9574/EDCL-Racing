@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from racing import config, nets, paths
-from racing.curriculum import LevelTracker, draw_seeds
+from racing.curriculum import LevelTracker, draw_seeds, success_fraction
 from racing.population import (RunLogger, clear_champion, finish_fractions, fresh_workers, make_report,
                                save_champion, select_champion)
 from racing.population import evaluate_weights as evaluate_population   # revision 2.0 evaluation until plan Task 6
@@ -21,12 +21,6 @@ def make_offspring(rng, parents, sigma, lam):
 def select_parents(population, fitness, mu):
     """The μ fittest of parents ∪ offspring."""
     return population[np.argsort(-fitness, kind="stable")[:mu]]
-
-
-def success_fraction(child_fitness, parent_fitness):
-    """Fraction of offspring that beat their own parent; a tie with the parent counts as half a success."""
-    return float(np.mean(np.where(child_fitness > parent_fitness, 1.0,
-                                  np.where(child_fitness == parent_fitness, 0.5, 0.0))))
 
 
 def one_fifth_rule(sigma, success_rate):

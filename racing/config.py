@@ -67,6 +67,7 @@ TEST_SEEDS = range(1000, 1020)
 TRAIN_DATA_TRACKS = {1: (0,), 2: tuple(range(20)), 3: tuple(range(20)), 4: tuple(TRAIN_SEEDS)}
 RUN_SEEDS = (0, 1, 2)        # every method is run once per seed (spec §11)
 SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
+TRAIN_SEED_START = 2_000_000  # fresh training maps: seeds drawn from here upwards, never repeated in a run (revision 3 §3.4)
 
 # --- Curriculum (spec §9.1) ---
 TRACKS_PER_GEN = 3
@@ -74,6 +75,13 @@ LEVEL_UP_FRACTION = 0.5     # share of the whole generation that must finish at 
 LEVEL_UP_STREAK = 3
 PACE_FACTOR = 1.3            # at pace: time for the LAPS laps ≤ PACE_FACTOR × LAPS × expert lap time
 TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LAPS expert laps (revision 3 §4.1)
+MASTERY_FRACTION = 0.9       # lowest map success share for a passing generation (revision 3 §4.3)
+MASTERY_STREAK = 3           # consecutive passing generations to advance a level or master a target
+SPEED_STEP = 0.95            # target factor multiplier per mastered target in the speed push (revision 3 §4.4)
+SPEED_PATIENCE = 500         # generations without mastering the current target that end the speed push
+SAFETY_PATIENCE = 2000       # generations without a new best 3-generation mean lowest share that end a run (§4.5)
+KEEP_MAX_FRACTION = 0.9      # kept cars fill at most this share of the population (revision 3 §4.2)
+ELITE_FLOOR = 50             # at least this many of the fittest cars are kept
 
 # --- Genetic algorithm (spec §9.2) ---
 GA_POP = 1000
