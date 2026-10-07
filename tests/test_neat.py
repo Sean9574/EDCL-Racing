@@ -346,3 +346,200 @@ def test_dense_champion_architecture_is_read_from_the_keras_model(tmp_path):
     obs = rng.random((30, config.N_INPUTS))
     assert isinstance(driver, nets.DenseNet)
     assert np.array_equal(driver.act(obs), nets.from_flat(flat, (8,), "tanh").act(obs))
+
+
+import pickle  # noqa: E402
+
+from racing import evolution, population  # noqa: E402
+
+
+def result_for(fitness, success, maps=1):
+    """A TrialResult with the same fitness and success on every map."""
+    success = np.repeat(np.asarray(success, dtype=bool)[None, :], maps, axis=0)
+    return population.TrialResult(fitness=np.asarray(fitness, dtype=float), success=success,
+                                  laps=np.where(success, config.LAPS, 1),
+                                  finish_time=np.where(success, 60.0, np.nan))
+
+
+def clusters(rng):
+    innovations = neat.Innovations()
+    near = [neat.initial_genome(rng, innovations) for _ in range(6)]     # pairwise δ ≈ 0.4 · 1.13
+    far = []
+    for genome in near[:4]:
+        shifted = genome.copy()
+        shifted.weight = shifted.weight + 20.0                          # δ to the near ones ≈ 8
+        far.append(shifted)
+    return near + far
+
+
+def test_speciation_groups_genomes_by_distance():
+    rng = np.random.default_rng(30)
+    genomes = clusters(rng)
+    species = neat.SpeciesSet(threshold=3.0)
+    species.speciate(rng, genomes, np.ones(len(genomes)))
+    assert sorted(sorted(s.members) for s in species.species) == [[0, 1, 2, 3, 4, 5], [6, 7, 8, 9]]
+    assert np.isclose(species.threshold, 3.0 - config.NEAT_THRESHOLD_STEP)          # 2 species < 20: tighten
+    for s in species.species:
+        assert any(np.array_equal(s.representative.weight, genomes[m].weight) for m in s.members)
+
+
+def test_threshold_never_drops_below_one_step():
+    rng = np.random.default_rng(31)
+    species = neat.SpeciesSet(threshold=0.15)
+    genomes = clusters(rng)
+    for _ in range(5):
+        species.speciate(rng, genomes, np.ones(len(genomes)))
+    assert species.threshold >= config.NEAT_THRESHOLD_STEP - 1e-12
+
+
+def test_allotment_is_proportional_with_largest_remainder():
+    rng = np.random.default_rng(32)
+    genomes = clusters(rng)
+    fitness = np.array([3.0] * 6 + [1.0] * 4)
+    species = neat.SpeciesSet(threshold=3.0)
+    species.speciate(rng, genomes, fitness)
+    near = next(s.id for s in species.species if 0 in s.members)
+    far = next(s.id for s in species.species if 6 in s.members)
+    assert species.allot(7, fitness) == {near: 5, far: 2}           # quotas 5.25 and 1.75
+    assert sum(species.allot(13, fitness).values()) == 13
+
+
+def test_stagnant_species_get_no_children_unless_they_hold_the_best():
+    rng = np.random.default_rng(33)
+    genomes = clusters(rng)
+    fitness = np.array([1.0] * 6 + [0.5] * 4)
+    species = neat.SpeciesSet(threshold=3.0)
+    for _ in range(config.NEAT_STAGNATION + 1):                     # constant fitness: no improvement after the first
+        species.speciate(rng, genomes, fitness)
+    near = next(s for s in species.species if 0 in s.members)
+    far = next(s for s in species.species if 6 in s.members)
+    assert near.stale >= config.NEAT_STAGNATION and far.stale >= config.NEAT_STAGNATION
+    assert species.allot(10, fitness) == {near.id: 10, far.id: 0}   # near holds the best car (index 0)
+
+
+def test_species_set_round_trips_through_its_state():
+    rng = np.random.default_rng(34)
+    species = neat.SpeciesSet()
+    species.speciate(rng, clusters(rng), np.arange(10.0))
+    copy = neat.SpeciesSet.from_state(pickle.loads(pickle.dumps(species.state())))
+    assert copy.state()["threshold"] == species.threshold
+    for a, b in zip(species.species, copy.species):
+        assert (a.id, a.members, a.best_fitness, a.stale) == (b.id, b.members, b.best_fitness, b.stale)
+        assert np.array_equal(a.representative.innov, b.representative.innov)
+        assert np.array_equal(a.representative.weight, b.representative.weight)
+
+
+def test_advance_keeps_survivors_first_and_fills_the_population():
+    rng = np.random.default_rng(35)
+    method = neat.NEAT(pop_size=30)
+    method.initialize(rng)
+    assert method.approach == "neat" and len(method.population) == 30 and not method.is_kept.any()
+    assert method.step_size == config.NEAT_SIGMA0
+    fitness = rng.random(30)
+    kept = np.array([3, 7, 11])
+    before = [method.population.genomes[i] for i in kept]
+    method.advance(rng, result_for(fitness, fitness > 0.5), kept, None)
+    assert len(method.population) == 30
+    assert method.is_kept.tolist() == [True] * 3 + [False] * 27
+    for k, genome in enumerate(before):
+        assert np.array_equal(method.population.genomes[k].weight, genome.weight)
+    assert method.log_fields()["species"] >= 1
+    assert set(method.log_fields()) == {"species", "mean_nodes", "mean_conns"}
+
+
+def test_child_success_rate_compares_children_with_their_parents():
+    method = neat.NEAT(pop_size=4)
+    method.ids = np.array([10, 11, 12, 13])
+    method.parent_ids = np.array([-1, -1, 10, 99])                  # car 3's parent is gone
+    method.is_kept = np.array([True, True, False, False])
+    assert method.child_success_rate(np.array([1.0, 2.0, 3.0, 0.0])) == 1.0       # 3 > 1; car 3 left out
+    assert method.child_success_rate(np.array([3.0, 2.0, 3.0, 0.0])) == 0.5       # a tie counts half
+    method.parent_ids = np.array([-1, -1, 98, 99])
+    assert np.isnan(method.child_success_rate(np.ones(4)))
+
+
+def test_step_size_resets_on_level_up_only():
+    rng = np.random.default_rng(36)
+    method = neat.NEAT(pop_size=20)
+    method.initialize(rng)
+    method.steps.sigma = 0.01
+    fitness = rng.random(20)
+    method.advance(rng, result_for(fitness, np.zeros(20)), np.array([0]), "tightened")
+    assert method.step_size != config.NEAT_SIGMA0
+    method.advance(rng, result_for(fitness, np.zeros(20)), np.array([0]), "level_up")
+    assert method.step_size == config.NEAT_SIGMA0
+
+
+def test_state_round_trip_continues_identically():
+    rng_a = np.random.default_rng(37)
+    a = neat.NEAT(pop_size=30)
+    a.initialize(rng_a)
+    scores = np.random.default_rng(99)
+    first = scores.random(30)
+    a.advance(rng_a, result_for(first, first > 0.4), np.array([0, 1, 2]), None)
+    b = neat.NEAT(pop_size=30)
+    b.load_state(pickle.loads(pickle.dumps(a.state())))
+    rng_b = np.random.default_rng()
+    rng_b.bit_generator.state = rng_a.bit_generator.state
+    second = scores.random(30)
+    for method, rng in ((a, rng_a), (b, rng_b)):
+        method.advance(rng, result_for(second, second > 0.3), np.array([5, 2]), None)
+    for ga, gb in zip(a.population.genomes, b.population.genomes):
+        for name in neat.Genome.FIELDS:
+            assert np.array_equal(getattr(ga, name), getattr(gb, name))
+    assert a.innovations.state() == b.innovations.state()
+    assert a.step_size == b.step_size and np.array_equal(a.ids, b.ids)
+
+
+def fake_evaluation(pop, seeds, level, factor, n_jobs=1, backend="loky"):
+    """Deterministic stand-in for the simulator: a genome's score follows its weights and biases; each map (seed)
+    has its own success threshold."""
+    score = np.array([np.tanh(g.weight[g.enabled].sum() / 10.0 + g.bias.sum()) for g in pop.genomes])
+    thresholds = np.array([((s % 5) - 2) / 10.0 for s in seeds])
+    success = score[None, :] > thresholds[:, None]
+    fitness = np.where(success, 1.5 + 0.4 * score[None, :], 0.5 + 0.4 * score[None, :]).mean(axis=0)
+    return population.TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 1),
+                                  finish_time=np.where(success, 60.0, np.nan))
+
+
+class Stop(Exception):
+    pass
+
+
+def test_run_neat_reports_and_resumes_exactly(monkeypatch, tmp_path):
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluation)
+    monkeypatch.setattr(evolution, "evaluate_population", fake_evaluation, raising=False)
+
+    def record(into, stop_at=None):
+        def on_generation(report):
+            into.append((report["generation"], report["best"], report["mean"], report["worst"],
+                         report["step_size"], report["min_share"], report["species"]))
+            if report["generation"] == stop_at:
+                raise Stop()
+        return on_generation
+
+    full = []
+    summary = neat.run_neat(seed=3, pop_size=40, out_dir=tmp_path / "full", champion_dir=None,
+                            on_generation=record(full), max_generations=6)
+    assert summary["approach"] == "neat" and summary["generations"] == 6 and summary["pop_size"] == 40
+    assert [row[0] for row in full] == list(range(6))
+    first = []
+    with pytest.raises(Stop):
+        neat.run_neat(seed=3, pop_size=40, out_dir=tmp_path / "cut", champion_dir=None,
+                      on_generation=record(first, stop_at=3), max_generations=6)
+    resumed = []
+    neat.run_neat(seed=3, pop_size=40, out_dir=tmp_path / "cut", champion_dir=None,
+                  on_generation=record(resumed), max_generations=6)
+    assert first[:3] == full[:3]
+    assert resumed == full[3:]                                  # generation 3 re-run from the checkpoint
+
+
+@pytest.mark.slow
+def test_run_neat_drives_easy_maps_and_saves_its_controller(tmp_path):
+    summary = neat.run_neat(seed=0, pop_size=24, out_dir=tmp_path / "run", champion_dir=tmp_path / "champions",
+                            max_generations=2)
+    assert summary["generations"] == 2 and summary["level_reached"] == 1
+    model, driver = nets.load_champion("neat", 0, tmp_path / "champions")
+    assert isinstance(driver, neat.NeatNet)
+    obs = np.random.default_rng(38).random((20, config.N_INPUTS)).astype(np.float32)
+    assert np.mean(np.argmax(model.predict(obs, verbose=0), axis=1) == driver.act(obs)) >= 0.99

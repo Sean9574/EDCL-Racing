@@ -3,13 +3,14 @@ mutation. A genome lists node genes (output and hidden nodes, each with a bias; 
 connection genes. Every structural mutation is recorded for the whole run, so the same connection or split has the
 same innovation number or node id in every genome, which aligns genomes for crossover and speciation."""
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from racing import config, paths
 from racing.backend import keras_cpu
+from racing.curriculum import StepSize, success_fraction
 
 N_IN = config.N_INPUTS                         # 10
 N_OUT = config.N_ACTIONS                       # 15
@@ -443,3 +444,192 @@ def save_neat_champion(approach, seed, genome, champion_dir=config.CHAMPIONS_DIR
     to_keras(genome).save(path)
     paths.champion_path(approach, seed, ".json", champion_dir).write_text(json.dumps(genome.to_dict()))
     return path
+
+
+@dataclass(eq=False)
+class Species:
+    """Genomes of one niche: its representative (from the previous generation), members (indices into the current
+    population), best fitness so far and generations since that last improved."""
+    id: int
+    representative: Genome
+    members: list = field(default_factory=list)
+    best_fitness: float = float("-inf")
+    stale: int = 0
+
+
+class SpeciesSet:
+    """Speciation by compatibility distance with a threshold steered towards NEAT_TARGET_SPECIES species, and the
+    allotment of children to species (revision 3 §5.4)."""
+
+    def __init__(self, threshold=config.NEAT_THRESHOLD0):
+        self.threshold = float(threshold)
+        self.species = []
+        self.next_id = 0
+
+    def speciate(self, rng, genomes, fitness):
+        for s in self.species:
+            s.members = []
+        for i, genome in enumerate(genomes):
+            for s in self.species:
+                if distance(genome, s.representative) < self.threshold:
+                    s.members.append(i)
+                    break
+            else:
+                self.species.append(Species(self.next_id, genome, [i]))
+                self.next_id += 1
+        self.species = [s for s in self.species if s.members]
+        for s in self.species:
+            best = float(np.max(fitness[s.members]))
+            if best > s.best_fitness:
+                s.best_fitness, s.stale = best, 0
+            else:
+                s.stale += 1
+        if len(self.species) > config.NEAT_TARGET_SPECIES:
+            self.threshold += config.NEAT_THRESHOLD_STEP
+        elif len(self.species) < config.NEAT_TARGET_SPECIES:
+            self.threshold = max(self.threshold - config.NEAT_THRESHOLD_STEP, config.NEAT_THRESHOLD_STEP)
+        for s in self.species:
+            s.representative = genomes[s.members[int(rng.integers(len(s.members)))]]
+
+    def allot(self, n_children, fitness):
+        """Children per species id: proportional to mean member fitness, largest remainder; a stagnant species gets
+        none unless it holds the population's best car."""
+        best = int(np.argmax(fitness))
+        eligible = [s.stale < config.NEAT_STAGNATION or best in s.members for s in self.species]
+        means = np.array([max(float(np.mean(fitness[s.members])), 0.0) if ok else 0.0
+                          for s, ok in zip(self.species, eligible)])
+        if means.sum() <= 0.0:
+            means = np.array(eligible, dtype=float)
+        quotas = n_children * means / means.sum()
+        counts = np.floor(quotas).astype(np.int64)
+        extra = np.argsort(-(quotas - counts), kind="stable")[:n_children - int(counts.sum())]
+        counts[extra] += 1
+        return {s.id: int(c) for s, c in zip(self.species, counts)}
+
+    def state(self):
+        return {"threshold": self.threshold, "next_id": self.next_id,
+                "species": [{"id": s.id, "representative": s.representative.to_dict(), "members": list(s.members),
+                             "best_fitness": s.best_fitness, "stale": s.stale} for s in self.species]}
+
+    @classmethod
+    def from_state(cls, state):
+        species = cls(state["threshold"])
+        species.next_id = state["next_id"]
+        species.species = [Species(s["id"], Genome.from_dict(s["representative"]), list(s["members"]),
+                                   s["best_fitness"], s["stale"]) for s in state["species"]]
+        return species
+
+
+class NEAT:
+    """NEAT as a method of the evolution engine (revision 3 §5.4): kept cars first, then children produced within
+    species, with the two-phase step size of the ES."""
+    approach = "neat"
+
+    def __init__(self, pop_size=config.NEAT_POP):
+        self.pop_size = int(pop_size)
+        self.innovations = Innovations()
+        self.species = SpeciesSet()
+        self.steps = StepSize(config.NEAT_SIGMA0)
+        self.population = None
+        self.is_kept = None
+        self.ids = None
+        self.parent_ids = None
+        self.next_id = 0
+
+    @property
+    def step_size(self):
+        return self.steps.sigma
+
+    def initialize(self, rng):
+        self.population = NeatPopulation([initial_genome(rng, self.innovations) for _ in range(self.pop_size)])
+        self.is_kept = np.zeros(self.pop_size, dtype=bool)
+        self.ids = np.arange(self.pop_size, dtype=np.int64)
+        self.parent_ids = np.full(self.pop_size, -1, dtype=np.int64)
+        self.next_id = self.pop_size
+
+    def child_success_rate(self, fitness):
+        """Share of the previous children that beat their parent in this generation (a tie counts half); children
+        whose parent is no longer in the population are left out; nan if none remain."""
+        position = {int(car): k for k, car in enumerate(self.ids)}
+        child, parent = [], []
+        for k in np.flatnonzero(~self.is_kept):
+            p = int(self.parent_ids[k])
+            if p in position:
+                child.append(k)
+                parent.append(position[p])
+        if not child:
+            return float("nan")
+        return success_fraction(fitness[np.array(child)], fitness[np.array(parent)])
+
+    def _tournament(self, rng, members, fitness):
+        entrants = members[rng.integers(0, len(members), config.NEAT_TOURNAMENT)]
+        return int(entrants[np.argmax(fitness[entrants])])
+
+    def advance(self, rng, result, kept, event):
+        from racing import evolution                  # evolution imports nets, which imports neat lazily
+        fitness, success = result.fitness, result.all_success
+        genomes = self.population.genomes
+        top = np.argsort(-fitness, kind="stable")[:config.ES_MU]
+        child_success = evolution.children_success(result, self.is_kept)
+        self.steps.update(float(np.mean(success[top])), child_success, self.child_success_rate(fitness))
+        if event == "level_up":
+            self.steps.reset()
+        self.species.speciate(rng, genomes, fitness)
+        allotment = self.species.allot(self.pop_size - len(kept), fitness)
+        new_genomes, new_parents = [], []
+        for s in self.species.species:
+            members = np.asarray(s.members)
+            for _ in range(allotment[s.id]):
+                a = self._tournament(rng, members, fitness)
+                cross = rng.random() < config.NEAT_CROSSOVER
+                if cross and len(members) > 1:
+                    b = self._tournament(rng, members, fitness)
+                    fitter, other = (a, b) if fitness[a] >= fitness[b] else (b, a)
+                    child = crossover(rng, genomes[fitter], genomes[other])
+                else:
+                    fitter, child = a, genomes[a]
+                new_genomes.append(mutate(rng, child, self.innovations, self.steps.sigma))
+                new_parents.append(int(self.ids[fitter]))
+        kept = np.asarray(kept, dtype=np.int64)
+        self.population = NeatPopulation([genomes[i] for i in kept] + new_genomes)
+        self.is_kept = np.arange(len(self.population)) < len(kept)
+        new_ids = np.arange(self.next_id, self.next_id + len(new_genomes), dtype=np.int64)
+        self.next_id += len(new_genomes)
+        self.ids = np.concatenate([self.ids[kept], new_ids])
+        self.parent_ids = np.concatenate([np.full(len(kept), -1, dtype=np.int64),
+                                          np.asarray(new_parents, dtype=np.int64)])
+
+    def state(self):
+        return {"pop_size": self.pop_size, "genomes": [g.to_dict() for g in self.population.genomes],
+                "is_kept": self.is_kept.copy(), "ids": self.ids.copy(), "parent_ids": self.parent_ids.copy(),
+                "next_id": self.next_id, "innovations": self.innovations.state(), "species": self.species.state(),
+                "steps": self.steps.state()}
+
+    def load_state(self, state):
+        self.pop_size = int(state["pop_size"])
+        self.population = NeatPopulation([Genome.from_dict(g) for g in state["genomes"]])
+        self.is_kept = np.asarray(state["is_kept"], dtype=bool).copy()
+        self.ids = np.asarray(state["ids"], dtype=np.int64).copy()
+        self.parent_ids = np.asarray(state["parent_ids"], dtype=np.int64).copy()
+        self.next_id = int(state["next_id"])
+        self.innovations = Innovations.from_state(state["innovations"])
+        self.species = SpeciesSet.from_state(state["species"])
+        self.steps = StepSize.from_state(state["steps"])
+
+    def save_champion(self, index, seed, champion_dir):
+        return save_neat_champion(self.approach, seed, self.population.genomes[int(index)], champion_dir)
+
+    def log_fields(self):
+        genomes = self.population.genomes
+        return {"species": len(self.species.species),
+                "mean_nodes": float(np.mean([np.sum(g.node_ids >= FIRST_HIDDEN) for g in genomes])),
+                "mean_conns": float(np.mean([np.sum(g.enabled) for g in genomes]))}
+
+
+def run_neat(seed=0, pop_size=config.NEAT_POP, out_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1,
+             on_generation=None, start_level=1, max_generations=None):
+    """One NEAT run with the evolution engine (revision 3 §4, §5.4): resumable, written to runs/neat/seed<k>."""
+    from racing import evolution                      # evolution imports nets, which imports neat lazily
+    out_dir = Path(out_dir or paths.run_dir("neat", seed))
+    return evolution.run(NEAT(pop_size), seed, out_dir, champion_dir=champion_dir, n_jobs=n_jobs,
+                         on_generation=on_generation, start_level=start_level, max_generations=max_generations)
