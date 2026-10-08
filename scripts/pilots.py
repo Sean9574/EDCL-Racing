@@ -1,7 +1,8 @@
-"""Pilot runs of revision 3 (§10.2): short runs of each evolutionary method from Easy with seed 0, which show
-whether the 90% requirement can be reached with the reported settings before the reported run starts. Each pilot
-starts over in results/pilots/revision3/<name>/ and adds a row to results/pilots/revision3/summary.md. Pilots are
-not part of the reported results.
+"""Pilot runs of revision 3.1 (§7; revision 3 §10.2): short runs of each evolutionary method from Easy with seed 0,
+which show whether the 90% requirement can be reached with the reported settings, now including the evolved car
+setup, before the reported run starts. Each pilot starts over in results/pilots/revision3.1/<name>/ and adds a row to
+results/pilots/revision3.1/summary.md, with the population's mean sensor length and steering sensitivity at the end.
+Pilots are not part of the reported results.
 
 Run with:  python scripts/pilots.py                       (ga, es, neat and seeded; 300 generations each)
            python scripts/pilots.py ga neat               (selected pilots)
@@ -21,7 +22,7 @@ from racing import config, es, ga, neat, paths  # noqa: E402
 
 PILOTS = ("ga", "es", "neat", "seeded")
 NAMES = {"ga": "GA", "es": "ES", "neat": "NEAT", "seeded": "Seeded ES"}
-OUT = config.PILOTS_DIR / "revision3"
+OUT = config.PILOTS_DIR / "revision3.1"
 
 
 def level_ups(log):
@@ -62,6 +63,8 @@ def pilot(name, out_root=None, max_generations=300, n_jobs=None, pop_size=None):
     return {"pilot": NAMES[name], "generations": int(summary["generations"]),
             "level_reached": int(summary["level_reached"]), "level_ups": level_ups(log),
             "min_share_last20": round(float(log["min_share"].tail(20).mean()), 3),
+            "sensor_last": round(float(log["sensor_mean"].iloc[-1]), 1),
+            "steer_last": round(float(log["steer_mean"].iloc[-1]), 2),
             "minutes": round(float(summary["wall_time"]) / 60, 1)}
 
 
@@ -73,7 +76,7 @@ def markdown(frame):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Revision 3 pilot runs from Easy with seed 0.")
+    parser = argparse.ArgumentParser(description="Revision 3.1 pilot runs from Easy with seed 0.")
     parser.add_argument("pilots", nargs="*", help=f"any of {', '.join(PILOTS)} (default: all)")
     parser.add_argument("--generations", type=int, default=300, help="generations per pilot (default 300)")
     args = parser.parse_args(argv)

@@ -1,7 +1,7 @@
 # EC Racing: Design Specification
 
 **Evolutionary and Gradient-Based Search for Neural Network Driving Controllers**\
-ECDL Term Project · Fall 2026 · Version 3.0 · 7 October 2026
+ECDL Term Project · Fall 2026 · Version 3.1 · 7 October 2026
 
 ## Summary
 
@@ -29,7 +29,7 @@ visualization application shows training in progress and races between the final
 command executes the complete experiment; it saves checkpoints, resumes after an interruption and reports
 its progress live.
 
-Version 3.0 incorporates revision 3 (`docs/2026-10-07-ec-racing-mastery-design.md`): freshly generated
+Version 3.1 incorporates revision 3.1 (`docs/2026-10-07-ec-racing-setup-design.md`): every evolved car also evolves its sensor length and steering sensitivity, the application can display races under a much higher grip, and training started in the application is kept. Version 3.0 incorporates revision 3 (`docs/2026-10-07-ec-racing-mastery-design.md`): freshly generated
 circuits, time trials, the mastery criterion and speed push in place of a fixed evaluation budget, NEAT,
 DAgger and the execution of multi-day runs. Version 2.0 corrected the measurement of training epochs and
 inference time and added replication across seeds, the seeded ES and the run record.
@@ -125,6 +125,7 @@ Project/
 │   ├── track_gen.py    gentle loops, F1-inspired circuit generator, direction, geometric validation
 │   ├── tracks.py       validated tracks with the expert's lap time (bounded cache)
 │   ├── sim.py          vehicle dynamics, sensors, collisions, progress, fitness
+│   ├── setup.py        evolved car setup: defaults, random draws, crossover, mutation
 │   ├── nets.py         dense populations and drivers, Keras conversion, champion loading
 │   ├── expert.py       scripted expert driver and dataset collection
 │   ├── imitation.py    baseline, three Keras Tuner searches, model selection
@@ -139,6 +140,7 @@ Project/
 │   ├── progress.py     status file, milestones, live status line, monitor
 │   ├── evaluate.py     test-map evaluation, tables, figures
 │   ├── netfig.py       network figure
+│   ├── netwindow.py    the application's network window (separate process)
 │   ├── bench.py        generation-time and Keras training-time measurement
 │   └── app.py          pygame application: training view and race view
 ├── notebooks/          01_dataset, 02_imitation, 03_dagger, 04_ga, 05_es, 06_es_seeded, 07_neat, 08_evaluate
@@ -321,7 +323,8 @@ no fixed acceleration or braking rates. How fast to drive, when to brake and how
 all be learned by the controllers.
 
 - **Controls as grip fractions:** each control requests a share of the available grip, μg = 12 m/s².
-  - Steering `u_s ∈ [−1, 1]` requests a lateral acceleration `a_lat = u_s × μg`.
+  - Steering `u_s ∈ [−1, 1]` requests a lateral acceleration `a_lat = clip(k × u_s, −1, 1) × μg`, where k is the
+    car's steering sensitivity (§9.11; k = 1 for every car that does not evolve its setup).
   - Throttle `u_t ∈ [−1, 1]` requests a longitudinal acceleration `a_long = u_t × μg`. Negative
     values brake.
 - **Friction circle:** if the combined request exceeds the grip limit, that is
@@ -335,15 +338,22 @@ all be learned by the controllers.
   - The minimum turning radius is `v² / μg`, so a fast car cannot take a tight corner and must brake
     before it.
   - With no top speed, safe speed on a straight is bounded by how early the walls ahead can be seen.
-    Stopping within the 50 m sensor range requires a speed below about 35 m/s.
+    Stopping within a sensor length L requires a speed below about √(2 μg L): about 35 m/s for 50 m and 60 m/s for
+    150 m.
+- **Grip in the application:** the visualization application can display races with a grip of 120 m/s² (§10.5);
+  training, evaluation and the expert always use μg = 12 m/s².
 
 ### 5.2 Sensors
 
-Nine rays at −90°, −67.5°, …, +90° relative to the heading measure the distance to the track boundary,
-up to 50 m. Rays are cast by sphere tracing on the distance-to-boundary map, with a minimum step of 0.5 m and at most 48 iterations per ray. Each ray stops as soon as it reaches the boundary.
+Nine rays at −90°, −67.5°, …, +90° relative to the heading measure the distance to the track boundary, up to the
+car's sensor length L: 50 m for every car that does not evolve its setup, and 10–150 m for evolved cars (§9.11). Rays
+are cast by sphere tracing on the distance-to-boundary map, with a minimum step of 0.5 m. A ray of length L takes at
+most ⌈48 × L / 50⌉ iterations, so a 50 m ray keeps its cap of 48 iterations. Each ray stops as soon as it reaches the
+boundary or its length.
 
-The input vector has 10 elements: the nine distances divided by 50, plus the speed divided by a
-reference speed of 40 m/s. The reference speed only scales the input and does not limit the vehicle.
+The input vector has 10 elements: the nine distances divided by 50 m, plus the speed divided by a reference speed of
+40 m/s. The ray scale is fixed, so a ray of a car with L = 150 m can report values up to 3, and a car with L = 50 m
+sees exactly the inputs of version 3.0. The reference speed only scales the input and does not limit the vehicle.
 
 ### 5.3 Collisions
 
@@ -411,7 +421,7 @@ The module `nets.py` provides:
 Every final controller is stored as a `.keras` file, so network size and inference time are measured
 the same way for all approaches. Keras stores weights in float32. Evolutionary controllers are selected
 with float64 weights, so they are additionally stored as float64 `.npy` files, and all driving
-evaluations of evolutionary controllers use these files.
+evaluations of evolutionary controllers use these files. An evolved controller also stores its setup (sensor length and steering sensitivity) in `<seed>.setup.json`; a controller without this file drives with L = 50 m and k = 1.
 
 The baseline architecture, which the GA and ES also use, is 10 → 16 (ReLU) → 15 (softmax), for a total
 of 431 trainable parameters.
@@ -580,7 +590,7 @@ speed push. The controller after the speed push is the method's final controller
 All evolutionary approaches share one run loop: the GA, the ES, the seeded ES, NEAT and the speed push
 of the imitation methods (§8.5). The GA and the ES use the baseline architecture (431 weights) with
 Glorot-uniform initial weights. The seeded ES and the speed pushes start from trained networks. NEAT
-starts from minimal networks and grows them. Each approach is run with seeds 0, 1 and 2. Runs have no
+starts from minimal networks and grows them. Every car of these populations also carries an evolved setup (§9.11). Each approach is run with seeds 0, 1 and 2. Runs have no
 evaluation budget; they end through the speed push or the safety stop (§9.4).
 
 **Each generation proceeds as follows:**
@@ -600,7 +610,7 @@ generation with the generation and level, the target factor, the number of evalu
 and worst fitness, the success share of each map and the lowest of them, the number of kept cars, the
 success shares of kept cars and children, the median lap time of the successful cars, the step size
 (GA mutation strength or σ), the streak, the event of the generation (level advancement, mastery goal,
-target reduction or end), the map seeds and the elapsed time. NEAT also logs its number of species. A
+target reduction or end), the map seeds and the elapsed time.  Every run also logs the mean and standard deviation of the population's sensor length and steering sensitivity, and NEAT logs its number of species. A
 checkpoint is written after every generation (§3.3).
 
 **Run time:** the reported time is the active run time, accumulated across resumptions, including the
@@ -804,8 +814,9 @@ The simulation is vectorized over individuals, and rays use sphere tracing (§5.
 - **Keras training:** the settings `steps_per_execution` and `jit_compile` (§8.1) are chosen with the
   Keras training-time benchmark in `bench.py`.
 - **Fresh maps:** each generation builds its three maps in the worker processes that drive them. A map
-  takes 0.1–0.6 s to build, against several seconds of driving. Every process keeps at most 64 built
-  tracks, so memory stays constant over runs of many thousands of generations.
+  takes 0.1–0.6 s to build, against several seconds of driving. Every process keeps at most 8 built tracks, so memory stays constant over runs of many thousands of generations.
+- **Sensor length:** tracing time grows with a ray's length, so a population that evolves long sensors drives each
+  generation more slowly. Results do not depend on it.
 - **NEAT:** all genomes of a generation are compiled into flat arrays and evaluated together, depth by
   depth (§9.9), so NEAT drives its whole population at once like the other methods.
 - **Further measures**, applied only if training is still too slow: fewer sphere-tracing steps, then
@@ -813,6 +824,31 @@ The simulation is vectorized over individuals, and rays use sphere tracing (§5.
 
 GPU execution is not used: the per-operation launch cost on a GPU exceeds the arithmetic of networks
 and car batches of this size.
+
+### 9.11 Evolved car setup
+
+Every car of an evolutionary population carries two setup values next to its network: its **sensor length** L
+(10–150 m) and its **steering sensitivity** k (⅓–3). Both are stored and mutated on a logarithmic scale, so halving
+and doubling are equally large changes. The setup carries no cost; it is judged only by the time trials, through
+success and lap time.
+
+- **Sensor length** limits all nine rays of the car (§5.2).
+- **Steering sensitivity** multiplies the steering of every action class before the grip limit (§5.1). Below 1 it
+  gives finer steering but a gentler sharpest turn; above 1 it cannot exceed the grip limit, strengthens the
+  half-steering levels and saturates the full ones, so the steering becomes coarser.
+- **Populations:** the GA, the ES, NEAT, the seeded ES and the speed push of each imitation method evolve their setup.
+  The imitation training and DAgger use L = 50 m and k = 1, because the expert data and corrections are recorded with
+  those sensors.
+- **Initial setups:** populations that start from random networks (GA, ES, NEAT) draw every car's setup uniformly on
+  the logarithmic scale within the ranges; populations that start from a trained network (seeded ES, speed pushes)
+  start with L = 50 m and k = 1, the setup the network was trained with.
+- **Inheritance and mutation**, the same for every method: a kept car keeps its setup; a child inherits each value
+  from a parent (GA: from either crossover parent with equal probability; ES: from its parent; NEAT: from the fitter
+  parent of a crossover or from the single parent); each inherited value is mutated with probability 0.2 by Gaussian
+  noise with standard deviation 0.1 on the natural-logarithm scale (about ±10%) and clipped to its range. Setup
+  mutation is independent of the network step sizes.
+- **Saved controllers** store their setup (§6). The evaluation, the network figure and the application drive every
+  controller with its own setup.
 
 ## 10. Visualization Application
 
@@ -847,8 +883,7 @@ Training is observed live rather than recorded.
 - **Controls:**
   - The user selects an approach, a run seed and a difficulty (§10.4).
   - For the GA, ES, seeded ES and NEAT, the user sets the population size before starting.
-  - Training is started and paused with a play/pause control and ended with a stop control. After a
-    stop, the approach, run seed, difficulty and population size can be changed.
+  - Training is started and paused with a play/pause control and ended with a stop control, which freezes the displayed cars. After a stop, the approach, run seed, difficulty and population size can be changed.
   - Changing a setting is possible only while no training is running.
 - **Training process:**
   - Training runs in a separate process at full speed, with the configured number of worker
@@ -859,10 +894,10 @@ Training is observed live rather than recorded.
   - When the training process ends, the view reads the queue once more, so the final report is
     displayed.
   - Pausing halts training at the next generation boundary.
-  - Training started from the application writes to `results/app_runs/` and never saves final
-    controllers, so it cannot overwrite the reported results. The seeded ES in the application starts
-    from the DAgger-refined baseline of the selected run seed. If it does not exist, the seeded ES cannot
-    be started and the view states that notebook 03 must be run first.
+  - Training started from the application writes only to `results/app_runs/`, never to the reported results, and is
+    kept there (§10.6). The seeded ES in the application starts from the DAgger-refined baseline of the selected run
+    seed. If it does not exist, the seeded ES cannot be started and the view states that notebook 03 must be run
+    first.
 - **Playback:**
   - The view re-simulates only the displayed individuals, on the generation's first track, at 1×, 2×,
     4× or 8× playback speed. At 1×, simulated time runs at twice real time.
@@ -879,12 +914,13 @@ Training is observed live rather than recorded.
   - Best shows the N fittest.
   - Worst shows the N least fit.
 
-  The fittest displayed individual is outlined, and its sensor rays can be shown.
+  The fittest displayed individual is outlined, and its sensor rays can be shown, each drawn to the car's own sensor length.
 - **Side panel:**
   - approach, level and generation
   - the success share of each of the generation's maps against the 90% requirement, and the streak
   - the target reduction during the speed push
   - mutation strength (GA) or σ (ES, NEAT), and the number of species (NEAT)
+  - the population's mean sensor length and steering sensitivity, with their standard deviations
   - best and mean fitness
   - a live plot of the lowest map success share per generation against the 90% line, with level
     advancements, the mastery goal and target reductions marked (for the imitation approaches, the best and
@@ -910,6 +946,11 @@ Training is observed live rather than recorded.
 
   A crashed car stays where it crashed and is drawn faded.
 - **Playback speed:** 1×, 2×, 4× or 8×, where 1× is twice real time.
+- **App cars:** a cycle button switches the controller list between the reported controllers and the app cars, the
+  best cars of training started in the application (§10.6), labelled for example *GA (app) s1*. Each app car is off by
+  default and can be switched on to race next to the reported controllers, drawn with a white border; app cars never
+  enter the evaluation. When many cars race, the leaderboard shows as many rows as fit and states how many more there
+  are.
 
 ### 10.4 Difficulty
 
@@ -928,6 +969,37 @@ In the race view, the difficulty sets the level of the race track. In the traini
 level at which evolutionary training starts (the curriculum still advances from there) and the level of
 the track on which imitation trials and epochs are driven. The difficulty applies only to the
 application; the reported experiment always starts at level 1 and evaluates on level 4.
+
+### 10.5 Grip selector
+
+A selector with the options **Normal** (the training grip, 12 m/s²) and **Unlimited** (10 times the training grip,
+120 m/s²) sets the grip of everything the application simulates for display: the race view and the replays in the
+training view. It never affects training, which always uses the training grip, so the reported results cannot depend
+on it. A grip of 120 m/s² stands in for unlimited grip, because an unbounded grip would let a car turn arbitrarily far
+within one time step.
+
+### 10.6 Saved application training
+
+Training started in the application is kept, separately from the reported results.
+
+- **One saved run per method and seed** in `results/app_runs/<method>/seed<k>/`, checkpointed after every generation
+  like a reported run. The reported results never read these folders, and `--fresh` keeps them.
+- **Resume.** For the GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and seed where it
+  stopped, at its own level and target; the difficulty and population settings apply only when a run starts. **New
+  run** deletes that method and seed's saved run and its app car and starts afresh with the current settings. If a
+  saved run was recorded with other settings or a file of it is damaged, the training process ends with exit code 3
+  and the panel asks for New run.
+- **Imitation methods** (baseline and Keras Tuner) are not resumed in the application: Play starts them afresh.
+- **App cars.** After every generation (evolutionary methods), or whenever the validation accuracy improves
+  (imitation methods), the run's best car so far is saved with its setup in `results/app_runs/champions/`, in the
+  files of a final controller, so it can race in the race view (§10.3).
+
+### 10.7 Network window
+
+A separate window, opened from the side panel, draws a car's network in the layout of the network figure (§11.4). In
+the training view it shows the best car of the latest generation (for imitation, the network of the latest epoch or
+trial) and redraws with every report; in the race view a selector cycles through the cars in the race. The window runs
+in its own process, can be moved and resized, and closes with the application.
 
 ## 11. Evaluation Methodology
 
@@ -961,8 +1033,7 @@ Results are reported as the mean and standard deviation across seeds, and are le
 speed.
 
 1. **Results.** Per method: test maps finished and succeeded (per seed and in total, of 60), mean and
-   best lap time, mean three-lap race time, crashes, and the target reduction reached in the speed
-   push.
+   best lap time, mean three-lap race time, crashes, and the target reduction reached in the speed push, and the final controllers' sensor length and steering sensitivity.
 2. **Head-to-head speed.** Mean lap time on the test maps that every final controller finished.
 3. **Training cost.** Per method and seed: time and evaluations to clear each level, to reach the
    mastery goal and to end the speed push, and whether each was reached. For imitation methods, the
@@ -985,11 +1056,13 @@ speed.
 - **Success over training.** For each method, the lowest map success share per generation, with
   level advancements and target reductions marked.
 - **Lap time over training.** The median lap time of the successful cars per generation.
+- **Setup over training.** For each method, the population's mean sensor length and mean steering sensitivity per
+  generation, with level advancements and target reductions marked.
 - **Networks.** One panel per method showing its best final controller. The nine distance rays,
   labelled by angle, and the speed input are on the left. Hidden nodes are placed in columns by depth,
   so that the structure evolved by NEAT appears as it is. The 15 actions, labelled by steering and
   throttle, are on the right. Connections are blue when positive and red when negative, with width and
-  opacity proportional to the weight's magnitude.
+  opacity proportional to the weight's magnitude. Titles include the controller's setup.
 - **Step sizes.** GA mutation strength and ES step size σ across generations, one line per seed.
 - **Keras Tuner trials.** Validation accuracy against parameter count for every Keras Tuner trial, with each
   method's selected model marked.
@@ -1038,6 +1111,12 @@ Automated tests use pytest.
   a settings mismatch is refused.
 - **Progress display.** Status and milestone output for a short run.
 - **Network figure.** The figure is produced for dense and NEAT controllers.
+- **Car setup.** A ray stops at its car's length and a 50 m car reproduces the inputs, controls and results of version
+  3.0 exactly; steering sensitivity scales the steering levels within the grip limit; initial setups, inheritance and
+  mutation follow §9.11; setups survive subsets, parallel evaluation, checkpoints and saved controllers.
+- **Application.** The grip selector changes only display simulations; a saved application run resumes after Play,
+  New run starts afresh, an unusable saved run is named, and app cars race in their own group, switched off by
+  default.
 - **Seeded ES:** the first initial individual equals the DAgger-refined network exactly, and the others
   differ from it.
 - **Re-simulation fidelity:** re-simulating a logged generation reproduces exactly the fitness values
@@ -1047,7 +1126,7 @@ Automated tests use pytest.
 
 Before the reported run, short pilot runs of each evolutionary method on Easy and Medium confirm that
 the 90% requirement can be reached with the settings of this document. If a level is not reached in
-the pilots, the survival and step-size settings are reviewed before the reported run starts.
+the pilots, the survival and step-size settings are reviewed before the reported run starts. Revision 3.1 repeats the pilots with setup evolution, in `results/pilots/revision3.1/`, and reports the populations' final mean sensor length and steering sensitivity.
 
 ## 13. Default Parameters
 
@@ -1058,12 +1137,14 @@ the pilots, the survival and step-size settings are reviewed before the reported
 | Time step | 0.05 s |
 | Grip limit μg (friction circle) | 12 m/s² |
 | Speed input scaling | 40 m/s (normalization only) |
-| Sensors | 9 rays from −90° to +90°, 50 m range |
-| Sphere tracing | Minimum step 0.5 m; at most 48 iterations per ray |
+| Sensors | 9 rays from −90° to +90°; length 50 m, or 10–150 m when evolved; inputs scaled by 50 m |
+| Sphere tracing | Minimum step 0.5 m; at most ⌈48 × L / 50⌉ iterations for a ray of length L |
+| Steering sensitivity | 1, or ⅓–3 when evolved |
+| Car setup evolution | Log-uniform initial setups for random-start populations; 50 m and 1 for trained-start populations; per value mutation probability 0.2, Gaussian with standard deviation 0.1 on the natural-log scale, clipped |
 | Laps per run | 3 (training, evaluation and application races) |
 | Time limit | Training: the target time; evaluation and application: twice the expert lap time per lap |
 | No-progress timeout | 5 s |
-| Curriculum maps | Table 1; direction random per map; at most 64 built tracks per process |
+| Curriculum maps | Table 1; direction random per map; at most 8 built tracks per process |
 | Maps per generation | 3, freshly generated |
 | Starting target factor f | 1.3 × three expert laps |
 | Success | All three laps within the target time |
@@ -1082,6 +1163,7 @@ the pilots, the survival and step-size settings are reviewed before the reported
 | Map seeds | Validation 80–99; test 1000–1019; dataset 1,000,000–1,999,999; training from 2,000,000 |
 | Worker processes | `EC_RACING_JOBS`, default 6, chosen by benchmark per machine |
 | Application playback | 1× equals twice real time |
+| Application grip | Normal 12 m/s²; Unlimited 120 m/s² (display only) |
 
 The track, vehicle and expert-driver values were calibrated during implementation so that the expert
 completes every curriculum level reliably.
@@ -1114,6 +1196,10 @@ completes every curriculum level reliably.
 10. **Replication scope.** Each Keras Tuner search runs once, so the variation reported for the
    searched methods covers retraining of the selected architecture but not the search itself. The
    evolutionary methods repeat the whole run for each seed.
+11. **Sensor cost.** Long sensors cost tracing time; populations that evolve long sensors make generations slower.
+    This is accepted and included in the reported training cost.
+12. **Coarse steering.** Populations may settle at a steering sensitivity above 1, where steering saturates and loses
+    smoothness. This is a result to be reported, not a defect.
 
 ## 15. Software Environment
 

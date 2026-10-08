@@ -13,8 +13,10 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
 Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
 its population must complete three laps within the target time, three generations in a row, on each level from Easy
 to Extra hard. The target time is then shortened by 5% at a time until the population can no longer keep up. Every
-method runs with three seeds; results are reported as mean ± standard deviation. The design specification is
-`docs/2026-10-05-ec-racing-design.md` (version 3.0); the revision 3 specification and plan are in `docs/`.
+method runs with three seeds; results are reported as mean ± standard deviation. Every evolved car also evolves its
+own setup next to its network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3),
+judged only by success and lap time. The design specification is `docs/2026-10-05-ec-racing-design.md` (version 3.1);
+the revision 3 and 3.1 specifications and plans are in `docs/`.
 
 ## Setup on a Windows desktop (WSL 2)
 
@@ -184,7 +186,8 @@ Results are written to `results/`, which is not under version control:
 | `results/champions/best_seeds.json` | Each method's best seed on the validation maps |
 | `results/tables/`, `results/figures/` | Results tables (CSV and Markdown) and figures, including the network figure |
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
-| `results/pilots/revision3/` | Pilot runs |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/` | Pilot runs of revision 3 and of revision 3.1 (with setup evolution) |
+| `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
 
 To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\results` in File Explorer.
@@ -197,7 +200,8 @@ python -m racing.bench generation         # generation time per worker count; pr
 python -m racing.bench keras              # Keras epoch time per steps_per_execution and jit_compile
 ```
 
-The pilots write to `results/pilots/revision3/` and are not part of the reported results.
+The pilots write to `results/pilots/revision3.1/` and are not part of the reported results;
+their summary includes the populations' final mean sensor length and steering sensitivity.
 
 ## Viewer
 
@@ -208,11 +212,23 @@ python -m racing.app
 On Windows 11 the window opens through WSLg.
 
 - **Training view:** choose an approach, run seed, difficulty and population size, then press Play (or Space).
-  Training follows the mastery rules and continues until Stop. The panel shows the level, each map's success share
-  against 90%, the streak and the target reduction. Training started here writes only to `results/app_runs/`.
+  Training follows the mastery rules and continues until Stop, which freezes the cars where they are. The panel shows
+  the level, each map's success share against 90%, the streak, the target reduction and the population's mean sensor
+  length and steering sensitivity.
+- **Saved viewer training:** training started here is kept in `results/app_runs/<method>/seed<k>/`, separate from the
+  reported results. For GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and seed where
+  it stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a
+  saved run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New
+  run. Baseline and Keras Tuner training always start afresh.
 - **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
   line. For each method, choose its best seed, a specific seed, or off, then press Start race; Stop returns to the
-  start line.
+  start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training
+  run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*.
+  App cars start switched off, race next to the reported controllers when switched on (drawn with a white border),
+  and are never part of the reported results. When many cars race, the leaderboard lists as many as fit.
+- **Grip:** *Normal* (12 m/s², the training grip) or *Unlimited* (120 m/s²) sets the grip of the cars you watch in
+  both views. It never affects training or results.
+- **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.
 - **Network window:** the Network window button opens a separate window (movable to another monitor, resizable,
   closed with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
   generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in

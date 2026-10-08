@@ -131,10 +131,11 @@ Training started in the application is kept, separately from the reported result
   **New run** is needed.
 - **Imitation methods in the application** (baseline and Keras Tuner) are not resumed: Play starts their training
   afresh, as before.
-- **Raceable car.** After every generation (evolutionary methods) or at the end of training (imitation methods), the
-  run's current best car is saved with its setup in `results/app_runs/champions/<method>/seed<k>.*`, the same files as a
-  final controller. In the race view these cars appear in their own group, labelled for example **GA (app) s1**; each is
-  off by default and can be switched on to race next to the reported controllers.
+- **Raceable car.** After every generation (evolutionary methods) or whenever the validation accuracy improves
+  (imitation methods, so a stopped run still leaves its best network), the run's best car so far is saved with its
+  setup in `results/app_runs/champions/<method>/seed<k>.*`, the same files as a final controller. In the race view
+  these cars appear in their own group, labelled for example **GA (app) s1**; each is off by default and can be
+  switched on to race next to the reported controllers.
 
 ## 7. Settings and Execution
 
