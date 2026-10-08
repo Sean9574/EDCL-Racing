@@ -304,6 +304,7 @@ class App:
         self.process = None
         self.reports = None
         self.running = None
+        self.halted = False                 # Stop freezes the training replay until the next Play
         self.latest = None
         self.history = []
         self.playback = None
@@ -367,6 +368,7 @@ class App:
                                        args=(self.approach, size, self.run_seed, self.difficulty, self.reports,
                                              self.running))
         self.process.start()
+        self.halted = False
         self.latest, self.history, self.playback, self.playback_generation = None, [], None, None
         self.net_sent = None                                 # a new run's first report goes to the window
         self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
@@ -398,6 +400,7 @@ class App:
             self.stop_race()
             return
         self.stop_training()
+        self.halted = True                                   # the replay freezes where it is (revision 3 §9)
         self.status = "Stopped. Change the settings or press Play."
 
     def discard_reports(self):
@@ -729,11 +732,11 @@ class App:
         self.poll_reports()
         self.poll_network_window()
         if self.mode == "train":
-            if self.latest is not None and (self.playback is None or self.playback.over):
+            if not self.halted and self.latest is not None and (self.playback is None or self.playback.over):
                 track = self.request_track(self.latest["seeds"][0], self.latest["level"])
                 if track is not None:
                     self.start_playback(self.latest, track)
-            active = self.playback
+            active = None if self.halted else self.playback
         else:
             self.prepare_race()
             active = self.race if self.racing else None

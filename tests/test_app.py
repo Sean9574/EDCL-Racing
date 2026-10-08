@@ -140,6 +140,35 @@ def test_app_plays_a_report(window):
     assert window.playback is not None and window.playback_generation == 0
 
 
+def test_stop_freezes_the_training_replay(window):
+    window.receive(ga_report())
+    for _ in range(30):
+        window.update(1 / 60)
+    playback = window.playback
+    assert playback is not None and playback.cars.time > 0
+    window.stop()
+    frozen_time, frozen_x = playback.cars.time, playback.cars.x.copy()
+    for _ in range(300):                                 # long enough for a replay to end and start again
+        window.update(1 / 60)
+        window.draw()
+    assert window.playback is playback                   # not restarted
+    assert playback.cars.time == frozen_time and np.array_equal(playback.cars.x, frozen_x)
+    assert window.latest is not None                     # the last generation's stats stay on the panel
+
+
+def test_play_after_stop_moves_the_replay_again(window, monkeypatch):
+    window.receive(ga_report())
+    for _ in range(10):
+        window.update(1 / 60)
+    window.stop()
+    monkeypatch.setattr(window, "start_training", lambda: setattr(window, "halted", False))
+    window.toggle_play()
+    time_before = window.playback.cars.time
+    for _ in range(10):
+        window.update(1 / 60)
+    assert window.playback.cars.time > time_before
+
+
 def test_neat_report_plays_in_the_training_view(window):
     window.approach = "neat"
     window.receive(neat_report())
