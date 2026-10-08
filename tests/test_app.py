@@ -1022,7 +1022,8 @@ def test_a_new_report_sends_exactly_one_message(net):
     assert len(sent(net)) == 1
     best = int(np.argmax(report["fitness"]))
     assert sent(net)[0]["graph"] == viewer.netwindow.netfig.network_graph(report["population"].driver(best))
-    assert sent(net)[0]["title"] == f"GA · seed {net.run_seed} · generation 0 · {report['population'].driver(best).n_params:,} parameters"
+    assert sent(net)[0]["title"] == (f"GA · seed {net.run_seed} · generation 0 · "
+                                     f"{report['population'].driver(best).n_params:,} parameters · 50 m · ×1.00")
     net.receive(ga_report(1))
     net.update(1 / 60)
     assert len(sent(net)) == 2
@@ -1058,6 +1059,20 @@ def test_an_unchanged_report_builds_no_driver_and_the_title_uses_the_report_seed
     for _ in range(5):
         net.update(1 / 60)
     assert len(calls) == 1 and len(sent(net)) == 1 and " · seed 7 · " in sent(net)[0]["title"]
+
+
+def test_network_window_titles_name_the_setup(net, tmp_path):
+    rng = np.random.default_rng(3)
+    cars = nets.DensePopulation(nets.init_population(rng, 4), setup=np.array([[120.0, 0.5]] * 4))
+    net.toggle_network_window()
+    net.receive(ga_report(0, n=4, population_=cars))
+    net.update(1 / 60)
+    assert sent(net)[-1]["title"].endswith(" parameters · 120 m · ×0.50")
+    save_race_champions(tmp_path)
+    net.champions_dir = tmp_path
+    net.set_mode("race")
+    net.update(1 / 60)
+    assert sent(net)[-1]["title"].endswith(" parameters · 50 m · ×1.00")
 
 
 def test_a_reopened_window_gets_the_current_network(net):

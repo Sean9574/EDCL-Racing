@@ -497,7 +497,7 @@ class App:
             else:
                 driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
             title = (f"{config.LABELS[approach]} · seed {seed} · {unit} {generation} · "
-                     f"{driver.n_params:,} parameters")
+                     f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
             return identity, driver, title
         car = self.selected_car()
         if car is None:
@@ -512,7 +512,8 @@ class App:
             self.lineup.remove(car)
             self.status = f"Controller {config.LABELS[car[0]]} seed {car[1]} could not be loaded; skipped."
             return None
-        return identity, driver, f"{config.LABELS[car[0]]} · seed {car[1]} · {driver.n_params:,} parameters"
+        return identity, driver, (f"{config.LABELS[car[0]]} · seed {car[1]} · {driver.n_params:,} parameters"
+                                  f"{netwindow.netfig.setup_text(driver)}")
 
     def poll_network_window(self):
         """Forget a window the user closed; send the shown network when it changed."""

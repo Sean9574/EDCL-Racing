@@ -219,9 +219,21 @@ def reduction_cell(summary):
     return f"{100 * float(summary['target_reduction']):.1f}%"
 
 
-def results_table(per_track, runs_dir):
+def setup_cells(drivers, approach, seeds):
+    """The final controllers' sensor length (m, no decimals) and steering sensitivity (two decimals) as 'mean ± std'
+    across seeds (revision 3.1 §5); '–' for both without drivers for the method."""
+    rows = [np.asarray(drivers[(approach, int(s))].setup, dtype=float) for s in seeds
+            if drivers and (approach, int(s)) in drivers]
+    if not rows:
+        return "–", "–"
+    values = np.array(rows)
+    return mean_std(values[:, 0], 0), mean_std(values[:, 1], 2)
+
+
+def results_table(per_track, runs_dir, drivers=None):
     """Revision 3 §7.2 table 1: test maps finished and succeeded (in total and per seed), lap and race times,
-    crashes, and the target reduction of each seed's speed push."""
+    crashes, the final controllers' setups (revision 3.1 §5; drivers: {(approach, seed): driver}) and the target
+    reduction of each seed's speed push."""
     seeds = per_seed(per_track)
     rows = []
     for approach in config.APPROACHES:
@@ -230,6 +242,7 @@ def results_table(per_track, runs_dir):
             continue
         total = int(sub["maps"].sum())
         best_lap = "–" if sub["best_lap"].isna().all() else f"{sub['best_lap'].min():.2f}"
+        sensor, steer = setup_cells(drivers, approach, sub["run_seed"])
         rows.append({"Method": config.LABELS[approach], "Seeds": len(sub),
                      "Finished": f"{int(sub['finished'].sum())} / {total}",
                      "Finished per seed": ", ".join(str(int(v)) for v in sub["finished"]),
@@ -238,6 +251,7 @@ def results_table(per_track, runs_dir):
                      "Mean lap time (s)": seeds_note(sub["lap_time"], 2), "Best lap time (s)": best_lap,
                      "Mean race time (s)": seeds_note(sub["race_time"], 1),
                      "Crashes": mean_std(sub["crashes"], 1),
+                     "Sensor length (m)": sensor, "Steering sensitivity": steer,
                      "Target reduction (per seed)": ", ".join(
                          reduction_cell(run_summary(approach, int(s), runs_dir)) for s in sub["run_seed"])})
     return pd.DataFrame(rows)
@@ -495,6 +509,20 @@ def _line_kwargs(color):
     return {"color": color} if outline is None else {"color": color, "path_effects": outline}
 
 
+def _plot_runs(ax, runs, column, approach):
+    """One line per seed of `column` (seeds told apart by line style), with level advancements and the mastery goal
+    as solid and target reductions as dotted grey vertical lines."""
+    for k, (seed, log) in enumerate(sorted(runs.items())):
+        if column not in log:
+            continue
+        ax.plot(log["generation"], log[column], linewidth=1.2, linestyle=SEED_STYLES[k % len(SEED_STYLES)],
+                label=f"seed {seed}", **_line_kwargs(config.COLORS[approach]))
+        events = log["event"].fillna("").astype(str) if "event" in log else []
+        for generation, event in zip(log["generation"], events):
+            if event in EVENT_STYLES:
+                ax.axvline(generation, color="0.6", linewidth=0.6, linestyle=EVENT_STYLES[event], zorder=0)
+
+
 def _panels(plt, logs, column, ylabel, threshold=None):
     """Small multiples: one panel per method with data in `column`, one line per seed (told apart by line style),
     level advancements and the mastery goal as solid and target reductions as dotted grey vertical lines. None if no
@@ -511,15 +539,7 @@ def _panels(plt, logs, column, ylabel, threshold=None):
     for ax in axes.flat[n:]:
         ax.set_visible(False)
     for ax, (approach, runs) in zip(axes.flat, with_data.items()):
-        for k, (seed, log) in enumerate(sorted(runs.items())):
-            if column not in log:
-                continue
-            ax.plot(log["generation"], log[column], linewidth=1.2, linestyle=SEED_STYLES[k % len(SEED_STYLES)],
-                    label=f"seed {seed}", **_line_kwargs(config.COLORS[approach]))
-            events = log["event"].fillna("").astype(str) if "event" in log else []
-            for generation, event in zip(log["generation"], events):
-                if event in EVENT_STYLES:
-                    ax.axvline(generation, color="0.6", linewidth=0.6, linestyle=EVENT_STYLES[event], zorder=0)
+        _plot_runs(ax, runs, column, approach)
         if threshold is not None:
             ax.axhline(threshold, color="0.3", linewidth=0.8, linestyle="--", zorder=0)
         ax.set_title(config.LABELS[approach], fontsize=10)
@@ -536,9 +556,55 @@ def _panels(plt, logs, column, ylabel, threshold=None):
     return fig
 
 
+SETUP_PANELS = (("sensor_mean", "Sensor length (m)", config.SENSOR_LENGTH_LIMITS, 0),
+                ("steer_mean", "Steering sensitivity", config.STEER_GAIN_LIMITS, 1))
+
+
+def _setup_figure(plt, logs):
+    """Revision 3.1 §5: for each method, the population's mean sensor length (upper panel) and mean steering
+    sensitivity (lower panel) per generation, one line per seed, with level advancements and target reductions
+    marked and the revision 3 setup as a dashed line. None if no log records setups."""
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FuncFormatter, NullFormatter
+    with_setup = {approach: runs for approach, runs in logs.items()
+                  if any("sensor_mean" in log and log["sensor_mean"].notna().any() for log in runs.values())}
+    if not with_setup:
+        return None
+    ncols = min(4, len(with_setup))
+    groups = -(-len(with_setup) // ncols)
+    fig, axes = plt.subplots(2 * groups, ncols, figsize=(3.4 * ncols, 4.6 * groups), squeeze=False)
+    for ax in axes.flat:
+        ax.set_visible(False)
+    for k, (approach, runs) in enumerate(with_setup.items()):
+        group, column = divmod(k, ncols)
+        for row, (name, ylabel, limits, index) in enumerate(SETUP_PANELS):
+            ax = axes[2 * group + row, column]
+            ax.set_visible(True)
+            _plot_runs(ax, runs, name, approach)
+            ax.axhline(config.DEFAULT_SETUP[index], color="0.3", linewidth=0.8, linestyle="--", zorder=0)
+            ax.set_yscale("log")
+            ax.set_ylim(*limits)
+            ax.set_yticks([limits[0], config.DEFAULT_SETUP[index], limits[1]])   # plain labels on the log axis
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.3g}"))
+            ax.yaxis.set_minor_formatter(NullFormatter())
+            ax.set_title(f"{config.LABELS[approach]}: {ylabel[0].lower()}{ylabel[1:]}", fontsize=9)
+            ax.set_xlabel("Generation", fontsize=8)
+            ax.set_ylabel(ylabel, fontsize=8)
+            ax.tick_params(labelsize=7)
+            ax.grid(alpha=0.25, linewidth=0.5)
+    handles, _ = axes[0, 0].get_legend_handles_labels()
+    handles += [Line2D([], [], color="0.3", linewidth=0.8, linestyle="--", label="revision 3 setup"),
+                Line2D([], [], color="0.6", linewidth=0.6, label="level cleared / goal"),
+                Line2D([], [], color="0.6", linewidth=0.6, linestyle=":", label="target cut")]
+    axes[0, 0].legend(handles=handles, frameon=False, fontsize=7)
+    fig.tight_layout()
+    return fig
+
+
 def figures(runs_dir, out_dir):
     """Revision 3 §7.3: the lowest map success share and the median lap time over training (one panel per method,
-    one line per seed), the step sizes, and the Keras Tuner trials. Only figures with data are written."""
+    one line per seed), the population's mean setup over training (revision 3.1 §5), the step sizes, and the Keras
+    Tuner trials. Only figures with data are written."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -556,6 +622,12 @@ def figures(runs_dir, out_dir):
         if column == "min_share":
             fig.axes[0].set_ylim(0.0, 1.02)                 # the y-axis is shared, so this sets every panel
         written.append(out_dir / name)
+        fig.savefig(written[-1], dpi=150)
+        plt.close(fig)
+
+    fig = _setup_figure(plt, logs)
+    if fig is not None:
+        written.append(out_dir / "setup_over_training.png")
         fig.savefig(written[-1], dpi=150)
         plt.close(fig)
 
@@ -624,7 +696,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
     with np.load(data_path) as d:
         data = {key: d[key] for key in d.files}
     metrics = metrics_per_seed(models, data, runs_dir, latency_calls, drivers)   # timed after all parallel work
-    tables = {"results": results_table(per_track, runs_dir), "head_to_head": head_to_head_table(per_track),
+    tables = {"results": results_table(per_track, runs_dir, drivers), "head_to_head": head_to_head_table(per_track),
               "training_cost": training_cost_table(runs_dir), "stages": stages_table(stages),
               "comparison": comparison_table(metrics), "search_cost": search_cost_table(runs_dir),
               "driving_selected": selected, "dataset": dataset_table(data_path)}

@@ -98,9 +98,21 @@ def _draw_graph(ax, graph):
     ax.axis("off")
 
 
+def setup_text(driver):
+    """' · <sensor length> m · ×<steering sensitivity>' of a driver's setup (revision 3.1 §5); the revision 3 setup
+    for a driver without one."""
+    length, gain = np.asarray(getattr(driver, "setup", config.DEFAULT_SETUP), dtype=float)
+    return f" · {length:.0f} m · ×{gain:.2f}"
+
+
+def panel_title(approach, driver):
+    """A network diagram's title: the method, its parameter count and its setup."""
+    return f"{config.LABELS[approach]} · {driver.n_params:,} parameters{setup_text(driver)}"
+
+
 def draw_networks(drivers, path):
-    """One panel per method in config.APPROACHES order, titled with the method and its parameter count, written as
-    a PNG at `path`. drivers: {approach: driver}."""
+    """One panel per method in config.APPROACHES order, titled with the method, its parameter count and its setup,
+    written as a PNG at `path`. drivers: {approach: driver}."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -115,7 +127,7 @@ def draw_networks(drivers, path):
         ax.set_visible(False)
     for ax, approach in zip(axes.flat, approaches):
         _draw_graph(ax, network_graph(drivers[approach]))
-        ax.set_title(f"{config.LABELS[approach]} · {drivers[approach].n_params:,} parameters", fontsize=10)
+        ax.set_title(panel_title(approach, drivers[approach]), fontsize=9)
     fig.tight_layout()
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

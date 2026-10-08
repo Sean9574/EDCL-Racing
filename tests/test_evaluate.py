@@ -191,6 +191,27 @@ def test_results_table_counts_finishes_successes_and_target_reduction(tmp_path):
     assert table.set_index("Method").loc["ES", "Target reduction (per seed)"] == "–"
 
 
+def test_results_table_reports_the_final_setups(tmp_path):
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("ga", 1, 1000, True, True, False, 54.0),
+                            ("es", 0, 1000, True, True, False, 52.0)])
+    finals = drivers(n=2)
+    finals[("ga", 0)].setup = np.array([40.0, 2.0])
+    finals[("ga", 1)].setup = np.array([60.0, 1.0])
+    finals[("es", 0)] = nets.from_flat(nets.init_population(np.random.default_rng(9), 1)[0])   # revision 3 setup
+    table = evaluate.results_table(per_track, tmp_path, finals).set_index("Method")
+    assert table.loc["GA", "Sensor length (m)"] == "50 ± 14" and table.loc["GA", "Steering sensitivity"] == "1.50 ± 0.71"
+    assert table.loc["ES", "Sensor length (m)"] == "50" and table.loc["ES", "Steering sensitivity"] == "1.00"
+    columns = list(table.columns)
+    assert columns.index("Steering sensitivity") == columns.index("Sensor length (m)") + 1
+    assert columns.index("Steering sensitivity") + 1 == columns.index("Target reduction (per seed)")
+
+
+def test_results_table_without_drivers_shows_no_setup(tmp_path):
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0)])
+    table = evaluate.results_table(per_track, tmp_path).set_index("Method")
+    assert table.loc["GA", "Sensor length (m)"] == "–" and table.loc["GA", "Steering sensitivity"] == "–"
+
+
 def test_head_to_head_compares_the_maps_every_controller_finished():
     nan = np.nan
     per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("ga", 1, 1000, True, True, False, 54.0),
@@ -304,6 +325,20 @@ def test_figures_per_method(tmp_path):
                                          "step_sizes.png"]
 
 
+def test_setup_figure_follows_the_population_setups(tmp_path):
+    runs = tmp_path / "runs"
+    folder = paths.run_dir("neat", 0, runs)
+    write_log(folder, [None, "level_up", None], [0.2, 0.95, 0.5], [np.nan, 40.0, 39.0])
+    log = pd.read_csv(folder / "log.csv")
+    log["sensor_mean"], log["sensor_std"] = [60.0, 70.0, 85.0], [20.0, 15.0, 10.0]
+    log["steer_mean"], log["steer_std"] = [1.0, 1.3, 1.6], [0.5, 0.4, 0.3]
+    log.to_csv(folder / "log.csv", index=False)
+    written = evaluate.figures(runs, tmp_path / "figures")
+    assert [p.name for p in written] == ["success_over_training.png", "lap_time_over_training.png",
+                                         "setup_over_training.png", "step_sizes.png"]
+    assert (tmp_path / "figures" / "setup_over_training.png").read_bytes()[:4] == b"\x89PNG"
+
+
 def test_light_series_colors_get_an_outline():
     assert evaluate._outline(config.COLORS["neat"]) is not None
     assert evaluate._outline(config.COLORS["ga"]) is None and evaluate._outline(config.COLORS["es"]) is None
@@ -386,3 +421,4 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
                  "driving_selected", "dataset"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
     assert results["figures"][-1] == tmp_path / "out" / "figures" / "networks.png" and results["figures"][-1].exists()
+    assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "50"

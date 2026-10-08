@@ -69,3 +69,12 @@ def test_render_graph_follows_the_size():
     graph = netfig.network_graph(neat_driver())
     assert netfig.render_graph(graph, "t", (300, 200)).shape == (200, 300, 3)
     assert netfig.render_graph(graph, "t", (1, 1)).shape[2] == 3
+
+
+def test_titles_name_the_method_parameters_and_setup():
+    driver = dense_driver()
+    assert netfig.setup_text(driver) == " · 50 m · ×1.00"
+    driver.setup = np.array([123.4, 0.456])
+    assert netfig.setup_text(driver) == " · 123 m · ×0.46"
+    assert netfig.panel_title("ga", driver) == f"GA · {driver.n_params:,} parameters · 123 m · ×0.46"
+    assert netfig.panel_title("neat", neat_driver()).endswith(" parameters · 50 m · ×1.00")
