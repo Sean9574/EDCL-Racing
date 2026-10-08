@@ -1365,6 +1365,7 @@ def test_the_best_car_of_each_generation_is_saved_as_an_app_car(monkeypatch, tmp
     obs = np.random.default_rng(5).random((40, config.N_INPUTS))
     assert np.array_equal(driver.act(obs), last["population"].driver(best).act(obs))
     assert np.array_equal(driver.setup, last["population"].setup[best])
+    assert not (config.APP_CHAMPIONS_DIR / ".staging").exists()      # files moved into place, staging removed
 
 
 def test_a_neat_app_car_keeps_its_genome(monkeypatch, tmp_path):

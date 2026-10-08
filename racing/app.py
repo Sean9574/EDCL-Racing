@@ -191,15 +191,23 @@ def leaderboard(playback, count):
 
 def save_app_car(report, champion_dir):
     """The best car of an evolutionary report, saved with its setup as the run's app car (revision 3.1 §6.1): the
-    files of a final controller, in `champion_dir`."""
+    files of a final controller, in `champion_dir`. They are written in a staging folder and each moved into place in
+    one step, so the race view, which may load the car while training continues, never reads a half-written file."""
     from racing import neat
     cars = report["population"]
     best = int(np.argmax(report["fitness"]))
     approach, seed = report["approach"], report["seed"]
+    staging = Path(champion_dir) / ".staging"        # not an approach folder, so the race view never lists it
+    paths.remove(staging)
     if isinstance(cars, neat.NeatPopulation):
-        neat.save_neat_champion(approach, seed, cars.genomes[best], champion_dir, setup=cars.setup[best])
+        neat.save_neat_champion(approach, seed, cars.genomes[best], staging, setup=cars.setup[best])
     else:
-        population.save_dense_champion(approach, seed, cars, best, champion_dir)
+        population.save_dense_champion(approach, seed, cars, best, staging)
+    target = Path(champion_dir) / approach
+    target.mkdir(parents=True, exist_ok=True)
+    for path in sorted((staging / approach).iterdir()):
+        os.replace(path, target / path.name)
+    paths.remove(staging)
 
 
 def save_app_model(approach, seed, model, champion_dir):
