@@ -139,3 +139,55 @@ def test_dagger_baseline_reads_the_refined_baseline(tmp_path):
 def test_dagger_baseline_missing(tmp_path):
     with pytest.raises(FileNotFoundError, match="notebook 03"):
         es.dagger_baseline(0, runs_dir=tmp_path)
+
+
+def test_random_start_setups_spread_but_a_trained_start_uses_the_default():
+    spread = started(pop_size=100).setup
+    assert np.std(np.log(spread), axis=0).min() > 0.4
+    flat = np.random.default_rng(1).normal(size=431)
+    seeded = started(pop_size=50, initial=flat, approach="es_seeded").setup
+    assert np.array_equal(seeded, np.tile(config.DEFAULT_SETUP, (50, 1)))
+
+
+def test_children_inherit_their_parents_setup(monkeypatch):
+    monkeypatch.setattr(config, "SETUP_MUTATION_P", 0.0)
+    method = started(parents=4)
+    before = dict(zip(method.ids.tolist(), method.setup.copy()))
+    method.advance(np.random.default_rng(8), result(-np.arange(20.0), np.zeros(20)), np.arange(10), None)
+    after = method.setup
+    assert np.array_equal(after[:10], np.array([before[i] for i in range(10)]))     # kept cars keep their setup
+    for row, parent in zip(after[10:], method.parent_ids[10:]):
+        assert np.array_equal(row, before[int(parent)])
+
+
+def test_setup_mutation_rate_and_size():
+    method = started(pop_size=4001, parents=1, hidden=(1,))
+    method.population = nets.DensePopulation(method.population.weights, (1,), "relu",
+                                             setup=np.tile(config.DEFAULT_SETUP, (4001, 1)))   # far from the limits
+    method.advance(np.random.default_rng(9), result(-np.arange(4001.0), np.zeros(4001)), np.array([0]), None)
+    logs = np.log(method.setup[1:] / np.asarray(config.DEFAULT_SETUP))   # every child copies car 0
+    changed = logs != 0
+    assert abs(changed.mean() - config.SETUP_MUTATION_P) < 0.02
+    assert abs(np.std(logs[changed]) - config.SETUP_MUTATION_SD) < 0.01
+
+
+def test_state_round_trip_keeps_the_setups():
+    first = started(parents=4)
+    second = es.ES(pop_size=20, parents=4)
+    second.load_state(first.state())
+    trial = result(-np.arange(20.0), np.arange(20) < 3)
+    first.advance(np.random.default_rng(9), trial, np.arange(10), None)
+    second.advance(np.random.default_rng(9), trial, np.arange(10), None)
+    assert np.array_equal(first.setup, second.setup)
+
+
+def test_setup_draws_come_after_the_network_draws():
+    method = started(parents=4)
+    weights = method.population.weights.copy()
+    fitness = -np.arange(20.0)
+    method.advance(np.random.default_rng(6), result(fitness, np.zeros(20)), np.arange(10), None)
+    rng = np.random.default_rng(6)                                      # the network part of revision 3, by hand
+    top = np.argsort(-fitness, kind="stable")[:4]
+    chosen = top[rng.integers(0, 4, 10)]
+    children = weights[chosen] + rng.normal(0.0, method.step.sigma, (10, weights.shape[1]))
+    assert np.array_equal(method.population.weights[10:], children)

@@ -10,19 +10,21 @@ from typing import Protocol
 
 import numpy as np
 
-from racing import checkpoint, config, population, progress
+from racing import checkpoint, config, population, progress, setup
 from racing.curriculum import MasteryTracker, SeedSource, survivors
 from racing.nets import DensePopulation
 
 LOG_NAME = "log.csv"
 SUMMARY_NAME = "summary.json"
 LOG_FIELDS = ["generation", "level", "factor", "evals", "best", "mean", "worst", "map_shares", "min_share", "n_kept",
-              "kept_success", "child_success", "median_lap", "step_size", "streak", "event", "seeds", "elapsed"]
+              "kept_success", "child_success", "median_lap", "sensor_mean", "sensor_std", "steer_mean", "steer_std",
+              "step_size", "streak", "event", "seeds", "elapsed"]
 
 
 class Method(Protocol):
     """What the loop needs from a method. `population` holds the cars carried over unchanged first; `is_kept`
-    marks them. `advance` must assign a new population object (reports keep the evaluated one)."""
+    marks them; `population.setup` holds every car's setup (revision 3.1 §2). `advance` must assign a new population
+    object (reports keep the evaluated one)."""
     approach: str
     population: object
     is_kept: np.ndarray
@@ -61,9 +63,16 @@ class DenseMethod:
         self.population = None
         self.is_kept = None
 
-    def assemble(self, kept_weights, children):
-        """The next population: the kept cars first, then the children; marks the kept cars."""
-        self.population = DensePopulation(np.concatenate([kept_weights, children]), self.hidden, self.activation)
+    @property
+    def setup(self):
+        """Every car's setup, aligned with the population (revision 3.1 §2)."""
+        return self.population.setup
+
+    def assemble(self, kept_weights, children, kept_setups, children_setups):
+        """The next population: the kept cars first, then the children, each with its setup (revision 3.1 §3.3);
+        marks the kept cars."""
+        self.population = DensePopulation(np.concatenate([kept_weights, children]), self.hidden, self.activation,
+                                          setup=np.concatenate([kept_setups, children_setups]))
         self.is_kept = np.arange(len(self.population)) < len(kept_weights)
 
     def save_champion(self, index, seed, champion_dir):
@@ -224,7 +233,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                   "child_success": children_success(result, method.is_kept), "median_lap": median_lap(result),
                   "step_size": float(method.step_size), "best": float(result.fitness.max()),
                   "mean": float(result.fitness.mean()), "worst": float(result.fitness.min()), "evals": evals,
-                  "elapsed": now, "event": event, **method.log_fields()}
+                  "elapsed": now, "event": event, **setup.summary(method.population.setup), **method.log_fields()}
         append_log(log_path, report, fields)
         if event in ("level_up", "goal"):
             levels.append({"level": int(level), "generation": generation, "evals": evals, "elapsed": now})
@@ -255,7 +264,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                "goal_reached": bool(tracker.goal_reached), "outcome": tracker.outcome,
                "mastered_factor": plain(tracker.mastered_factor), "target_reduction": plain(tracker.target_reduction),
                "levels": levels, "tightenings": tightenings, "val_successes": None, "val_fitness": None,
-               "champion_path": None}
+               "champion_path": None, "final_setup": None}
     if champion_dir is not None:
         candidates = np.flatnonzero(method.is_kept)                 # the kept cars of the last generation
         if candidates.size == 0:
@@ -263,7 +272,8 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         factor = tracker.mastered_factor if tracker.goal_reached else config.TARGET_FACTOR
         index, successes, fitness = population.select_final(method.population, candidates, factor, n_jobs=n_jobs)
         summary.update(val_successes=int(successes), val_fitness=float(fitness),
-                       champion_path=str(method.save_champion(index, seed, champion_dir)))
+                       champion_path=str(method.save_champion(index, seed, champion_dir)),
+                       final_setup=setup.to_dict(method.population.setup[index]))
     summary["wall_time"] = active()                                # includes the final selection (spec §9.1)
     checkpoint.write_json(out_dir / SUMMARY_NAME, summary)
     if reporting:

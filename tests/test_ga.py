@@ -116,3 +116,68 @@ def test_strength_floor_follows_the_configured_ratio(monkeypatch):
     method = started(pop_size=20, s_max=0.2)
     method.advance(np.random.default_rng(4), result(np.arange(20.0), np.ones(20, dtype=bool)), np.arange(10), None)
     assert math.isclose(method.step_size, 0.02)               # every child succeeded: the floor, s_max / 10
+
+
+def log_spread(values):
+    """Standard deviation of each setup column on the log scale."""
+    return np.std(np.log(values), axis=0)
+
+
+def test_initial_setups_spread_within_the_limits():
+    method = started(pop_size=200, hidden=(1,))
+    values = method.setup
+    assert values.shape == (200, 2) and values is method.population.setup
+    assert np.all((values[:, 0] >= config.SENSOR_LENGTH_LIMITS[0]) & (values[:, 0] <= config.SENSOR_LENGTH_LIMITS[1]))
+    assert np.all((values[:, 1] >= config.STEER_GAIN_LIMITS[0]) & (values[:, 1] <= config.STEER_GAIN_LIMITS[1]))
+    assert log_spread(values).min() > 0.5        # log-uniform: about 0.78 for the length, 0.63 for the sensitivity
+
+
+def test_children_take_each_setup_value_from_a_parent(monkeypatch):
+    monkeypatch.setattr(config, "SETUP_MUTATION_P", 0.0)
+    method = started(pop_size=40, hidden=(1,))
+    before = method.setup.copy()
+    kept = np.array([4, 9])
+    method.advance(np.random.default_rng(1), result(np.random.default_rng(2).random(40), np.zeros(40)), kept, None)
+    after = method.setup
+    assert np.array_equal(after[:2], before[kept])                       # kept cars keep their setup
+    for column in range(2):
+        assert set(after[2:, column]) <= set(before[:, column])          # every child value is a parent's value
+    parents = {tuple(row) for row in before}
+    assert any(tuple(row) not in parents for row in after[2:])          # crossover mixes two parents' values
+
+
+def test_setup_draws_come_after_the_network_draws():
+    method = started(pop_size=30, hidden=(2,), s_max=0.1)
+    weights = method.population.weights.copy()
+    fitness = np.random.default_rng(5).random(30)
+    trial = result(fitness, np.zeros(30))
+    method.advance(np.random.default_rng(6), trial, np.array([0, 1, 2]), None)
+    rng, n_new, p = np.random.default_rng(6), 27, weights.shape[1]      # the network part of revision 3, by hand
+    strength = mutation_strength(0.0, 0.1, 0.1 * config.GA_S_MIN / config.GA_S_MAX)
+    mothers = ga.tournament(rng, fitness, n_new)
+    fathers = ga.tournament(rng, fitness, n_new)
+    children = np.where(rng.random((n_new, p)) < config.GA_CROSSOVER_P, weights[mothers], weights[fathers])
+    mutate = rng.random((n_new, p)) < config.GA_MUTATION_P
+    children = children + mutate * rng.normal(0.0, strength, (n_new, p))
+    assert np.array_equal(method.population.weights[3:], children)
+
+
+def test_children_setups_mutate_at_the_configured_rate():
+    method = started(pop_size=2000, hidden=(1,))
+    before = method.setup.copy()
+    method.advance(np.random.default_rng(4), result(np.random.default_rng(3).random(2000), np.zeros(2000)),
+                   np.array([0]), None)
+    columns = [set(before[:, 0]), set(before[:, 1])]
+    changed = np.array([[value not in columns[c] for c, value in enumerate(row)] for row in method.setup[1:]])
+    assert abs(changed.mean() - config.SETUP_MUTATION_P) < 0.03
+
+
+def test_state_round_trip_keeps_the_setups():
+    first = started(pop_size=20)
+    second = ga.GA(pop_size=20)
+    second.load_state(first.state())
+    assert np.array_equal(second.setup, first.setup)
+    trial = result(np.arange(20.0), np.arange(20) < 4)
+    first.advance(np.random.default_rng(7), trial, np.arange(6), None)
+    second.advance(np.random.default_rng(7), trial, np.arange(6), None)
+    assert np.array_equal(first.setup, second.setup)

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from racing import checkpoint, config, curriculum, evolution, ga, paths, population, progress
+from racing import checkpoint, config, curriculum, evolution, ga, nets, paths, population, progress, setup
 from racing.population import TrialResult
 
 
@@ -166,6 +166,7 @@ def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):
     pd.testing.assert_frame_equal(whole, split)
     ends = [checkpoint.load(tmp_path / name / checkpoint.CHECKPOINT_NAME) for name in ("whole", "split")]
     assert np.array_equal(ends[0]["method"]["weights"], ends[1]["method"]["weights"])
+    assert np.array_equal(ends[0]["method"]["setup"], ends[1]["method"]["setup"])
     assert ends[0]["rng"] == ends[1]["rng"] and summary["generations"] == 5
 
 
@@ -349,3 +350,53 @@ def test_results_do_not_depend_on_the_number_of_workers(tmp_path):
                       max_generations=2)
     pd.testing.assert_frame_equal(comparable(tmp_path / "jobs1" / "log.csv"),
                                   comparable(tmp_path / f"jobs{workers}" / "log.csv"))
+
+
+def test_setup_statistics_are_logged_and_reported(evaluation, tmp_path):
+    evaluation(0.5)
+    summary, reports = train(tmp_path, 2)
+    log = pd.read_csv(tmp_path / "run" / "log.csv")
+    for report, (_, row) in zip(reports, log.iterrows()):
+        for key, value in setup.summary(report["population"].setup).items():
+            assert math.isclose(report[key], value) and math.isclose(row[key], value)
+    assert summary["final_setup"] is None                    # no final controller was saved
+
+
+def test_the_evaluated_population_carries_the_methods_setups(monkeypatch, tmp_path):
+    seen = []
+
+    def evaluate(cars, seeds, level, factor, n_jobs=1, backend="loky"):
+        seen.append(cars.setup.copy())
+        return fake_evaluate(0.5)(cars, seeds, level, factor)
+
+    monkeypatch.setattr(population, "evaluate_population", evaluate)
+    reports = []
+    evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=3,
+                  on_generation=reports.append)
+    assert len(seen) == 3
+    for given, report in zip(seen, reports):
+        assert np.array_equal(given, report["population"].setup)
+    assert not np.allclose(seen[0], np.asarray(config.DEFAULT_SETUP))   # a random-start GA spreads its setups
+
+
+def test_the_final_controller_keeps_its_setup(evaluation, monkeypatch, tmp_path):
+    evaluation(0.5)
+    monkeypatch.setattr(population, "select_final",
+                        lambda cars, candidates, factor, n_jobs=1: (int(candidates[-1]), 2, 0.9))
+    method = ga.GA(pop_size=20)
+    summary = evolution.run(method, 5, tmp_path / "run", champion_dir=tmp_path / "champions", max_generations=2)
+    expected = method.setup[int(np.flatnonzero(method.is_kept)[-1])]
+    saved = json.loads(paths.champion_path("ga", 5, ".setup.json", tmp_path / "champions").read_text())
+    assert np.allclose(setup.from_dict(saved), expected) and summary["final_setup"] == setup.to_dict(expected)
+    _, driver = nets.load_champion("ga", 5, tmp_path / "champions")
+    assert np.allclose(driver.setup, expected)
+
+
+def test_resuming_with_another_setup_mutation_is_refused(evaluation, monkeypatch, tmp_path):
+    evaluation(0.5)
+    with pytest.raises(Interrupt):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=5,
+                      on_generation=interrupt_at(1))
+    monkeypatch.setattr(config, "SETUP_MUTATION_P", 0.3)
+    with pytest.raises(checkpoint.SettingsMismatch, match="SETUP_MUTATION_P"):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=5)

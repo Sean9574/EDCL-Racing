@@ -1,9 +1,10 @@
 """Evolution strategy over dense network weights (revision 3 §5.2): each child is one of the fittest cars plus
 Gaussian noise of size σ, with the two-phase step-size rule. Started from a trained network it is the seeded ES
-(revision 3 §5.3) or the speed push of an imitation method (revision 3 §6.4)."""
+(revision 3 §5.3) or the speed push of an imitation method (revision 3 §6.4). A child inherits its parent's setup,
+which the setup mutation then changes (revision 3.1 §3)."""
 import numpy as np
 
-from racing import config, evolution, nets, paths
+from racing import config, evolution, nets, paths, setup
 from racing.curriculum import StepSize, success_fraction
 from racing.nets import DensePopulation
 
@@ -37,9 +38,11 @@ class ES(evolution.DenseMethod):
     def initialize(self, rng):
         if self.initial is None:
             weights = nets.init_population(rng, self.pop_size, self.hidden)
+            setups = setup.random(rng, self.pop_size)           # random networks: a wide spread (revision 3.1 §3.2)
         else:
             weights = seeded_population(rng, self.initial, self.pop_size, self.sigma0)
-        self.population = DensePopulation(weights, self.hidden, self.activation)
+            setups = setup.default(self.pop_size)               # the setup the network was trained with
+        self.population = DensePopulation(weights, self.hidden, self.activation, setup=setups)
         self.is_kept = np.zeros(self.pop_size, dtype=bool)
         self.ids = np.arange(self.pop_size)
         self.parent_ids = np.full(self.pop_size, -1)
@@ -57,8 +60,9 @@ class ES(evolution.DenseMethod):
         return success_fraction(fitness[children], fitness[parents])
 
     def advance(self, rng, result, kept, event):
-        """Adapt σ, then keep the survivors first and unchanged and add children of the ES_MU fittest cars."""
-        weights = self.population.weights
+        """Adapt σ, then keep the survivors first and unchanged and add children of the ES_MU fittest cars; a child's
+        setup is its parent's, mutated after the network's draws (revision 3.1 §3.3)."""
+        weights, setups = self.population.weights, self.population.setup
         n, p = weights.shape
         top = np.argsort(-result.fitness, kind="stable")[:min(self.parents, n)]
         child_success = evolution.children_success(result, self.is_kept)
@@ -68,19 +72,19 @@ class ES(evolution.DenseMethod):
         n_new = n - len(kept)
         chosen = top[rng.integers(0, len(top), n_new)]
         children = weights[chosen] + rng.normal(0.0, self.step.sigma, (n_new, p))
-        self.assemble(weights[kept], children)
+        self.assemble(weights[kept], children, setups[kept], setup.mutate(rng, setups[chosen]))
         self.parent_ids = np.concatenate([self.parent_ids[kept], self.ids[chosen]])
         self.ids = np.concatenate([self.ids[kept], np.arange(self.next_id, self.next_id + n_new)])
         self.next_id += n_new
 
     def state(self):
-        return {"weights": self.population.weights, "is_kept": self.is_kept, "ids": self.ids,
-                "parent_ids": self.parent_ids, "next_id": self.next_id, "step": self.step.state(),
+        return {"weights": self.population.weights, "setup": self.population.setup, "is_kept": self.is_kept,
+                "ids": self.ids, "parent_ids": self.parent_ids, "next_id": self.next_id, "step": self.step.state(),
                 "hidden": self.hidden, "activation": self.activation}
 
     def load_state(self, state):
         self.hidden, self.activation = tuple(state["hidden"]), state["activation"]
-        self.population = DensePopulation(state["weights"], self.hidden, self.activation)
+        self.population = DensePopulation(state["weights"], self.hidden, self.activation, setup=state["setup"])
         self.is_kept, self.ids, self.parent_ids = state["is_kept"], state["ids"], state["parent_ids"]
         self.next_id = state["next_id"]
         self.step = StepSize.from_state(state["step"])

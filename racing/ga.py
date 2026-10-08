@@ -1,8 +1,9 @@
 """Genetic algorithm over dense network weights (revision 3 §5.1): tournament selection, uniform crossover and
-Gaussian mutation whose strength follows the share of the previous generation's children that succeeded."""
+Gaussian mutation whose strength follows the share of the previous generation's children that succeeded. Every car
+also carries a setup, inherited value by value from either parent and mutated (revision 3.1 §3)."""
 import numpy as np
 
-from racing import config, evolution, nets, paths
+from racing import config, evolution, nets, paths, setup
 from racing.curriculum import mutation_strength
 from racing.nets import DensePopulation
 
@@ -23,32 +24,36 @@ class GA(evolution.DenseMethod):
         self.step_size = float("nan")
 
     def initialize(self, rng):
-        self.population = DensePopulation(nets.init_population(rng, self.pop_size, self.hidden), self.hidden,
-                                          self.activation)
+        weights = nets.init_population(rng, self.pop_size, self.hidden)
+        self.population = DensePopulation(weights, self.hidden, self.activation,
+                                          setup=setup.random(rng, self.pop_size))   # random start (revision 3.1 §3.2)
         self.is_kept = np.zeros(self.pop_size, dtype=bool)
         self.step_size = float("nan")                  # generation 0 is not produced by mutation
 
     def advance(self, rng, result, kept, event):
-        """Survivors first and unchanged, then children by tournament, uniform crossover and Gaussian mutation."""
-        weights = self.population.weights
+        """Survivors first and unchanged, then children by tournament, uniform crossover and Gaussian mutation. A
+        child takes each setup value from either parent, then the setup mutation applies (revision 3.1 §3.3); these
+        draws come after the network's."""
+        weights, setups = self.population.weights, self.population.setup
         n, p = weights.shape
         child_success = evolution.children_success(result, self.is_kept)
         self.step_size = mutation_strength(child_success, self.s_max, self.s_max * config.GA_S_MIN / config.GA_S_MAX)
         n_new = n - len(kept)
-        mother = weights[tournament(rng, result.fitness, n_new)]
-        father = weights[tournament(rng, result.fitness, n_new)]
-        children = np.where(rng.random((n_new, p)) < config.GA_CROSSOVER_P, mother, father)
+        mothers = tournament(rng, result.fitness, n_new)
+        fathers = tournament(rng, result.fitness, n_new)
+        children = np.where(rng.random((n_new, p)) < config.GA_CROSSOVER_P, weights[mothers], weights[fathers])
         mutate = rng.random((n_new, p)) < config.GA_MUTATION_P
         children = children + mutate * rng.normal(0.0, self.step_size, (n_new, p))
-        self.assemble(weights[kept], children)
+        children_setups = setup.mutate(rng, setup.crossover(rng, setups[mothers], setups[fathers]))
+        self.assemble(weights[kept], children, setups[kept], children_setups)
 
     def state(self):
-        return {"weights": self.population.weights, "is_kept": self.is_kept, "step_size": self.step_size,
-                "hidden": self.hidden, "activation": self.activation}
+        return {"weights": self.population.weights, "setup": self.population.setup, "is_kept": self.is_kept,
+                "step_size": self.step_size, "hidden": self.hidden, "activation": self.activation}
 
     def load_state(self, state):
         self.hidden, self.activation = tuple(state["hidden"]), state["activation"]
-        self.population = DensePopulation(state["weights"], self.hidden, self.activation)
+        self.population = DensePopulation(state["weights"], self.hidden, self.activation, setup=state["setup"])
         self.is_kept = state["is_kept"]
         self.step_size = state["step_size"]
 

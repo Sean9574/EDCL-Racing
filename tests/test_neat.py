@@ -574,3 +574,37 @@ def test_run_neat_drives_easy_maps_and_saves_its_controller(tmp_path):
     assert isinstance(driver, neat.NeatNet)
     obs = np.random.default_rng(38).random((20, config.N_INPUTS)).astype(np.float32)
     assert np.mean(np.argmax(model.predict(obs, verbose=0), axis=1) == driver.act(obs)) >= 0.99
+
+
+def test_neat_children_inherit_the_setup_of_their_fitter_parent(monkeypatch):
+    monkeypatch.setattr(config, "SETUP_MUTATION_P", 0.0)
+    rng = np.random.default_rng(41)
+    method = neat.NEAT(pop_size=30)
+    method.initialize(rng)
+    assert np.std(np.log(method.setup), axis=0).min() > 0.3              # random start: a wide spread
+    before = dict(zip(method.ids.tolist(), method.setup.copy()))
+    fitness = np.random.default_rng(42).random(30)
+    method.advance(rng, result_for(fitness, np.zeros(30)), np.array([3, 7]), None)
+    after = method.setup
+    assert after.shape == (30, 2) and np.array_equal(after[:2], np.array([before[3], before[7]]))
+    for row, parent in zip(after[2:], method.parent_ids[2:]):
+        assert np.array_equal(row, before[int(parent)])
+
+
+def test_neat_state_round_trip_keeps_the_setups():
+    rng = np.random.default_rng(43)
+    a = neat.NEAT(pop_size=20)
+    a.initialize(rng)
+    b = neat.NEAT(pop_size=20)
+    b.load_state(pickle.loads(pickle.dumps(a.state())))
+    assert np.array_equal(a.setup, b.setup)
+
+
+def test_neat_champion_keeps_its_setup(tmp_path):
+    import json
+    from racing import paths, setup
+    method = neat.NEAT(pop_size=6)
+    method.initialize(np.random.default_rng(44))
+    method.save_champion(4, 0, tmp_path)
+    saved = json.loads(paths.champion_path("neat", 0, ".setup.json", tmp_path).read_text())
+    assert np.array_equal(setup.from_dict(saved), method.setup[4])

@@ -541,7 +541,8 @@ RESTART_EVENTS = ("level_up", "goal", "tightened")    # engine events after whic
 
 class NEAT:
     """NEAT as a method of the evolution engine (revision 3 §5.4): kept cars first, then children produced within
-    species, with the two-phase step size of the ES."""
+    species, with the two-phase step size of the ES. A child inherits the setup of its fitter (or only) parent, which
+    the setup mutation then changes (revision 3.1 §3)."""
     approach = "neat"
 
     def __init__(self, pop_size=config.NEAT_POP):
@@ -559,8 +560,14 @@ class NEAT:
     def step_size(self):
         return self.steps.sigma
 
+    @property
+    def setup(self):
+        """Every car's setup, aligned with the population (revision 3.1 §2)."""
+        return self.population.setup
+
     def initialize(self, rng):
-        self.population = NeatPopulation([initial_genome(rng, self.innovations) for _ in range(self.pop_size)])
+        genomes = [initial_genome(rng, self.innovations) for _ in range(self.pop_size)]
+        self.population = NeatPopulation(genomes, setup=car_setup.random(rng, self.pop_size))   # revision 3.1 §3.2
         self.is_kept = np.zeros(self.pop_size, dtype=bool)
         self.ids = np.arange(self.pop_size, dtype=np.int64)
         self.parent_ids = np.full(self.pop_size, -1, dtype=np.int64)
@@ -587,7 +594,7 @@ class NEAT:
     def advance(self, rng, result, kept, event):
         from racing import evolution                  # evolution imports nets, which imports neat lazily
         fitness, success = result.fitness, result.all_success
-        genomes = self.population.genomes
+        genomes, setups = self.population.genomes, self.population.setup
         top = np.argsort(-fitness, kind="stable")[:config.ES_MU]
         child_success = evolution.children_success(result, self.is_kept)
         self.steps.update(float(np.mean(success[top])), child_success, self.child_success_rate(fitness))
@@ -597,7 +604,7 @@ class NEAT:
         if event in RESTART_EVENTS:                   # the children drive at the new level or target
             self.species.restart_records()
         allotment = self.species.allot(self.pop_size - len(kept), fitness)
-        new_genomes, new_parents = [], []
+        new_genomes, new_parents, fitter_rows = [], [], []
         for s in self.species.species:
             members = np.asarray(s.members)
             for _ in range(allotment[s.id]):
@@ -611,8 +618,11 @@ class NEAT:
                     fitter, child = a, genomes[a]
                 new_genomes.append(mutate(rng, child, self.innovations, self.steps.sigma))
                 new_parents.append(int(self.ids[fitter]))
+                fitter_rows.append(fitter)
         kept = np.asarray(kept, dtype=np.int64)
-        self.population = NeatPopulation([genomes[i] for i in kept] + new_genomes)
+        children_setups = car_setup.mutate(rng, setups[np.asarray(fitter_rows, dtype=np.int64)])   # after the genomes
+        self.population = NeatPopulation([genomes[i] for i in kept] + new_genomes,
+                                         setup=np.concatenate([setups[kept], children_setups]))
         self.is_kept = np.arange(len(self.population)) < len(kept)
         new_ids = np.arange(self.next_id, self.next_id + len(new_genomes), dtype=np.int64)
         self.next_id += len(new_genomes)
@@ -622,13 +632,15 @@ class NEAT:
 
     def state(self):
         return {"pop_size": self.pop_size, "genomes": [g.to_dict() for g in self.population.genomes],
+                "setup": self.population.setup.copy(),
                 "is_kept": self.is_kept.copy(), "ids": self.ids.copy(), "parent_ids": self.parent_ids.copy(),
                 "next_id": self.next_id, "innovations": self.innovations.state(), "species": self.species.state(),
                 "steps": self.steps.state()}
 
     def load_state(self, state):
         self.pop_size = int(state["pop_size"])
-        self.population = NeatPopulation([Genome.from_dict(g) for g in state["genomes"]])
+        self.population = NeatPopulation([Genome.from_dict(g) for g in state["genomes"]],
+                                         setup=np.asarray(state["setup"], dtype=float))
         self.is_kept = np.asarray(state["is_kept"], dtype=bool).copy()
         self.ids = np.asarray(state["ids"], dtype=np.int64).copy()
         self.parent_ids = np.asarray(state["parent_ids"], dtype=np.int64).copy()
@@ -638,7 +650,8 @@ class NEAT:
         self.steps = StepSize.from_state(state["steps"])
 
     def save_champion(self, index, seed, champion_dir):
-        return save_neat_champion(self.approach, seed, self.population.genomes[int(index)], champion_dir)
+        return save_neat_champion(self.approach, seed, self.population.genomes[int(index)], champion_dir,
+                                  setup=self.population.setup[int(index)])
 
     def log_fields(self):
         genomes = self.population.genomes

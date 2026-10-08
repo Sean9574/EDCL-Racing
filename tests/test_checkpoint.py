@@ -163,3 +163,10 @@ def test_an_unreadable_record_uses_its_own_checkpoint_name(tmp_path):
         checkpoint.completed(tmp_path, "dagger.json", state_name="dagger_state.pkl")
     checkpoint.save(tmp_path / "dagger_state.pkl", {"round": 4})
     assert checkpoint.completed(tmp_path, "dagger.json", state_name="dagger_state.pkl") is None
+
+
+def test_the_setup_settings_are_recorded():
+    record = checkpoint.settings_record()
+    for name in ("SENSOR_LENGTH_LIMITS", "STEER_GAIN_LIMITS", "DEFAULT_SETUP", "SETUP_MUTATION_P", "SETUP_MUTATION_SD"):
+        assert name in record
+    assert not {"APP_GRIPS", "APP_CHAMPIONS_DIR", "N_JOBS"} & set(record)
