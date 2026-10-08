@@ -185,6 +185,8 @@ DEFAULT_SHOWN = 100
 KT_VIEW_SEED = 80
 RACE_LAPS = LAPS
 DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
+APP_GRIPS = {"Normal": GRIP, "Unlimited": 10.0 * GRIP}   # m/s², display grip of the viewer's own simulations only
+                                                         # (revision 3.1 §6); never a recorded setting
 
 # --- Paths ---
 PROJECT_DIR = Path(__file__).resolve().parent.parent

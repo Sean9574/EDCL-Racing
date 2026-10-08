@@ -10,7 +10,7 @@ import pygame
 import pytest
 
 from racing import app as viewer
-from racing import config, neat, nets, paths, population
+from racing import config, neat, nets, paths, population, setup, sim
 
 
 @pytest.fixture
@@ -39,7 +39,8 @@ def ga_report(generation=0, n=30, approach="ga", population_=None, **extra):
               "is_kept": np.zeros(n, dtype=bool), "map_shares": shares, "min_share": float(shares.min()),
               "kept_success": float("nan"), "child_success": 0.0, "median_lap": float("nan"), "step_size": 0.5,
               "best": float(fitness.max()), "mean": float(fitness.mean()), "worst": float(fitness.min()),
-              "evals": n, "elapsed": 1.0, "event": None}
+              "evals": n, "elapsed": 1.0, "event": None, "sensor_mean": 50.0, "sensor_std": 0.0, "steer_mean": 1.0,
+              "steer_std": 0.0}
     report.update(extra)
     return report
 
@@ -110,7 +111,8 @@ def test_training_stats_fit_the_panel(window):
     window.receive(ga_report())
     window.update(1 / 60)
     widest = dict(level=4, generation=123456, map_shares=np.ones(3), min_share=1.0, streak=3, target_reduction=0.185,
-                  step_size=0.0505, best=1.5843, mean=1.2329, species=20, is_kept=np.ones(1000, dtype=bool))
+                  step_size=0.0505, best=1.5843, mean=1.2329, species=20, is_kept=np.ones(1000, dtype=bool),
+                  sensor_mean=150.0, sensor_std=70.0, steer_mean=3.0, steer_std=1.33)
     for approach in config.EVOLUTION_APPROACHES:
         report = ga_report(approach=approach, **widest)
         for line in viewer.stats_lines(report, approach):
@@ -130,6 +132,147 @@ def test_stats_lines_show_maps_streak_and_target():
     assert lines[3].startswith("Mutation strength: 0.5")
     assert viewer.stats_lines(ga_report(), "es")[2].endswith("mastered: –")
     assert viewer.stats_lines(neat_report(), "neat")[4].endswith("Species 3")
+
+
+def test_stats_lines_show_the_population_setup():
+    lines = viewer.stats_lines(ga_report(sensor_mean=62.4, sensor_std=18.2, steer_mean=1.4, steer_std=0.3), "ga")
+    assert lines[5] == "Sensors 62 m ± 18  Steering ×1.40 ± 0.30"
+    report = ga_report()
+    for key in ("sensor_mean", "sensor_std", "steer_mean", "steer_std"):
+        del report[key]
+    assert len(viewer.stats_lines(report, "ga")) == 5        # a report without setups shows no setup line
+
+
+def test_playback_drives_each_car_with_its_setup_and_the_display_grip(circle_track):
+    full_left_gas = lambda obs, cars: np.full(len(cars.x), config.N_ACTIONS - 1)
+    cars_setup = np.array([[30.0, 1.0], [150.0, 0.5]])
+    normal = viewer.Playback(circle_track, full_left_gas, 2, setup=cars_setup)
+    unlimited = viewer.Playback(circle_track, full_left_gas, 2, setup=cars_setup, grip=config.APP_GRIPS["Unlimited"])
+    assert normal.grip == config.GRIP and unlimited.grip == config.APP_GRIPS["Unlimited"]
+    assert np.array_equal(normal.cars.ray_length, [30.0, 150.0]) and np.array_equal(normal.cars.steer_gain, [1.0, 0.5])
+    normal.advance(5)
+    unlimited.advance(5)
+    assert np.all(unlimited.cars.speed > 5 * normal.cars.speed)    # ten times the grip accelerates far harder
+
+
+def test_the_training_replay_uses_the_report_setups_and_the_display_grip(window):
+    rng = np.random.default_rng(4)
+    cars = nets.DensePopulation(nets.init_population(rng, 30), setup=setup.random(rng, 30))
+    window.set_grip("Unlimited")
+    window.receive(ga_report(population_=cars))
+    window.update(1 / 60)
+    assert window.playback.grip == config.APP_GRIPS["Unlimited"]
+    assert np.array_equal(window.playback.cars.ray_length, cars.subset(window.indices).setup[:, 0])
+    assert np.array_equal(window.playback.cars.steer_gain, cars.subset(window.indices).setup[:, 1])
+    window.set_grip("Normal")                                    # the replay restarts with the new grip
+    window.update(1 / 60)
+    assert window.playback.grip == config.GRIP
+
+
+def test_a_stopped_replay_keeps_its_grip(window):
+    window.receive(ga_report())
+    window.update(1 / 60)
+    window.stop()
+    frozen = window.playback
+    window.set_grip("Unlimited")
+    window.update(1 / 60)
+    assert window.playback is frozen and frozen.grip == config.GRIP and window.grip_name == "Unlimited"
+
+
+def test_the_race_uses_driver_setups_and_the_display_grip(window, tmp_path):
+    race_window(window, tmp_path)
+    window.set_grip("Unlimited")
+    window.update(1 / 60)
+    drivers = [window.driver(approach, seed) for approach, seed in window.lineup]
+    assert window.race.grip == config.APP_GRIPS["Unlimited"]
+    assert np.array_equal(window.race.cars.ray_length, nets.drivers_setup(drivers)[:, 0])
+    window.start_race()
+    window.set_grip("Normal")                                    # locked while racing
+    assert window.grip_name == "Unlimited" and window.race.grip == config.APP_GRIPS["Unlimited"]
+
+
+def test_toggle_grip_cycles_the_display_grips(window):
+    names = list(config.APP_GRIPS)
+    assert window.grip_name == names[0] == "Normal" and window.grip == config.GRIP
+    window.toggle_grip()
+    assert window.grip_name == names[1] and window.grip == config.APP_GRIPS[names[1]]
+    window.toggle_grip()
+    assert window.grip_name == names[0]
+
+
+def test_the_display_grip_never_reaches_training(window, monkeypatch, tmp_path):
+    """Review Focus 3: the trainer process gets the same arguments whatever the display grip, the training functions
+    get no grip, and the training grip itself never changes."""
+    from racing import ga
+    created = []
+
+    class FakeProcess:
+        def __init__(self, target, args, daemon):
+            created.append(args)
+            self.pid = 0
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+    class FakeContext:
+        Process = FakeProcess
+
+        def Queue(self):
+            return FakeQueue()
+
+        def Event(self):
+            return threading.Event()
+
+    monkeypatch.setattr(viewer.mp, "get_context", lambda method: FakeContext())
+    window.start_training()
+    window.process = None
+    window.set_grip("Unlimited")
+    window.start_training()
+    assert len(created) == 2 and created[0][:4] == created[1][:4] and len(created[1]) == len(created[0])
+    assert not any(isinstance(a, float) and a == config.APP_GRIPS["Unlimited"] for a in created[1])
+    calls = {}
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)       # never the real results/
+
+    def fake_run_ga(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr(ga, "run_ga", fake_run_ga)
+    reports, running = queue.Queue(), threading.Event()
+    running.set()
+    viewer.trainer_main("ga", 30, 0, 1, reports, running)
+    assert "grip" not in calls and calls["pop_size"] == 30
+    assert config.GRIP == 12.0 and config.APP_GRIPS["Normal"] == config.GRIP
+
+
+def test_rays_follow_each_cars_sensor_length(window, monkeypatch, tmp_path):
+    seen = []
+    cast = sim.cast_rays
+
+    def recording(track, x, y, heading, lengths=None):
+        seen.append(None if lengths is None else np.array(lengths))
+        return cast(track, x, y, heading, lengths)
+
+    monkeypatch.setattr(viewer.sim, "cast_rays", recording)
+    rng = np.random.default_rng(6)
+    cars = nets.DensePopulation(nets.init_population(rng, 30), setup=setup.random(rng, 30))
+    window.rays = True
+    window.receive(ga_report(population_=cars))
+    window.update(1 / 60)
+    seen.clear()
+    window.draw()
+    best = window.best_slot
+    assert len(seen) == 1 and np.array_equal(seen[0], window.playback.cars.ray_length[best:best + 1])
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    window.update(1 / 60)
+    seen.clear()
+    window.draw()
+    live = np.flatnonzero(~window.race.cars.done)
+    assert len(seen) == 1 and np.array_equal(seen[0], window.race.cars.ray_length[live])
 
 
 def test_app_plays_a_report(window):

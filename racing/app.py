@@ -112,12 +112,14 @@ def car_polygon(sx, sy, heading, size):
 
 
 class Playback:
-    """Re-simulates a set of controllers on one track, a few steps at a time, for display."""
+    """Re-simulates a set of controllers on one track, a few steps at a time, for display. Each car drives with its
+    own setup and every car with the viewer's display grip (revision 3.1 §6); training never uses this class."""
 
-    def __init__(self, track, policy, n, laps=1, time_limit=None):
+    def __init__(self, track, policy, n, laps=1, time_limit=None, setup=None, grip=config.GRIP):
         self.track = track
         self.policy = policy
-        self.cars = sim.start_cars(track, n, laps)
+        self.grip = float(grip)
+        self.cars = sim.start_cars(track, n, laps, setup)
         self.time_limit = sim.time_limit_for(track, laps) if time_limit is None else time_limit
 
     @property
@@ -129,7 +131,7 @@ class Playback:
             if self.over:
                 return
             steer, throttle = class_to_controls(self.policy(sim.sense(self.track, self.cars), self.cars))
-            sim.step(self.track, self.cars, steer, throttle, self.time_limit)
+            sim.step(self.track, self.cars, steer, throttle, self.time_limit, grip=self.grip)
 
 
 def report_policy(report, indices):
@@ -138,6 +140,14 @@ def report_policy(report, indices):
     if "population" in report:
         return report["population"].subset(indices).policy()
     return nets.mixed_policy([report["nets"][i] for i in indices])
+
+
+def report_setup(report, indices):
+    """Setups of the chosen members of a training report: the population's rows, or each imitation network's own
+    (revision 3.1 §2)."""
+    if "population" in report:
+        return report["population"].subset(indices).setup
+    return nets.drivers_setup([report["nets"][i] for i in indices])
 
 
 def leaderboard(playback, count):
@@ -247,10 +257,17 @@ def share_text(shares):
     return " ".join(percent(float(s)) for s in shares)
 
 
+def setup_line(report):
+    """The population's mean and spread of sensor length and steering sensitivity (revision 3.1 §6)."""
+    return (f"Sensors {report['sensor_mean']:.0f} m ± {report['sensor_std']:.0f}  "
+            f"Steering ×{report['steer_mean']:.2f} ± {report['steer_std']:.2f}")
+
+
 def stats_lines(report, approach):
     """Training panel stats lines (revision 3 §9). Evolutionary reports: difficulty and generation, each map's
     success share against the 90% requirement, the streak and the target cut mastered, the step size and the kept
-    cars, the fitness (and NEAT's species). Imitation reports: the epoch or trial and the validation accuracy."""
+    cars, the fitness (and NEAT's species). With setups, the population's mean setup (revision 3.1 §6). Imitation
+    reports: the epoch or trial and the validation accuracy."""
     if "min_share" not in report:
         unit = "Trial" if approach.startswith("kt") else "Epoch"
         return (f"{unit} {report['generation']}",
@@ -262,11 +279,12 @@ def stats_lines(report, approach):
     last = f"Best {report['best']:.3f}    Mean {report['mean']:.3f}"
     if "species" in report:
         last += f"    Species {report['species']}"
-    return (f"{level}    Generation {report['generation']}",
-            f"Maps succeeded: {share_text(report['map_shares'])}  (need {percent(config.MASTERY_FRACTION)})",
-            f"Streak {report['streak']}/{config.MASTERY_STREAK}    Target cut mastered: {mastered}",
-            f"{size_name}: {number(report['step_size'])}    Kept {int(np.sum(report['is_kept']))}",
-            last)
+    lines = (f"{level}    Generation {report['generation']}",
+             f"Maps succeeded: {share_text(report['map_shares'])}  (need {percent(config.MASTERY_FRACTION)})",
+             f"Streak {report['streak']}/{config.MASTERY_STREAK}    Target cut mastered: {mastered}",
+             f"{size_name}: {number(report['step_size'])}    Kept {int(np.sum(report['is_kept']))}",
+             last)
+    return lines + (setup_line(report),) if "sensor_mean" in report else lines
 
 
 class App:
@@ -301,6 +319,7 @@ class App:
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
+        self.grip_name = "Normal"           # display grip of the viewer's own simulations (revision 3.1 §6)
         self.process = None
         self.reports = None
         self.running = None
@@ -573,6 +592,26 @@ class App:
     def toggle_rays(self):
         self.rays = not self.rays
 
+    @property
+    def grip(self):
+        return config.APP_GRIPS[self.grip_name]
+
+    def set_grip(self, name):
+        """Display grip for the viewer's races and training replays (revision 3.1 §6). Training, evaluation and the
+        expert always use config.GRIP. Locked while a race runs; a running replay restarts with the new grip, a
+        stopped one stays frozen and the next replay uses it."""
+        if name not in config.APP_GRIPS or name == self.grip_name or self.racing:
+            return
+        self.grip_name = name
+        if self.mode == "race":
+            self.reset_race()
+        elif not self.halted:
+            self.playback = None
+
+    def toggle_grip(self):
+        names = list(config.APP_GRIPS)
+        self.set_grip(names[(names.index(self.grip_name) + 1) % len(names)])
+
     def set_shown_from(self, x):
         fraction = min(max((x - self.slider.left) / self.slider.width, 0.0), 1.0)
         self.shown = 1 + int(round(fraction * (self.population_size() - 1)))
@@ -582,8 +621,8 @@ class App:
     def start_playback(self, report, track):
         fitness = np.asarray(report["fitness"], dtype=float)
         self.indices = select_indices(fitness, self.show, self.shown, sample_seed=report["generation"])
-        self.playback = Playback(track, report_policy(report, self.indices), len(self.indices),
-                                 laps=config.LAPS)
+        self.playback = Playback(track, report_policy(report, self.indices), len(self.indices), laps=config.LAPS,
+                                 setup=report_setup(report, self.indices), grip=self.grip)
         self.best_slot = int(np.argmax(fitness[self.indices]))
         self.playback_generation = report["generation"]
         self.step_budget = 0.0
@@ -705,7 +744,8 @@ class App:
                         self.lineup.remove((approach, seed))
                         self.status = f"Controller {config.LABELS[approach]} seed {seed} could not be loaded; skipped."
                 if drivers:
-                    self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS)
+                    self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS,
+                                         setup=nets.drivers_setup(drivers), grip=self.grip)
 
     def start_race(self):
         self.prepare_race()
@@ -813,7 +853,8 @@ class App:
         if b < len(sx):
             pygame.draw.polygon(self.screen, INK, car_polygon(sx[b], sy[b], cars.heading[b], size * 1.3), 2)
             if self.rays and not cars.done[b]:
-                lengths = sim.cast_rays(playback.track, cars.x[b:b + 1], cars.y[b:b + 1], cars.heading[b:b + 1])[0]
+                lengths = sim.cast_rays(playback.track, cars.x[b:b + 1], cars.y[b:b + 1], cars.heading[b:b + 1],
+                                        lengths=cars.ray_length[b:b + 1])[0]   # this car's own sensor length
                 angles = cars.heading[b] + config.RAY_ANGLES
                 ex, ey = camera.to_screen(cars.x[b] + np.cos(angles) * lengths, cars.y[b] + np.sin(angles) * lengths)
                 for k in range(config.N_RAYS):
@@ -823,6 +864,17 @@ class App:
         cars = playback.cars
         sx, sy = camera.to_screen(cars.x, cars.y)
         size = max(8.0, 6.0 * camera.scale)
+        if self.rays:                                   # every racing car's rays, each at its own sensor length
+            live = np.flatnonzero(~cars.done)
+            if live.size:
+                lengths = sim.cast_rays(playback.track, cars.x[live], cars.y[live], cars.heading[live],
+                                        lengths=cars.ray_length[live])
+                for row, i in enumerate(live):
+                    angles = cars.heading[i] + config.RAY_ANGLES
+                    ex, ey = camera.to_screen(cars.x[i] + np.cos(angles) * lengths[row],
+                                              cars.y[i] + np.sin(angles) * lengths[row])
+                    for k in range(config.N_RAYS):
+                        pygame.draw.line(self.screen, RAY, (sx[i], sy[i]), (ex[k], ey[k]), 1)
         for i, (approach, _) in enumerate(self.lineup):
             color = hex_to_rgb(config.COLORS[approach])
             if cars.crashed[i]:
@@ -925,14 +977,21 @@ class App:
         pygame.draw.circle(self.screen, BUTTON_ACTIVE, (int(knob), y + 9), 8)
         y += 24
         y = self.draw_speed_buttons(x, y, w)
-        self.button(pygame.Rect(x, y, w, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
-                    self.rays)
-        y += 34
+        y = self.draw_view_toggles(x, y, w)
         y = self.draw_network_button(x, y, w)
         y = self.draw_stats(x, y)
         bottom = self.panel.bottom - 34
         if bottom - y > 50:
             self.draw_plot(pygame.Rect(x, y + 4, w, bottom - y - 4))
+
+    def draw_view_toggles(self, x, y, w):
+        """Sensor rays and the display grip side by side (revision 3.1 §6). Returns the next free y."""
+        half = (w - 8) // 2
+        self.button(pygame.Rect(x, y, half, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
+                    self.rays)
+        self.button(pygame.Rect(x + half + 8, y, half, 26), f"Grip: {self.grip_name}", self.toggle_grip,
+                    self.grip_name != "Normal", enabled=not self.racing)
+        return y + 34
 
     def draw_network_button(self, x, y, w):
         self.button(pygame.Rect(x, y, w, 26), "Network window", self.toggle_network_window,
@@ -1002,6 +1061,7 @@ class App:
                     enabled=idle and bool(self.lineup))
         self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop_race, enabled=self.racing)
         y += 42
+        y = self.draw_view_toggles(x, y, w)
         y = self.draw_network_button(x, y, w)
         self.button(pygame.Rect(x, y - 6, w, 26), self.network_car_label(), self.cycle_network_car,
                     enabled=bool(self.lineup))
