@@ -235,6 +235,25 @@ def test_viewer_and_pilot_runs_report_nothing(evaluation, tmp_path):
     assert not config.STATUS_PATH.exists() and not config.RUN_LOG_PATH.exists()
 
 
+def test_a_reported_run_keeps_its_latest_generation_for_the_viewer(evaluation, monkeypatch, tmp_path):
+    evaluation(0.5)
+    monkeypatch.setattr(population, "select_final",
+                        lambda population, candidates, factor, n_jobs=1: (int(candidates[0]), 1, 1.0))
+    _, reports = train(tmp_path, 3, champion_dir=tmp_path / "champions")
+    replay = checkpoint.load(tmp_path / "run" / paths.REPLAY_NAME)
+    last = reports[-1]
+    assert replay["generation"] == last["generation"] == 2 and replay["seeds"] == last["seeds"]
+    assert np.array_equal(replay["fitness"], last["fitness"])
+    assert np.array_equal(replay["population"].weights, last["population"].weights)
+    assert np.array_equal(replay["population"].setup, last["population"].setup)
+
+
+def test_viewer_runs_write_no_replay(evaluation, tmp_path):
+    evaluation(0.5)
+    train(tmp_path, 2)
+    assert not (tmp_path / "run" / paths.REPLAY_NAME).exists()
+
+
 def test_each_run_starts_with_fresh_workers_before_its_timer(evaluation, monkeypatch, tmp_path):
     evaluation(0.0)
     events = []

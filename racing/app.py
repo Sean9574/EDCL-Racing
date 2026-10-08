@@ -335,6 +335,27 @@ def setup_line(report):
             f"Steering ×{report['steer_mean']:.2f} ± {report['steer_std']:.2f}")
 
 
+def log_history(log):
+    """The plot history of a run from its log.csv: (generation, lowest map share, nan, marked) per generation, level
+    advancements, the goal and target cuts marked; empty for a missing or unreadable log."""
+    if not Path(log).exists():
+        return []
+    history = []
+    try:
+        with open(log, newline="") as f:
+            for row in csv.DictReader(f):
+                history.append((int(row["generation"]), float(row["min_share"]), float("nan"),
+                                row.get("event") in ("level_up", "goal", "tightened")))
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return history
+
+
+REPLAY_ERRORS = (OSError, EOFError, pickle.UnpicklingError, AttributeError, ImportError, ValueError, KeyError,
+                 TypeError, IndexError)
+REPLAY_KEYS = {"approach", "generation", "level", "seeds", "population", "fitness"}
+
+
 def stats_lines(report, approach):
     """Training panel stats lines (revision 3 §9). Evolutionary reports: difficulty and generation, each map's
     success share against the 90% requirement, the streak and the target cut mastered, the step size and the kept
@@ -400,6 +421,11 @@ class App:
         self.acks = None                    # tells the trainer a report has been replayed (training in step)
         self.unacked = None                 # the report the trainer waits on until its replay ends
         self.halted = False                 # Stop freezes the training replay until the next Play
+        self.source = "app"                 # "app": training started here; "notebook": a reported run, read-only
+        self.replay_paused = False          # Pause of the notebook-run replay (the run itself never waits)
+        self.replay_mtime = None            # modification time of the loaded replay file
+        self.replay_polled = None           # clock time of the last look at the replay file
+        self.clock = time.monotonic
         self.latest = None
         self.history = []
         self.playback = None
@@ -475,6 +501,10 @@ class App:
         self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
 
     def toggle_play(self):
+        if self.source == "notebook":                       # pauses only the replay of the notebook run
+            self.replay_paused = not self.replay_paused
+            self.status = "Replay paused." if self.replay_paused else "Replaying the notebook run."
+            return
         if self.process is None:
             self.start_training()
         elif self.running.is_set():
@@ -487,7 +517,7 @@ class App:
     def new_run(self):
         """Delete the saved run of the selected approach and run seed and its app car, then start training afresh
         with the current settings (revision 3.1 §6.1). Ignored while training runs."""
-        if self.process is not None:
+        if self.process is not None or self.source == "notebook":
             return
         paths.remove(self.saved_run_dir())
         population.clear_champion(self.approach, self.run_seed, self.app_champions_dir)
@@ -505,18 +535,9 @@ class App:
         """The plot history of the saved run from its log (lowest map share per generation, level advancements,
         goal and target cuts marked), so a resumed run's plot continues where it stopped; empty for imitation, for
         a new run or for an unreadable log."""
-        log = self.saved_run_dir() / "log.csv"
-        if self.approach not in config.EVOLUTION_APPROACHES or not log.exists():
+        if self.approach not in config.EVOLUTION_APPROACHES:
             return []
-        history = []
-        try:
-            with open(log, newline="") as f:
-                for row in csv.DictReader(f):
-                    history.append((int(row["generation"]), float(row["min_share"]), float("nan"),
-                                    row.get("event") in ("level_up", "goal", "tightened")))
-        except (OSError, ValueError, KeyError, TypeError):
-            return []
-        return history
+        return log_history(self.saved_run_dir() / "log.csv")
 
     def stop_training(self):
         """End the training process and the worker processes it started, and drop its report queue."""
@@ -546,10 +567,65 @@ class App:
                 self.status = f"Training {unit} {self.unacked['generation'] + 1}…"
         self.unacked = None
 
+    # ----- notebook runs (read-only) -----
+    def toggle_source(self):
+        """Switch the training view between training started here and a notebook run, whose latest generation is
+        replayed without ever writing to the run or slowing it down. Only while no training runs here."""
+        if self.process is not None:
+            return
+        self.source = "notebook" if self.source == "app" else "app"
+        self.halted = False
+        self.clear_view()
+        self.status = "Looking for the notebook run." if self.source == "notebook" else "Press Play to start training."
+
+    def clear_view(self):
+        """Forget the shown reports, so the next ones come only from the selected source, method and seed."""
+        self.latest, self.history, self.playback, self.playback_report = None, [], None, None
+        self.playback_generation = None
+        self.replay_mtime, self.replay_polled, self.replay_paused = None, None, False
+        self.net_sent = None
+
+    def replay_file(self):
+        return paths.replay_path(self.approach, self.run_seed, self.runs_dir)
+
+    def poll_replay(self):
+        """Load the selected notebook run's latest generation if its replay file changed, looking at most once per
+        REPLAY_POLL_SECONDS. A missing, older or unreadable file is named in the status line; reading never
+        writes."""
+        now = self.clock()
+        if self.replay_polled is not None and now - self.replay_polled < config.REPLAY_POLL_SECONDS:
+            return
+        self.replay_polled = now
+        path = self.replay_file()
+        name = f"{config.LABELS[self.approach]} seed {self.run_seed}"
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            older = any((path.parent / f).exists() for f in (checkpoint.CHECKPOINT_NAME, "summary.json"))
+            self.status = ("Run predates replays: see its cars in Race." if older
+                           else f"Nothing to replay yet for {name}.")
+            return
+        if stamp == self.replay_mtime:
+            return
+        try:
+            report = checkpoint.load(path)
+            readable = isinstance(report, dict) and REPLAY_KEYS <= report.keys()
+        except REPLAY_ERRORS:
+            readable = False
+        if not readable:
+            self.status = "Replay file unreadable; retrying."
+            return
+        self.replay_mtime = stamp
+        self.receive(report)
+        self.history = log_history(path.parent / "log.csv")
+        self.status = f"Replaying the notebook run {name}."
+
     def stop(self):
         """Stop control: ends training in the training view and the race in the race view."""
         if self.mode == "race":
             self.stop_race()
+            return
+        if self.source == "notebook":                       # nothing to stop: the notebook run is not ours
             return
         self.stop_training()
         self.halted = True                                   # the replay freezes where it is (revision 3 §9)
@@ -698,8 +774,8 @@ class App:
             return
         self.stop_training()
         self.approach = approach
-        self.latest, self.history, self.playback, self.playback_generation = None, [], None, None
-        self.status = "Press Play to start training."
+        self.clear_view()
+        self.status = "Press Play to start training." if self.source == "app" else "Looking for the notebook run."
 
     def change_population(self, direction):
         if self.process is not None:
@@ -714,9 +790,11 @@ class App:
             return
         seeds = list(config.RUN_SEEDS)
         self.run_seed = seeds[(seeds.index(self.run_seed) + direction) % len(seeds)]
+        if self.source == "notebook":
+            self.clear_view()
 
     def set_difficulty(self, level):
-        if self.process is not None:
+        if self.process is not None or self.source == "notebook":
             return
         self.difficulty = level
         if self.approach not in config.EVOLUTION_APPROACHES:
@@ -780,7 +858,7 @@ class App:
         driven on, which is known before training starts."""
         if self.playback is not None:
             return self.playback.track
-        if self.approach not in config.EVOLUTION_APPROACHES:
+        if self.approach not in config.EVOLUTION_APPROACHES and self.source == "app":
             return self.request_track(config.KT_VIEW_SEED, self.difficulty)
         return None
 
@@ -788,6 +866,8 @@ class App:
         track = self.shown_track()
         if track is not None:
             return f"Map: seed {track.seed}, level {track.level}"
+        if self.source == "notebook" and self.latest is None:
+            return "Map: shown with the run's latest generation"
         if self.approach in config.EVOLUTION_APPROACHES and self.latest is None:
             return "Map: shown with the first generation"
         return "Map: building the track"
@@ -965,7 +1045,15 @@ class App:
     def update(self, dt):
         self.poll_reports()
         self.poll_network_window()
-        if self.mode == "train":
+        if self.mode == "train" and self.source == "notebook":
+            if not self.replay_paused and (self.playback is None or self.playback.over):
+                self.poll_replay()
+                if self.latest is not None:              # the newest generation, or the same one again
+                    track = self.request_track(self.latest["seeds"][0], self.latest["level"])
+                    if track is not None:
+                        self.start_playback(self.latest, track)
+            active = None if self.replay_paused else self.playback
+        elif self.mode == "train":
             frozen = self.halted or self.paused
             if not frozen and self.latest is not None:
                 if self.playback is not None and self.playback.over and self.playback_report is self.latest:
@@ -1146,22 +1234,30 @@ class App:
             self.button(rect, config.LABELS[approach], lambda a=approach: self.select_approach(a),
                         approach == self.approach, enabled=idle, color=config.COLORS[approach])
         y += 3 * 34 + 4
+        notebook = self.source == "notebook"
+        self.button(pygame.Rect(x, y, w, 26), f"Source: {'Notebook run' if notebook else 'App training'} ▸",
+                    self.toggle_source, notebook, enabled=idle)
+        y += 34
         self.text("Run seed", x, y + 5, self.small, MUTED)
         self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_run_seed(-1), enabled=idle)
         self.text(str(self.run_seed), x + 152, y + 5)
         self.button(pygame.Rect(x + 180, y, 30, 28), ">", lambda: self.change_run_seed(1), enabled=idle)
         y += 36
-        y = self.draw_difficulty(x, y, w, self.difficulty, self.set_difficulty, idle)
-        if self.approach in self.population:
+        y = self.draw_difficulty(x, y, w, self.difficulty, self.set_difficulty, idle and not notebook)
+        if self.approach in self.population and not notebook:
             self.text("Population", x, y + 5, self.small, MUTED)
             self.button(pygame.Rect(x + 110, y, 30, 28), "−", lambda: self.change_population(-1), enabled=idle)
             self.text(str(self.population[self.approach]), x + 152, y + 5)
             self.button(pygame.Rect(x + 210, y, 30, 28), "+", lambda: self.change_population(1), enabled=idle)
             y += 36
-        playing = self.process is not None and self.running is not None and self.running.is_set()
+        if notebook:
+            playing = not self.replay_paused
+        else:
+            playing = self.process is not None and self.running is not None and self.running.is_set()
         self.button(pygame.Rect(x, y, third, 32), "Pause" if playing else "Play", self.toggle_play, playing)
-        self.button(pygame.Rect(x + third + 8, y, third, 32), "Stop", self.stop, enabled=not idle)
-        self.button(pygame.Rect(x + 2 * (third + 8), y, third, 32), "New run", self.new_run, enabled=idle)
+        self.button(pygame.Rect(x + third + 8, y, third, 32), "Stop", self.stop, enabled=not idle and not notebook)
+        self.button(pygame.Rect(x + 2 * (third + 8), y, third, 32), "New run", self.new_run,
+                    enabled=idle and not notebook)
         y += 42
         y = self.text("Show", x, y, self.small, MUTED)
         for k, mode in enumerate(("all", "best", "worst")):
@@ -1202,7 +1298,7 @@ class App:
         y = self.text(self.map_text(), x, y, self.small)
         r = self.latest
         if r is None:
-            if self.process is None and self.has_saved_run():
+            if self.source == "app" and self.process is None and self.has_saved_run():
                 return self.text("Saved run found: Play resumes, New run restarts.", x, y, self.small, MUTED)
             return self.text("No generation completed yet.", x, y, self.small, MUTED)
         for line in stats_lines(r, r["approach"]):

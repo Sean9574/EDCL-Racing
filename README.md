@@ -223,6 +223,12 @@ On Windows 11 the window opens through WSLg.
   it stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a
   saved run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New
   run. Baseline and Keras Tuner training always start afresh.
+- **Watching a notebook run:** **Source: Notebook run** replays the latest generation of the reported run of the
+  selected method and seed (`scripts/run_notebooks.py`), with the same panel, plot and Show selector, so you can watch
+  the whole population or just the best car (Best, 1 car). When a replay ends, the newest generation is loaded, so a
+  run in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline
+  and Keras Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars
+  instead.
 - **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
   line. For each method, choose its best seed, a specific seed, or off, then press Start race; Stop returns to the
   start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training

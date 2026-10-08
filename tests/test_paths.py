@@ -48,6 +48,12 @@ def test_stage_paths_and_speed_directory(tmp_path):
     assert paths.speed_dir("kt_bayesian", 2, tmp_path) == tmp_path / "kt_bayesian" / "seed2" / "speed"
 
 
+def test_replay_files_of_evolutionary_runs_and_speed_pushes(tmp_path):
+    assert paths.replay_path("neat", 1, tmp_path) == tmp_path / "neat" / "seed1" / paths.REPLAY_NAME
+    assert paths.replay_path("es_seeded", 0, tmp_path) == tmp_path / "es_seeded" / "seed0" / paths.REPLAY_NAME
+    assert paths.replay_path("kt_random", 2, tmp_path) == tmp_path / "kt_random" / "seed2" / "speed" / paths.REPLAY_NAME
+
+
 def test_stage_paths_follow_config(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
     assert paths.stage_path("baseline", 0, "dagger") == tmp_path / "runs" / "baseline" / "seed0" / "dagger.keras"

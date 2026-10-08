@@ -30,6 +30,17 @@ def speed_dir(approach, seed, runs_dir=None):
     return run_dir(approach, seed, runs_dir) / "speed"
 
 
+REPLAY_NAME = "replay.pkl"
+
+
+def replay_path(approach, seed, runs_dir=None):
+    """The latest evaluated generation of a reported run, kept for the viewer: in the run folder of an evolutionary
+    approach, in the speed push folder of an imitation approach (its evolutionary stage)."""
+    if approach in config.EVOLUTION_APPROACHES:
+        return run_dir(approach, seed, runs_dir) / REPLAY_NAME
+    return speed_dir(approach, seed, runs_dir) / REPLAY_NAME
+
+
 def champion_path(approach, seed, suffix=".keras", champion_dir=None):
     """One final controller: <champions>/<approach>/seed<k>.keras, or the .npy weights next to it."""
     return Path(config.CHAMPIONS_DIR if champion_dir is None else champion_dir) / approach / f"seed{seed}{suffix}"

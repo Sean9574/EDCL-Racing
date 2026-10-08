@@ -909,6 +909,18 @@ Training is observed live rather than recorded.
     replay, stating which generation is being trained, until the next report arrives.
   - The playback speed therefore sets the pace of training started in the application; the reported runs
     (notebooks) never wait for a view.
+- **Notebook runs:** a source selector switches the training view between training started in the application
+  and a reported run (`results/runs/`) of the selected approach and run seed.
+  - After each generation, a reported evolutionary run (and the speed push of an imitation approach) keeps its
+    latest evaluated generation (population, fitness, maps, level and statistics) in `replay.pkl` next to its
+    checkpoint, overwritten every generation. Training never reads this file.
+  - The view replays that generation with the same display selection, panel and plot (from the run's log). When a
+    replay ends, the view loads a newer generation if one was written (looking at most once a second) and otherwise
+    replays the same one, so a running experiment is followed live. Generations in between are skipped: the view
+    never slows the run.
+  - The view is read-only: it never writes to the run, starts or pauses it. Play/Pause pauses only the replay; stop,
+    new run, difficulty and population size do not apply. A run without a replay file (started before this
+    feature), a missing run and an unreadable file are named in the status line.
 - **Track display:** the side panel shows the seed and level of the track being played back. The
   imitation views always use validation track 80, so its map is shown before training starts. The evolutionary approaches draw new maps every generation, so their map appears with the first
   generation.

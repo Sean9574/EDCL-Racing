@@ -1690,3 +1690,212 @@ def test_a_race_of_every_method_and_every_app_car_fits_the_panel(window, tmp_pat
     assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
     rows = [string for string, _, _ in drawn if string[:1].isdigit() and ". " in string]
     assert rows and (len(rows) == 16 or any(string.startswith("… ") for string, _, _ in drawn))
+
+
+# ----- notebook runs in the training view (read-only replay of a reported run) -----
+def notebook_view(window, tmp_path):
+    window.runs_dir = tmp_path
+    window.toggle_source()
+    assert window.source == "notebook"
+    return window
+
+
+def save_replay(window, report, approach="ga", seed=0):
+    path = paths.replay_path(approach, seed, window.runs_dir)
+    checkpoint.save(path, report)
+    return path
+
+
+def bump(path, seconds):
+    """Moves a file's modification time forward, so the view sees it as rewritten."""
+    stamp = path.stat().st_mtime_ns + int(seconds * 1e9)
+    os.utime(path, ns=(stamp, stamp))
+
+
+def test_a_notebook_run_replays_its_latest_generation(window, tmp_path, monkeypatch):
+    notebook_view(window, tmp_path)
+    monkeypatch.setattr(window, "start_training", lambda: pytest.fail("the notebook view never trains"))
+    save_replay(window, ga_report(7))
+    window.update(1 / 60)
+    assert window.latest["generation"] == 7 and window.playback is not None and window.playback_generation == 7
+    for _ in range(30):
+        window.update(1 / 60)
+        window.draw()
+    assert window.playback.cars.time > 0
+
+
+def test_a_notebook_run_can_show_just_its_best_car(window, tmp_path):
+    notebook_view(window, tmp_path)
+    report = ga_report(3)
+    save_replay(window, report)
+    window.set_show("best")
+    window.shown = 1
+    window.update(1 / 60)
+    assert list(window.indices) == [int(np.argmax(report["fitness"]))] and len(window.playback.cars.x) == 1
+
+
+def test_a_notebook_replay_follows_the_run(window, tmp_path):
+    notebook_view(window, tmp_path)
+    now = [0.0]
+    window.clock = lambda: now[0]
+    path = save_replay(window, ga_report(1))
+    window.update(1 / 60)
+    first = window.playback
+    first.cars.done[:] = True
+    window.update(1 / 60)                                            # nothing newer: the same generation again
+    assert window.playback is not first and window.playback_generation == 1
+    save_replay(window, ga_report(2))
+    bump(path, 1)
+    window.playback.cars.done[:] = True
+    window.update(1 / 60)                                            # looked less than a poll interval ago
+    assert window.playback_generation == 1
+    now[0] += config.REPLAY_POLL_SECONDS
+    window.playback.cars.done[:] = True
+    window.update(1 / 60)
+    assert window.playback_generation == 2 and window.latest["generation"] == 2
+
+
+def test_the_notebook_plot_follows_the_runs_log(window, tmp_path):
+    notebook_view(window, tmp_path)
+    path = save_replay(window, ga_report(2))
+    (path.parent / "log.csv").write_text("generation,min_share,event\n0,0.5,\n1,0.7,level_up\n2,0.8,\n")
+    window.update(1 / 60)
+    assert [h[0] for h in window.history] == [0, 1, 2] and [h[3] for h in window.history] == [False, True, False]
+    window.draw()
+
+
+def test_the_notebook_view_names_what_it_cannot_replay(window, tmp_path):
+    notebook_view(window, tmp_path)
+    now = [0.0]
+    window.clock = lambda: now[0]
+    messages = []
+
+    def look():
+        now[0] += config.REPLAY_POLL_SECONDS
+        window.update(1 / 60)
+        window.draw()
+        messages.append(window.status)
+
+    look()
+    assert "Nothing to replay" in window.status and window.latest is None
+    run = paths.run_dir("ga", 0, tmp_path)
+    run.mkdir(parents=True)
+    (run / checkpoint.CHECKPOINT_NAME).write_bytes(b"older run")
+    look()
+    assert "predates replays" in window.status
+    path = paths.replay_path("ga", 0, tmp_path)
+    path.write_bytes(b"cut short")
+    look()
+    assert "unreadable" in window.status and window.latest is None
+    save_replay(window, ga_report(4))
+    look()
+    assert window.latest["generation"] == 4
+    path.write_bytes(b"cut short again")
+    bump(path, 5)
+    window.playback.cars.done[:] = True
+    look()
+    assert "unreadable" in window.status and window.latest["generation"] == 4      # the current replay is kept
+    assert window.playback is not None
+    assert all(len(message) <= 56 for message in messages)
+
+
+def test_notebook_play_and_pause_move_only_the_replay(window, tmp_path, monkeypatch):
+    notebook_view(window, tmp_path)
+    monkeypatch.setattr(window, "start_training", lambda: pytest.fail("the notebook view never trains"))
+    save_replay(window, ga_report(0))
+    for _ in range(10):
+        window.update(1 / 60)
+    window.toggle_play()                                             # Pause
+    frozen = window.playback.cars.time
+    for _ in range(30):
+        window.update(1 / 60)
+    assert window.playback.cars.time == frozen
+    window.toggle_play()                                             # Play
+    for _ in range(10):
+        window.update(1 / 60)
+    assert window.playback.cars.time > frozen
+    window.stop()
+    window.new_run()
+    assert window.process is None and window.latest is not None
+    assert paths.replay_path("ga", 0, tmp_path).exists()
+
+
+def test_the_notebook_view_writes_nothing(window, tmp_path, monkeypatch):
+    notebook_view(window, tmp_path)
+    monkeypatch.setattr(window, "start_training", lambda: pytest.fail("the notebook view never trains"))
+    path = save_replay(window, ga_report(0))
+    (path.parent / "log.csv").write_text("generation,min_share,event\n0,0.5,\n")
+    before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
+    for _ in range(60):
+        window.update(1 / 60)
+        window.draw()
+    window.toggle_play()
+    window.toggle_play()
+    window.stop()
+    window.new_run()
+    window.change_run_seed(1)
+    window.update(1 / 60)
+    assert {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")} == before
+
+
+def test_the_source_cannot_change_while_training_runs(window):
+    class Alive:
+        pid = 0
+
+        def is_alive(self):
+            return True
+
+    window.process = Alive()
+    window.toggle_source()
+    assert window.source == "app"
+
+
+def test_changing_method_or_seed_loads_that_notebook_run(window, tmp_path):
+    notebook_view(window, tmp_path)
+    save_replay(window, ga_report(1), seed=config.RUN_SEEDS[0])
+    save_replay(window, ga_report(5), seed=config.RUN_SEEDS[1])
+    save_replay(window, neat_report(9), approach="neat", seed=config.RUN_SEEDS[1])
+    window.update(1 / 60)
+    assert window.latest["generation"] == 1
+    window.change_run_seed(1)
+    window.update(1 / 60)
+    assert window.latest["generation"] == 5 and window.playback_generation == 5
+    window.select_approach("neat")
+    window.update(1 / 60)
+    assert window.latest["approach"] == "neat" and window.playback_generation == 9
+    window.draw()
+
+
+def test_an_imitation_method_replays_its_speed_push(window, tmp_path):
+    notebook_view(window, tmp_path)
+    window.select_approach("baseline")
+    save_replay(window, ga_report(4, approach="baseline"), approach="baseline")
+    assert paths.replay_path("baseline", 0, tmp_path).parent == paths.speed_dir("baseline", 0, tmp_path)
+    window.update(1 / 60)
+    assert window.latest["generation"] == 4 and window.playback is not None
+    window.draw()
+
+
+def test_switching_back_to_app_training_clears_the_notebook_replay(window, tmp_path):
+    notebook_view(window, tmp_path)
+    save_replay(window, ga_report(3))
+    window.update(1 / 60)
+    window.toggle_source()
+    assert window.source == "app" and window.latest is None and window.playback is None
+    window.update(1 / 60)
+    assert window.latest is None                                     # app training shows only its own reports
+
+
+def test_the_notebook_panel_fits_the_window(window, tmp_path):
+    notebook_view(window, tmp_path)
+    for approach in config.APPROACHES:
+        window.approach = approach
+        window.draw()
+        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
+    save_replay(window, neat_report(2), approach="neat")
+    window.select_approach("neat")
+    window.update(1 / 60)
+    window.draw()
+    assert window.latest is not None
+    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
+    assert window.slider.bottom <= window.panel.bottom - 30

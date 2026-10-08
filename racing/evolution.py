@@ -10,7 +10,7 @@ from typing import Protocol
 
 import numpy as np
 
-from racing import checkpoint, config, population, progress, setup
+from racing import checkpoint, config, paths, population, progress, setup
 from racing.curriculum import MasteryTracker, SeedSource, survivors
 from racing.nets import DensePopulation
 
@@ -248,6 +248,8 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                                    "level": int(level), "generation": generation, "min_share": result.min_share,
                                    "streak": tracker.streak, "target_reduction": tracker.target_reduction,
                                    "elapsed": now})
+        if reporting:
+            checkpoint.save(out_dir / paths.REPLAY_NAME, report)     # the viewer replays it (never read by training)
         if on_generation is not None:
             on_generation(report)
         method.advance(rng, result, kept, event)
