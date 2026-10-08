@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from racing import config, paths
+from racing import setup as car_setup
 from racing.backend import keras_cpu
 from racing.curriculum import StepSize, success_fraction
 
@@ -325,10 +326,12 @@ def forward(compiled, obs):
 
 
 class NeatNet:
-    """One NEAT controller as one masked dense matrix per depth; drives a car like nets.DenseNet."""
+    """One NEAT controller as one masked dense matrix per depth; drives a car like nets.DenseNet, with the car's
+    setup (revision 3.1 §2; revision 3's when none is given)."""
 
-    def __init__(self, genome):
+    def __init__(self, genome, setup=None):
         self.genome = genome
+        self.setup = car_setup.as_row(setup)
         ids = genome.node_ids.tolist()
         column = {i: i for i in INPUT_IDS}
         column.update({node: N_IN + k for k, node in enumerate(ids)})
@@ -375,16 +378,19 @@ class NeatNet:
 
 
 class NeatPopulation:
-    """A NEAT population with the population interface of nets.DensePopulation."""
+    """A NEAT population with the population interface of nets.DensePopulation: one genome and one setup row per
+    car (revision 3.1 §2)."""
 
-    def __init__(self, genomes):
+    def __init__(self, genomes, setup=None):
         self.genomes = list(genomes)
+        self.setup = car_setup.as_rows(setup, len(self.genomes))
 
     def __len__(self):
         return len(self.genomes)
 
     def subset(self, indices):
-        return NeatPopulation([self.genomes[int(i)] for i in np.asarray(indices).ravel()])
+        indices = np.asarray(indices, dtype=np.int64).ravel()
+        return NeatPopulation([self.genomes[int(i)] for i in indices], self.setup[indices])
 
     def policy(self):
         """Policy for sim.simulate: car i is driven by genome i. Compiled once, here."""
@@ -392,7 +398,7 @@ class NeatPopulation:
         return lambda obs, cars: np.argmax(forward(compiled, obs), axis=1)
 
     def driver(self, i):
-        return NeatNet(self.genomes[int(i)])
+        return NeatNet(self.genomes[int(i)], self.setup[int(i)])
 
 
 def to_keras(genome):
@@ -436,13 +442,16 @@ def to_keras(genome):
     return keras.Model(x, probabilities)
 
 
-def save_neat_champion(approach, seed, genome, champion_dir=config.CHAMPIONS_DIR):
-    """Final NEAT controller (revision 3 §5.4): its genome as <seed>.json, which drives, and the equivalent Keras
-    model as <seed>.keras. Returns the Keras file's path."""
+def save_neat_champion(approach, seed, genome, champion_dir=config.CHAMPIONS_DIR, setup=None):
+    """Final NEAT controller (revision 3 §5.4): its genome as <seed>.json, which drives, the equivalent Keras model
+    as <seed>.keras, and its setup as <seed>.setup.json (revision 3.1 §4; revision 3's when setup is None). Returns
+    the Keras file's path."""
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     to_keras(genome).save(path)
     paths.champion_path(approach, seed, ".json", champion_dir).write_text(json.dumps(genome.to_dict()))
+    paths.champion_path(approach, seed, ".setup.json", champion_dir).write_text(
+        json.dumps(car_setup.to_dict(car_setup.as_row(setup))))
     return path
 
 

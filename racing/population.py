@@ -1,10 +1,12 @@
 """Shared helpers for the evolutionary approaches (spec §9.1, revision 3 §4): time-trial evaluation, final selection
 and saved controllers."""
+import json
 from dataclasses import dataclass
 
 import numpy as np
 
 from racing import config, nets, paths, sim, tracks
+from racing import setup as car_setup
 from racing.tracks import get_track
 
 
@@ -57,10 +59,10 @@ class TrialResult:
 
 def _time_trial(population, seed, level, factor):
     """Fitness, success, laps in time and finish time of every car over config.LAPS laps of one map, ending at the
-    target time (revision 3 §4.1)."""
+    target time (revision 3 §4.1). Every car drives with its own setup (revision 3.1 §2)."""
     track = get_track(seed, level)
     result = sim.simulate(track, population.policy(), len(population), time_limit=sim.target_time(track, factor),
-                          laps=config.LAPS)
+                          laps=config.LAPS, setup=population.setup)
     return (result.fitness, result.finished, np.minimum(result.laps_done, config.LAPS),
             np.where(result.finished, result.finish_time, np.nan))
 
@@ -104,17 +106,20 @@ def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEED
 
 
 def save_dense_champion(approach, seed, population, index, champion_dir=config.CHAMPIONS_DIR):
-    """Final dense controller (spec §6, revision 3 §6.4): a Keras file and the float64 weights (.npy); the
-    architecture is the Keras file's. Returns the Keras file's path."""
+    """Final dense controller (spec §6, revision 3 §6.4): a Keras file, the float64 weights (.npy) and the car's
+    setup (<seed>.setup.json, revision 3.1 §4); the architecture is the Keras file's. Returns the Keras file's path."""
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     flat = population.weights[int(index)]
     nets.to_keras(flat, population.hidden, population.activation).save(path)
     np.save(paths.champion_path(approach, seed, ".npy", champion_dir), np.asarray(flat, dtype=float))
+    paths.champion_path(approach, seed, ".setup.json", champion_dir).write_text(
+        json.dumps(car_setup.to_dict(population.setup[int(index)])))
     return path
 
 
 def clear_champion(approach, seed, champion_dir=config.CHAMPIONS_DIR):
-    """Remove a final controller left by an earlier run (.keras, .npy and a NEAT genome's .json), so an interrupted
-    run leaves none behind."""
-    paths.remove(*(paths.champion_path(approach, seed, suffix, champion_dir) for suffix in (".keras", ".npy", ".json")))
+    """Remove a final controller left by an earlier run (.keras, .npy, a NEAT genome's .json and the setup's
+    .setup.json), so an interrupted run leaves none behind."""
+    paths.remove(*(paths.champion_path(approach, seed, suffix, champion_dir)
+                   for suffix in (".keras", ".npy", ".json", ".setup.json")))

@@ -24,9 +24,10 @@ SUMMARY_NAME = "dagger.json"
 def drive_and_label(driver, seed, level=config.MAX_LEVEL):
     """One car driven by `driver` for config.LAPS laps of one map, with the expert's action recorded in every state
     the car reaches (revision 3 §6.3 steps 1-2). A crash puts the car back on the centerline, as during dataset
-    collection, so the whole run is covered. Returns inputs, labels and the number of respawns."""
+    collection, so the whole run is covered. The car drives with its setup (revision 3's for an imitation
+    network, revision 3.1 §3.1). Returns inputs, labels and the number of respawns."""
     track = get_track(seed, level)
-    cars = sim.start_cars(track, 1, config.LAPS)
+    cars = sim.start_cars(track, 1, config.LAPS, setup=nets.drivers_setup([driver]))
     time_limit = sim.time_limit_for(track, config.LAPS)
     inputs, labels, respawns = [], [], 0
     while not cars.done[0]:
@@ -57,7 +58,8 @@ def collect(driver, seeds, level=config.MAX_LEVEL, n_jobs=1):
 
 def _time_trial(driver, seed, level, factor):
     track = get_track(seed, level)
-    result = sim.simulate(track, driver.policy(), 1, time_limit=sim.target_time(track, factor), laps=config.LAPS)
+    result = sim.simulate(track, driver.policy(), 1, time_limit=sim.target_time(track, factor), laps=config.LAPS,
+                          setup=nets.drivers_setup([driver]))
     return bool(result.finished[0])
 
 

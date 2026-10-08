@@ -23,6 +23,10 @@ RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations of a RAY_RANGE ray; sca
 
 # --- Car setup (revision 3.1 §2) ---
 DEFAULT_SETUP = (RAY_RANGE, 1.0)   # (sensor length m, steering sensitivity) of every car in revision 3
+SENSOR_LENGTH_LIMITS = (10.0, 150.0)   # m, the sensor lengths evolution may choose (revision 3.1 Table 1)
+STEER_GAIN_LIMITS = (1.0 / 3.0, 3.0)   # the steering sensitivities evolution may choose
+SETUP_MUTATION_P = 0.2       # chance that each setup value of a child is mutated (revision 3.1 §3.3)
+SETUP_MUTATION_SD = 0.1      # standard deviation of that mutation on the natural-log scale (about ±10%)
 
 # --- Track geometry (spec §4) ---
 CENTERLINE_SPACING = 1.0     # m

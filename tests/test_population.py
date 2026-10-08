@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from racing import config, expert, nets, population, sim
+from racing import setup as car_setup
 
 
 @pytest.fixture
@@ -75,6 +76,7 @@ class ExpertCars:
 
     def __init__(self, track, n):
         self.track, self.n = track, n
+        self.setup = car_setup.default(n)                # revision 3's sensors and steering (revision 3.1 §2)
 
     def __len__(self):
         return self.n
@@ -110,7 +112,7 @@ def test_time_trial_ends_at_the_target_time(monkeypatch, fake_tracks):
     target = config.TARGET_FACTOR * fake_tracks.expert_lap_time * config.LAPS
     seen = []
 
-    def fake_simulate(track, policy, n, time_limit=None, laps=1):
+    def fake_simulate(track, policy, n, time_limit=None, laps=1, setup=None):
         seen.append((time_limit, laps))
         return sim.RunResult(fitness=np.array([1.5, 0.6, 0.2]), finished=np.array([True, False, False]),
                              crashed=np.array([False, False, True]), progress=np.array([1.0, 0.67, 0.2]),
@@ -178,7 +180,7 @@ def test_dense_champion_keeps_its_architecture(tmp_path):
 
 def test_clear_champion_removes_every_file(tmp_path):
     population.save_dense_champion("es", 0, dense(1, seed=4), 0, tmp_path)
-    assert sorted(p.suffix for p in (tmp_path / "es").iterdir()) == [".keras", ".npy"]
+    assert sorted(p.name for p in (tmp_path / "es").iterdir()) == ["seed0.keras", "seed0.npy", "seed0.setup.json"]
     (tmp_path / "es" / "seed0.json").write_text("{}")
     population.clear_champion("es", 0, tmp_path)
     assert list((tmp_path / "es").iterdir()) == []

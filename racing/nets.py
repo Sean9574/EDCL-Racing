@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from racing import config, paths
+from racing import setup as car_setup
 from racing.backend import keras_cpu
 
 
@@ -79,33 +80,37 @@ def population_policy(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
 
 
 class DensePopulation:
-    """Dense networks of one architecture, one flat weight vector per car (revision 3 §5). Like every population
-    type, it offers len(), subset(indices), policy() and driver(i)."""
+    """Dense networks of one architecture, one flat weight vector and one setup row per car (revision 3 §5,
+    revision 3.1 §2). Like every population type, it offers len(), subset(indices), policy(), driver(i) and setup."""
 
-    def __init__(self, weights, hidden=config.BASELINE_HIDDEN, activation="relu"):
+    def __init__(self, weights, hidden=config.BASELINE_HIDDEN, activation="relu", setup=None):
         self.weights = np.asarray(weights, dtype=float)
         self.hidden = tuple(int(units) for units in hidden)
         self.activation = activation
+        self.setup = car_setup.as_rows(setup, len(self.weights))
 
     def __len__(self):
         return len(self.weights)
 
     def subset(self, indices):
-        return DensePopulation(self.weights[np.asarray(indices, dtype=np.int64)], self.hidden, self.activation)
+        indices = np.asarray(indices, dtype=np.int64)
+        return DensePopulation(self.weights[indices], self.hidden, self.activation, self.setup[indices])
 
     def policy(self):
         return population_policy(self.weights, self.hidden, self.activation)
 
     def driver(self, i):
-        return from_flat(self.weights[int(i)], self.hidden, self.activation)
+        return from_flat(self.weights[int(i)], self.hidden, self.activation, self.setup[int(i)])
 
 
 class DenseNet:
-    """A plain stack of dense layers in numpy. Drives a car with any trained controller."""
+    """A plain stack of dense layers in numpy. Drives a car with any trained controller, with the car's setup
+    (revision 3.1 §2; revision 3's when none is given)."""
 
-    def __init__(self, layers, activations):
+    def __init__(self, layers, activations, setup=None):
         self.layers = [(np.asarray(w, dtype=float), np.asarray(b, dtype=float)) for w, b in layers]
         self.activations = list(activations)
+        self.setup = car_setup.as_row(setup)
 
     @property
     def n_params(self):
@@ -123,9 +128,9 @@ class DenseNet:
         return lambda obs, cars: self.act(obs)
 
 
-def from_flat(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
+def from_flat(flat, hidden=config.BASELINE_HIDDEN, activation="relu", setup=None):
     layers = [(w[0], b[0]) for w, b in unflatten(np.asarray(flat, dtype=float)[None, :], hidden)]
-    return DenseNet(layers, [activation] * len(hidden))
+    return DenseNet(layers, [activation] * len(hidden), setup)
 
 
 def from_keras(model):
@@ -173,6 +178,11 @@ def to_flat(model):
     return np.concatenate(parts)
 
 
+def drivers_setup(drivers):
+    """The (len(drivers), 2) setups of a list of drivers, in order, for sim.simulate (revision 3.1 §2)."""
+    return car_setup.as_rows([np.asarray(driver.setup, dtype=float) for driver in drivers], len(drivers))
+
+
 def mixed_policy(drivers):
     """Policy for sim.simulate: car i is driven by drivers[i]; the networks may differ in architecture."""
     def policy(obs, cars):
@@ -199,7 +209,8 @@ def champion_seeds(directory=None):
 def load_champion(approach, seed, directory=None):
     """(Keras model, driver) of one final controller. A NEAT controller drives with its genome (<seed>.json,
     revision 3 §5.4); an evolved dense controller with its float64 weights (.npy) and the architecture of its Keras
-    file (dense_spec); an imitation controller with the Keras weights (spec §6)."""
+    file (dense_spec); an imitation controller with the Keras weights (spec §6). The driver has the setup saved in
+    <seed>.setup.json, or revision 3's without that file (revision 3.1 §4)."""
     keras_path = paths.champion_path(approach, seed, champion_dir=directory)
     model = keras_cpu().models.load_model(keras_path)
     genome_path = paths.champion_path(approach, seed, ".json", directory)
@@ -211,4 +222,7 @@ def load_champion(approach, seed, directory=None):
         driver = from_flat(np.load(flat_path), *dense_spec(model))
     else:
         driver = from_keras(model)
+    setup_path = paths.champion_path(approach, seed, ".setup.json", directory)
+    if setup_path.exists():
+        driver.setup = car_setup.from_dict(json.loads(setup_path.read_text()))
     return model, driver

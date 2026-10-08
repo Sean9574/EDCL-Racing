@@ -28,7 +28,9 @@ def _drive_track(drivers, track_seed, level, factor):
     within the target time (revision 3 §7.1)."""
     track = get_track(track_seed, level)
     keys = list(drivers)
-    result = sim.simulate(track, nets.mixed_policy([drivers[k] for k in keys]), len(keys), laps=config.LAPS)
+    chosen = [drivers[k] for k in keys]
+    result = sim.simulate(track, nets.mixed_policy(chosen), len(keys), laps=config.LAPS,
+                          setup=nets.drivers_setup(chosen))      # every controller with its own setup (revision 3.1)
     target = sim.target_time(track, factor)
     rows = []
     for i, (approach, run_seed) in enumerate(keys):
