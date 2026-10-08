@@ -195,6 +195,7 @@ DATASET_PATH = RESULTS_DIR / "dataset.npz"
 DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"
 RUNS_DIR = RESULTS_DIR / "runs"
 APP_RUNS_DIR = RESULTS_DIR / "app_runs"
+APP_CHAMPIONS_DIR = APP_RUNS_DIR / "champions"   # the best car of each viewer run (revision 3.1 §6.1); never evaluated
 CHAMPIONS_DIR = RESULTS_DIR / "champions"
 BEST_SEEDS_NAME = "best_seeds.json"
 PILOTS_DIR = RESULTS_DIR / "pilots"

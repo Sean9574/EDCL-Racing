@@ -10,7 +10,7 @@ import pygame
 import pytest
 
 from racing import app as viewer
-from racing import config, neat, nets, paths, population, setup, sim
+from racing import checkpoint, config, neat, nets, paths, population, setup, sim
 
 
 @pytest.fixture
@@ -419,7 +419,7 @@ def test_reports_are_drained_in_race_mode(window, tmp_path):
     assert window.reports.items == [] and window.latest["generation"] == 1
 
 
-def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, tmp_path):
+def test_trainer_main_uses_app_runs_dir_and_resumes_saved_runs(monkeypatch, tmp_path):
     from racing import es, ga
     monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
     calls = {}
@@ -444,7 +444,7 @@ def test_trainer_main_uses_app_runs_dir_and_never_saves_champions(monkeypatch, t
     for name, size in (("ga", 30), ("es", 12), ("neat", 100)):
         assert calls[name]["champion_dir"] is None and calls[name]["pop_size"] == size
         assert calls[name]["max_generations"] is None and calls[name]["out_dir"] == tmp_path / name / "seed0"
-    assert not calls["ga"]["existed"]                              # every Play starts a new run
+    assert calls["ga"]["existed"]                                  # Play continues the saved run (revision 3.1 §6.1)
     assert [reports.get_nowait()["generation"] for _ in range(3)] == [0, 0, 0] and reports.empty()
 
 
@@ -1057,20 +1057,6 @@ def test_a_failed_background_build_is_reported_and_retried(monkeypatch, circle_t
         pygame.quit()
 
 
-def test_trainer_main_starts_each_viewer_run_afresh(monkeypatch, tmp_path):
-    from racing import ga
-    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
-    stale = tmp_path / "ga" / "seed0" / "checkpoint.pkl"
-    stale.parent.mkdir(parents=True)
-    stale.write_bytes(b"an earlier viewer run")
-    seen = []
-    monkeypatch.setattr(ga, "run_ga", lambda **kwargs: seen.append(stale.exists()))
-    running = threading.Event()
-    running.set()
-    viewer.trainer_main("ga", 30, 0, 1, queue.Queue(), running)
-    assert seen == [False]
-
-
 def test_a_light_color_swatch_is_outlined(window):
     rect = pygame.Rect(10, 10, 10, 10)
     for approach, outlined in (("neat", True), ("es_seeded", False)):
@@ -1289,3 +1275,336 @@ def test_the_network_buttons_fit_both_panels(net, tmp_path):
     assert all(rect.bottom <= net.panel.bottom - 30 for rect, _ in net.buttons)
     approach, seed = net.lineup[0]
     assert net.network_car_label() == f"Network of: {config.LABELS[approach]} s{seed} ▸"
+
+
+# ----- saved application runs (revision 3.1 §6.1) -----
+def fake_trainer_context(monkeypatch, created):
+    """Training processes that record their arguments and never start (tests never start real processes)."""
+    class FakeProcess:
+        def __init__(self, target, args, daemon):
+            created.append(args)
+            self.pid = 0
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            pass
+
+    class FakeContext:
+        Process = FakeProcess
+
+        def Queue(self):
+            return FakeQueue()
+
+        def Event(self):
+            return threading.Event()
+
+    monkeypatch.setattr(viewer.mp, "get_context", lambda method: FakeContext())
+
+
+def save_app_run(window, approach="ga", seed=0):
+    """A saved viewer run (checkpoint and a two-generation log) and its app car."""
+    run = window.app_runs_dir / approach / f"seed{seed}"
+    run.mkdir(parents=True)
+    (run / checkpoint.CHECKPOINT_NAME).write_bytes(b"saved")
+    (run / "log.csv").write_text("generation,min_share,event\n0,0.5,\n1,0.9,level_up\n")
+    save_race_champions(window.app_champions_dir, approaches=[(approach, seed)])
+    return run
+
+
+def test_app_runs_and_cars_of_tests_live_in_a_temporary_folder(window):
+    real = config.RESULTS_DIR / "app_runs"
+    assert config.APP_RUNS_DIR != real and window.app_runs_dir == config.APP_RUNS_DIR
+    assert window.app_champions_dir == config.APP_CHAMPIONS_DIR == config.APP_RUNS_DIR / "champions"
+
+
+def test_trainer_main_resumes_a_saved_evolutionary_run(monkeypatch, tmp_path):
+    from racing import ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    saved = tmp_path / "ga" / "seed0" / "checkpoint.pkl"
+    saved.parent.mkdir(parents=True)
+    saved.write_bytes(b"an earlier viewer run")
+    seen = []
+    monkeypatch.setattr(ga, "run_ga", lambda **kwargs: seen.append((saved.exists(), kwargs["out_dir"])))
+    running = threading.Event()
+    running.set()
+    assert viewer.trainer_main("ga", 30, 0, 1, queue.Queue(), running) == 0
+    assert seen == [(True, tmp_path / "ga" / "seed0")]
+
+
+def test_trainer_main_still_starts_imitation_afresh(monkeypatch, tmp_path):
+    fake_imitation(monkeypatch, tmp_path)
+    old = tmp_path / "app_runs" / "baseline" / "seed0" / "imitation.keras"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"an earlier viewer run")
+    run_baseline_trainer()
+    assert not old.exists()
+
+
+def test_the_best_car_of_each_generation_is_saved_as_an_app_car(monkeypatch, tmp_path):
+    from racing import ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    sent = []
+
+    def run(**kwargs):
+        for generation in (0, 1):
+            sent.append(ga_report(generation))
+            kwargs["on_generation"](sent[-1])
+
+    monkeypatch.setattr(ga, "run_ga", run)
+    running = threading.Event()
+    running.set()
+    viewer.trainer_main("ga", 30, 0, 1, queue.Queue(), running)
+    last = sent[-1]
+    best = int(np.argmax(last["fitness"]))
+    _, driver = nets.load_champion("ga", 0, config.APP_CHAMPIONS_DIR)
+    obs = np.random.default_rng(5).random((40, config.N_INPUTS))
+    assert np.array_equal(driver.act(obs), last["population"].driver(best).act(obs))
+    assert np.array_equal(driver.setup, last["population"].setup[best])
+
+
+def test_a_neat_app_car_keeps_its_genome(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+    report = neat_report(0)
+    monkeypatch.setattr(neat, "run_neat", lambda **kwargs: kwargs["on_generation"](report))
+    running = threading.Event()
+    running.set()
+    viewer.trainer_main("neat", 20, 0, 1, queue.Queue(), running)
+    best = int(np.argmax(report["fitness"]))
+    _, driver = nets.load_champion("neat", 0, config.APP_CHAMPIONS_DIR)
+    assert isinstance(driver, neat.NeatNet)
+    obs = np.random.default_rng(6).random((40, config.N_INPUTS))
+    assert np.array_equal(driver.act(obs), report["population"].driver(best).act(obs))
+
+
+def test_the_best_imitation_network_so_far_is_the_app_car(monkeypatch, tmp_path):
+    from racing import imitation
+    fake_imitation(monkeypatch, tmp_path)
+    rng = np.random.default_rng(7)
+    models = [nets.to_keras(nets.init_population(rng, 1)[0]) for _ in range(3)]
+
+    def train(data, on_epoch=None, **kwargs):
+        for epoch, (model, accuracy) in enumerate(zip(models, (0.4, 0.7, 0.6))):
+            on_epoch(epoch, model, accuracy)
+
+    monkeypatch.setattr(imitation, "train_baseline", train)
+    run_baseline_trainer()
+    _, driver = nets.load_champion("baseline", 0, config.APP_CHAMPIONS_DIR)
+    obs = rng.random((40, config.N_INPUTS))
+    assert np.array_equal(driver.act(obs), nets.from_keras(models[1]).act(obs))     # epoch 1 had the best accuracy
+
+
+@pytest.mark.parametrize("error", [checkpoint.SettingsMismatch("GA_POP: recorded 1000, now 900"),
+                                   checkpoint.UnreadableRecord("summary.json cannot be read"),
+                                   EOFError("Ran out of input")])
+def test_an_unusable_saved_run_ends_the_trainer_with_code_3(monkeypatch, tmp_path, capsys, error):
+    from racing import ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+
+    def run(**kwargs):
+        raise error
+
+    monkeypatch.setattr(ga, "run_ga", run)
+    running = threading.Event()
+    running.set()
+    reports = queue.Queue()
+    assert viewer.trainer_main("ga", 30, 0, 1, reports, running) == viewer.UNUSABLE_RUN == 3
+    assert reports.empty() and "cannot be resumed" in capsys.readouterr().err
+
+
+def test_the_trainer_process_exits_with_the_trainer_code(monkeypatch):
+    monkeypatch.setattr(viewer.os, "setpgrp", lambda: None)                 # never changes the test's process group
+    monkeypatch.setattr(viewer, "watch_parent", lambda parent, kill: None)  # the watcher signals nothing
+    monkeypatch.setattr(viewer, "trainer_main", lambda *args: viewer.UNUSABLE_RUN)
+    with pytest.raises(SystemExit) as stop:
+        viewer.trainer_process("ga", 30, 0, 1, queue.Queue(), threading.Event())
+    assert stop.value.code == 3
+    monkeypatch.setattr(viewer, "trainer_main", lambda *args: 0)
+    viewer.trainer_process("ga", 30, 0, 1, queue.Queue(), threading.Event())          # returns normally
+
+
+def test_the_panel_asks_for_new_run_when_a_saved_run_cannot_resume(window):
+    class Unusable:
+        exitcode = 3
+
+        def is_alive(self):
+            return False
+
+    window.process, window.reports = Unusable(), FakeQueue()
+    window.poll_reports()
+    window.draw()
+    assert "New run" in window.status and len(window.status) <= 56 and window.process is None
+
+
+def test_a_finished_run_says_new_run_starts_over(window):
+    class Done:
+        exitcode = 0
+
+        def is_alive(self):
+            return False
+
+    window.process, window.reports = Done(), FakeQueue()
+    window.poll_reports()
+    assert "finished" in window.status.lower() and "New run" in window.status
+
+
+def test_new_run_deletes_the_saved_run_and_its_app_car_then_starts(window, monkeypatch):
+    created = []
+    fake_trainer_context(monkeypatch, created)
+    run = save_app_run(window)
+    window.new_run()
+    assert not run.exists()
+    assert not paths.champion_path("ga", 0, champion_dir=window.app_champions_dir).exists()
+    assert len(created) == 1 and created[0][:3] == ("ga", config.GA_POP, 0)
+    assert created[0][6:] == (window.app_runs_dir, window.app_champions_dir)
+    assert window.history == []
+    window.new_run()                                    # ignored while training runs
+    assert len(created) == 1
+
+
+def test_play_resumes_a_saved_run_and_continues_its_plot(window, monkeypatch):
+    created = []
+    fake_trainer_context(monkeypatch, created)
+    run = save_app_run(window)
+    assert window.has_saved_run()
+    window.toggle_play()
+    assert run.exists() and len(created) == 1
+    assert [(g, s, marked) for g, s, _, marked in window.history] == [(0, 0.5, False), (1, 0.9, True)]
+
+
+def test_imitation_approaches_have_no_saved_run(window):
+    save_app_run(window, approach="baseline")
+    window.select_approach("baseline")
+    assert not window.has_saved_run() and window.saved_history() == []
+
+
+def test_an_idle_panel_mentions_a_saved_run(window, monkeypatch):
+    save_app_run(window)
+    drawn, text = [], window.text
+
+    def recording_text(string, x, y, font=None, color=viewer.INK):
+        drawn.append(string)
+        return text(string, x, y, font, color)
+
+    monkeypatch.setattr(window, "text", recording_text)
+    window.draw()
+    assert any(string.startswith("Saved run found") for string in drawn)
+
+
+def test_the_new_run_button_is_offered_only_while_idle(window, monkeypatch):
+    window.draw()
+    assert any(action == window.new_run for _, action in window.buttons)
+    fake_trainer_context(monkeypatch, [])
+    window.toggle_play()
+    window.draw()
+    assert not any(action == window.new_run for _, action in window.buttons)
+
+
+def app_race_window(window, tmp_path):
+    save_race_champions(tmp_path)                                         # reported: es 0, ga 0, ga 1
+    save_race_champions(window.app_champions_dir, approaches=[("ga", 2), ("neat", 0)])
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    return window
+
+
+def test_app_cars_form_their_own_group_switched_off_by_default(window, tmp_path):
+    app_race_window(window, tmp_path)
+    assert window.race_available == {"es": [0], "ga": [0, 1]}
+    assert window.app_available == {"ga": [2], "neat": [0]}
+    assert window.app_lineup == [] and window.app_choice_label("ga") == "off"
+    window.cycle_app_choice("ga")
+    assert window.app_choice_label("ga") == "seed 2"
+    assert window.race_cars() == window.lineup + [("ga", 2, "app")]
+    window.update(1 / 60)
+    window.start_race()
+    window.update(1 / 60)
+    assert window.race is not None and len(window.race.cars.x) == len(window.race_cars())
+    assert nets.champion_seeds(window.champions_dir) == {"es": [0], "ga": [0, 1]}     # reported set untouched
+
+
+def test_the_race_group_button_switches_the_controller_list(window, tmp_path, monkeypatch):
+    app_race_window(window, tmp_path)
+    drawn, text = [], window.text
+
+    def recording_text(string, x, y, font=None, color=viewer.INK):
+        drawn.append(string)
+        return text(string, x, y, font, color)
+
+    monkeypatch.setattr(window, "text", recording_text)
+    window.draw()
+    assert "Controllers: reported ▸" in window.race_group_label() and "ES" in drawn
+    window.cycle_race_group()
+    drawn.clear()
+    window.draw()
+    assert window.race_group == "app" and "NEAT (app)" in drawn and "ES" not in drawn
+    window.cycle_race_group()
+    assert window.race_group == "final"
+
+
+def test_without_app_cars_the_race_panel_is_unchanged(window, tmp_path):
+    race_window(window, tmp_path)
+    window.cycle_race_group()                                   # nothing to switch to
+    assert window.app_available == {} and window.race_group == "final"
+
+
+def test_the_evaluation_never_reads_app_cars():
+    import inspect
+    from racing import evaluate
+    source = inspect.getsource(evaluate)
+    assert "APP_CHAMPIONS_DIR" not in source and "APP_RUNS_DIR" not in source and "app_runs" not in source
+
+
+def test_app_cars_are_labelled_in_the_network_selector_and_leaderboard(net, tmp_path):
+    app_race_window(net, tmp_path)
+    net.cycle_app_choice("neat")
+    assert net.race_cars()[-1] == ("neat", 0, "app")
+    while net.selected_car() != ("neat", 0, "app"):
+        net.cycle_network_car()
+    assert net.network_car_label() == "Network of: NEAT (app) s0 ▸"
+    assert viewer.leaderboard_line(3, "neat", 0, 1, 31.0, 30.5, "racing", app=True).startswith("3. NEAT (app) s0  lap 1")
+    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA s1  lap 0  –/–  ready"
+
+
+def test_a_failed_app_car_is_dropped_with_a_message(window, tmp_path):
+    app_race_window(window, tmp_path)
+    window.cycle_app_choice("ga")
+    paths.champion_path("ga", 2, champion_dir=window.app_champions_dir).write_bytes(b"not a model")
+    window.drivers = {}
+    window.update(1 / 60)
+    assert ("ga", 2, "app") not in window.race_cars() and "GA (app) seed 2" in window.status
+
+
+@pytest.mark.parametrize("group", ["final", "app"])
+def test_a_race_of_every_method_and_every_app_car_fits_the_panel(window, tmp_path, monkeypatch, group):
+    every = [(approach, 0) for approach in config.APPROACHES]
+    save_race_champions(tmp_path, approaches=every)
+    save_race_champions(window.app_champions_dir, approaches=every)
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    for approach in config.APPROACHES:
+        window.cycle_app_choice(approach)
+    if group == "app":
+        window.cycle_race_group()
+    window.update(1 / 60)
+    window.start_race()
+    window.update(1 / 60)
+    assert len(window.race_cars()) == 2 * len(config.APPROACHES)
+    drawn, text = [], window.text
+
+    def recording_text(string, x, y, font=None, color=viewer.INK):
+        drawn.append((string, y, font or window.font))
+        return text(string, x, y, font, color)
+
+    monkeypatch.setattr(window, "text", recording_text)
+    window.buttons = []
+    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
+    for string, y, font in drawn:
+        assert y + font.get_linesize() <= window.panel.bottom - 30, string
+    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
+    rows = [string for string, _, _ in drawn if string[:1].isdigit() and ". " in string]
+    assert rows and (len(rows) == 16 or any(string.startswith("… ") for string, _, _ in drawn))

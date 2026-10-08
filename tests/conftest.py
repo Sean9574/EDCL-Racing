@@ -28,3 +28,13 @@ def private_progress_files(tmp_path_factory, monkeypatch):
     folder = tmp_path_factory.mktemp("progress")
     monkeypatch.setattr(config, "STATUS_PATH", folder / "status.json")
     monkeypatch.setattr(config, "RUN_LOG_PATH", folder / "run_log.txt")
+
+
+@pytest.fixture(autouse=True)
+def private_app_runs(tmp_path_factory, monkeypatch):
+    """Viewer runs and their app cars of every test live in a temporary folder, never in results/
+    (revision 3.1 §6.1)."""
+    from racing import config
+    folder = tmp_path_factory.mktemp("app_runs")
+    monkeypatch.setattr(config, "APP_RUNS_DIR", folder)
+    monkeypatch.setattr(config, "APP_CHAMPIONS_DIR", folder / "champions")

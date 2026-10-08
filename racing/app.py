@@ -2,20 +2,24 @@
 
 Run with:  ~/miniconda3/bin/python -m racing.app
 """
+import csv
 import json
 import multiprocessing as mp
 import os
+import pickle
 import queue
 import signal
+import sys
 import threading
 import time
+from pathlib import Path
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import numpy as np
 import pygame
 
-from racing import config, netwindow, nets, paths, sim
+from racing import checkpoint, config, netwindow, nets, paths, population, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -59,6 +63,20 @@ def ink_for(fill):
 def needs_outline(color, background=WHITE):
     """Whether a line or swatch in `color` needs a dark outline to stand out from `background`."""
     return contrast(color, background) < MIN_LINE_CONTRAST
+
+
+UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (revision 3.1 §6.1)
+UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
+
+
+def is_app(car):
+    """Whether a race car is an app car (approach, seed, "app") rather than a reported controller (approach, seed)."""
+    return tuple(car[2:]) == ("app",)
+
+
+def car_method(car):
+    """The method label of a race car: 'GA' for a reported controller, 'GA (app)' for an app car."""
+    return config.LABELS[car[0]] + (" (app)" if is_app(car) else "")
 
 
 def select_indices(fitness, mode, count, sample_seed=0):
@@ -171,41 +189,76 @@ def leaderboard(playback, count):
     return rows
 
 
-def trainer_main(approach, size, seed, level, reports, running):
-    """Training process: trains one approach with run seed `seed`, starting at curriculum level `level`, and sends a
-    report after every generation, trial or epoch. Every Play starts a new run: the approach's folder in
-    config.APP_RUNS_DIR is removed first, since evolutionary runs resume from a checkpoint they find there. Writes
-    only to config.APP_RUNS_DIR, never saves final controllers and trains until stopped (revision 3 §9)."""
+def save_app_car(report, champion_dir):
+    """The best car of an evolutionary report, saved with its setup as the run's app car (revision 3.1 §6.1): the
+    files of a final controller, in `champion_dir`."""
+    from racing import neat
+    cars = report["population"]
+    best = int(np.argmax(report["fitness"]))
+    approach, seed = report["approach"], report["seed"]
+    if isinstance(cars, neat.NeatPopulation):
+        neat.save_neat_champion(approach, seed, cars.genomes[best], champion_dir, setup=cars.setup[best])
+    else:
+        population.save_dense_champion(approach, seed, cars, best, champion_dir)
+
+
+def save_app_model(approach, seed, model, champion_dir):
+    """An imitation network saved as the run's app car (revision 3.1 §6.1). It has no setup file, so it drives with
+    the revision 3 setup. The file is replaced in one step, so the race view never reads half a model."""
+    population.clear_champion(approach, seed, champion_dir)
+    path = paths.champion_path(approach, seed, champion_dir=champion_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.stem}.tmp.keras")
+    model.save(temporary)
+    os.replace(temporary, path)
+
+
+def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None):
+    """Training process: trains one approach with run seed `seed` and sends a report after every generation, trial
+    or epoch (revision 3 §9). An evolutionary run continues the saved run of the same approach and seed in the app
+    runs folder (App.new_run removes it to start over); imitation training always starts afresh. The run's best car
+    so far is saved to the app champions folder so it can race (revision 3.1 §6.1); the reported results are never
+    written. Returns 0, or UNUSABLE_RUN when the saved run cannot be resumed (other settings or a damaged file)."""
     from racing import es, ga, imitation, neat
     from racing.expert import collect_dataset
 
+    app_runs_dir = Path(config.APP_RUNS_DIR if app_runs_dir is None else app_runs_dir)
+    app_champions_dir = Path(config.APP_CHAMPIONS_DIR if app_champions_dir is None else app_champions_dir)
+    out_dir = app_runs_dir / approach / f"seed{seed}"
+
     def send(report):
+        if "population" in report:
+            save_app_car(report, app_champions_dir)
         reports.put(report)
         running.wait()                      # training holds here while the viewer is paused
 
-    out_dir = config.APP_RUNS_DIR / approach / f"seed{seed}"
-    paths.remove(out_dir)
     common = dict(seed=seed, pop_size=size, start_level=level, out_dir=out_dir, on_generation=send,
                   champion_dir=None, n_jobs=config.N_JOBS, max_generations=None)
-    if approach == "ga":
-        ga.run_ga(**common)
-        return
-    if approach in ("es", "es_seeded"):
-        initial = es.dagger_baseline(seed) if approach == "es_seeded" else None
-        es.run_es(**common, initial=initial, approach=approach)
-        return
-    if approach == "neat":
-        neat.run_neat(**common)
-        return
+    if approach in config.EVOLUTION_APPROACHES:
+        try:
+            if approach == "ga":
+                ga.run_ga(**common)
+            elif approach == "neat":
+                neat.run_neat(**common)
+            else:
+                initial = es.dagger_baseline(seed) if approach == "es_seeded" else None
+                es.run_es(**common, initial=initial, approach=approach)
+        except UNUSABLE_ERRORS as error:
+            print(f"The saved viewer run in {out_dir} cannot be resumed: {error}", file=sys.stderr, flush=True)
+            return UNUSABLE_RUN
+        return 0
+    paths.remove(out_dir)                   # imitation training in the viewer is never resumed
     path = config.DATASET_PATH
     if not path.exists():
-        path = config.APP_RUNS_DIR / "dataset.npz"     # never write the reported dataset
+        path = app_runs_dir / "dataset.npz"     # never write the reported dataset
         if not path.exists():
             collect_dataset(path)
     data = imitation.load_dataset(path)
     members, scores = [], []
 
     def add(number, model, val_accuracy):
+        if not scores or val_accuracy > max(scores):
+            save_app_model(approach, seed, model, app_champions_dir)    # the best network so far can race
         members.append(nets.from_keras(model))
         scores.append(val_accuracy)
         fitness = np.array(scores)
@@ -220,6 +273,7 @@ def trainer_main(approach, size, seed, level, reports, running):
     else:
         imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False,
                             resume=False)
+    return 0
 
 
 def watch_parent(parent, kill, interval=1.0):
@@ -230,18 +284,23 @@ def watch_parent(parent, kill, interval=1.0):
     kill(0, signal.SIGTERM)
 
 
-def trainer_process(approach, size, seed, level, reports, running):
+def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None):
     """Entry point of the training process. It leads its own process group, so stopping it also stops the worker
-    processes it starts (spec §10.2). A watcher thread ends the group if the viewer exits without stopping it."""
+    processes it starts (spec §10.2). A watcher thread ends the group if the viewer exits without stopping it. The
+    process exits with the trainer's code, so the viewer can tell an unusable saved run (revision 3.1 §6.1)."""
     os.setpgrp()
     threading.Thread(target=watch_parent, args=(os.getppid(), os.killpg), daemon=True).start()
-    trainer_main(approach, size, seed, level, reports, running)
+    code = trainer_main(approach, size, seed, level, reports, running, app_runs_dir, app_champions_dir)
+    if code:
+        sys.exit(code)
 
 
-def leaderboard_line(position, approach, seed, laps, last, best, status):
-    """One leaderboard row: position, method and seed, laps completed, last/best lap time (s), status."""
+def leaderboard_line(position, approach, seed, laps, last, best, status, app=False):
+    """One leaderboard row: position, method and seed (app cars marked), laps completed, last/best lap time (s),
+    status."""
     times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
-    return f"{position}. {config.LABELS[approach]} s{seed}  lap {laps}  {times}  {status}"
+    label = config.LABELS[approach] + (" (app)" if app else "")
+    return f"{position}. {label} s{seed}  lap {laps}  {times}  {status}"
 
 
 def percent(value):
@@ -316,6 +375,8 @@ class App:
         self.population = {"ga": config.GA_POP, "es": config.ES_POP, "es_seeded": config.ES_POP,
                            "neat": config.NEAT_POP}
         self.runs_dir = config.RUNS_DIR     # where the seeded ES finds the DAgger-refined baseline
+        self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (revision 3.1 §6.1)
+        self.app_champions_dir = config.APP_CHAMPIONS_DIR   # their best cars, raceable in the race view
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
@@ -347,6 +408,10 @@ class App:
         self.race = None                    # Playback: the preview until the race starts
         self.racing = False
         self.failed = set()                 # (approach, seed) whose controller file could not be loaded
+        self.app_available = {}             # approach -> run seeds with a saved app car (revision 3.1 §6.1)
+        self.app_choice = {}                # approach -> "off" or a run seed
+        self.app_lineup = []                # (approach, seed, "app") of the app cars in the race
+        self.race_group = "final"           # the controller list shown: "final" (reported) or "app"
 
     # ----- tracks -----
     def request_track(self, seed, level):
@@ -385,10 +450,10 @@ class App:
         size = self.population.get(self.approach, 0)
         self.process = context.Process(target=trainer_process, daemon=False,
                                        args=(self.approach, size, self.run_seed, self.difficulty, self.reports,
-                                             self.running))
+                                             self.running, self.app_runs_dir, self.app_champions_dir))
         self.process.start()
         self.halted = False
-        self.latest, self.history, self.playback, self.playback_generation = None, [], None, None
+        self.latest, self.history, self.playback, self.playback_generation = None, self.saved_history(), None, None
         self.net_sent = None                                 # a new run's first report goes to the window
         self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
 
@@ -401,6 +466,40 @@ class App:
         else:
             self.running.set()
             self.status = f"Training {config.LABELS[self.approach]}."
+
+    def new_run(self):
+        """Delete the saved run of the selected approach and run seed and its app car, then start training afresh
+        with the current settings (revision 3.1 §6.1). Ignored while training runs."""
+        if self.process is not None:
+            return
+        paths.remove(self.saved_run_dir())
+        population.clear_champion(self.approach, self.run_seed, self.app_champions_dir)
+        self.start_training()
+
+    def saved_run_dir(self):
+        return self.app_runs_dir / self.approach / f"seed{self.run_seed}"
+
+    def has_saved_run(self):
+        """Whether Play continues a saved run of the selected evolutionary approach and run seed."""
+        return (self.approach in config.EVOLUTION_APPROACHES
+                and (self.saved_run_dir() / checkpoint.CHECKPOINT_NAME).exists())
+
+    def saved_history(self):
+        """The plot history of the saved run from its log (lowest map share per generation, level advancements,
+        goal and target cuts marked), so a resumed run's plot continues where it stopped; empty for imitation, for
+        a new run or for an unreadable log."""
+        log = self.saved_run_dir() / "log.csv"
+        if self.approach not in config.EVOLUTION_APPROACHES or not log.exists():
+            return []
+        history = []
+        try:
+            with open(log, newline="") as f:
+                for row in csv.DictReader(f):
+                    history.append((int(row["generation"]), float(row["min_share"]), float("nan"),
+                                    row.get("event") in ("level_up", "goal", "tightened")))
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
+        return history
 
     def stop_training(self):
         """End the training process and the worker processes it started, and drop its report queue."""
@@ -443,7 +542,12 @@ class App:
         if self.process is not None and not self.process.is_alive():
             self.drain_reports()                     # a report sent just before the process ended
             code = self.process.exitcode
-            self.status = "Training finished." if code == 0 else f"Training stopped (exit code {code})."
+            if code == 0:
+                self.status = "Training finished. New run starts over."
+            elif code == UNUSABLE_RUN:
+                self.status = "Saved run cannot resume: press New run to start over."
+            else:
+                self.status = f"Training stopped (exit code {code})."
             self.process = None
             self.discard_reports()
 
@@ -486,19 +590,21 @@ class App:
         self.net_process, self.net_queue, self.net_sent = None, None, None
 
     def selected_car(self):
-        """(approach, seed) of the race car whose network the window shows: the first car if the choice is outside
-        the lineup; None for an empty lineup."""
-        if not self.lineup:
+        """The race car whose network the window shows: the first car if the choice is outside the race; None for
+        an empty race."""
+        cars = self.race_cars()
+        if not cars:
             return None
-        return self.lineup[self.net_choice if 0 <= self.net_choice < len(self.lineup) else 0]
+        return cars[self.net_choice if 0 <= self.net_choice < len(cars) else 0]
 
     def cycle_network_car(self):
-        if self.lineup:
-            self.net_choice = (self.lineup.index(self.selected_car()) + 1) % len(self.lineup)
+        cars = self.race_cars()
+        if cars:
+            self.net_choice = (cars.index(self.selected_car()) + 1) % len(cars)
 
     def network_car_label(self):
         car = self.selected_car()
-        return "Network of: –" if car is None else f"Network of: {config.LABELS[car[0]]} s{car[1]} ▸"
+        return "Network of: –" if car is None else f"Network of: {car_method(car)} s{car[1]} ▸"
 
     def shown_network(self):
         """(identity, driver, title) of the network the window should show now, or None."""
@@ -527,11 +633,10 @@ class App:
         try:
             driver = self.driver(*car)
         except Exception:
-            self.failed.add(car)
-            self.lineup.remove(car)
-            self.status = f"Controller {config.LABELS[car[0]]} seed {car[1]} could not be loaded; skipped."
+            self.drop_car(car)
+            self.status = f"Controller {car_method(car)} seed {car[1]} could not be loaded; skipped."
             return None
-        return identity, driver, (f"{config.LABELS[car[0]]} · seed {car[1]} · {driver.n_params:,} parameters"
+        return identity, driver, (f"{car_method(car)} · seed {car[1]} · {driver.n_params:,} parameters"
                                   f"{netwindow.netfig.setup_text(driver)}")
 
     def poll_network_window(self):
@@ -657,6 +762,7 @@ class App:
     def load_race(self):
         """Find the saved final controllers and each approach's best run seed (spec §10.3)."""
         self.race_available = nets.champion_seeds(self.champions_dir)
+        self.app_available = nets.champion_seeds(self.app_champions_dir)
         self.drivers = {}
         self.failed = set()
         self.best = {}
@@ -675,7 +781,12 @@ class App:
         for approach, seeds in self.race_available.items():
             choice = kept.get(approach, "best")
             self.race_choice[approach] = choice if choice in ("best", "off", *seeds) else "best"
-        if not self.race_available:
+        kept_app = self.app_choice
+        self.app_choice = {approach: kept_app.get(approach) if kept_app.get(approach) in seeds else "off"
+                           for approach, seeds in self.app_available.items()}     # app cars start switched off
+        if not self.app_available:
+            self.race_group = "final"
+        if not self.race_available and not self.app_available:
             self.status = f"No trained controllers found in {self.champions_dir}."
         else:
             self.status = note or "Race view."
@@ -709,8 +820,40 @@ class App:
         self.race_choice[approach] = options[(options.index(current) + 1) % len(options)]
         self.reset_race()
 
+    def app_choice_label(self, approach):
+        choice = self.app_choice.get(approach, "off")
+        return "off" if choice == "off" else f"seed {choice}"
+
+    def cycle_app_choice(self, approach):
+        if self.racing:
+            return
+        options = ["off", *self.app_available[approach]]
+        current = self.app_choice.get(approach, "off")
+        self.app_choice[approach] = options[(options.index(current) + 1) % len(options)]
+        self.reset_race()
+
+    def race_group_label(self):
+        return f"Controllers: {'app runs' if self.race_group == 'app' else 'reported'} ▸"
+
+    def cycle_race_group(self):
+        """Switch the controller list between the reported controllers and the app cars (revision 3.1 §6.1)."""
+        if self.app_available:
+            self.race_group = "app" if self.race_group == "final" else "final"
+
+    def race_cars(self):
+        """The cars of the race: the chosen reported controllers (approach, seed), then the chosen app cars
+        (approach, seed, "app")."""
+        return self.lineup + self.app_lineup
+
+    def drop_car(self, car):
+        """Leave a car whose controller cannot be loaded out of the race."""
+        self.failed.add(car)
+        for cars in (self.lineup, self.app_lineup):
+            if car in cars:
+                cars.remove(car)
+
     def reset_race(self):
-        """Back to the map preview: the selected controllers wait on the start line."""
+        """Back to the map preview: the selected controllers and app cars wait on the start line."""
         self.racing = False
         self.race = None
         self.step_budget = 0.0
@@ -720,29 +863,34 @@ class App:
             seed = self.chosen_seed(approach)
             if seed is not None and (approach, seed) not in self.failed:
                 self.lineup.append((approach, seed))
-        self.net_choice = self.lineup.index(selected) if selected in self.lineup else 0
+        self.app_lineup = [(approach, choice, "app") for approach, choice in self.app_choice.items()
+                           if choice != "off" and (approach, choice, "app") not in self.failed]
+        cars = self.race_cars()
+        self.net_choice = cars.index(selected) if selected in cars else 0
 
-    def driver(self, approach, seed):
-        if (approach, seed) not in self.drivers:
-            self.drivers[(approach, seed)] = nets.load_champion(approach, seed, self.champions_dir)[1]
-        return self.drivers[(approach, seed)]
+    def driver(self, approach, seed, source="final"):
+        """The driver of a reported controller, or of an app car (source "app"), loaded once."""
+        key = (approach, seed) if source == "final" else (approach, seed, source)
+        if key not in self.drivers:
+            directory = self.champions_dir if source == "final" else self.app_champions_dir
+            self.drivers[key] = nets.load_champion(approach, seed, directory)[1]
+        return self.drivers[key]
 
     def race_track(self):
         return self.request_track(config.TEST_SEEDS[self.race_index], self.race_level)
 
     def prepare_race(self):
         """Build the preview once the track is ready: every selected car on the start line."""
-        if self.race is None and self.lineup:
+        if self.race is None and self.race_cars():
             track = self.race_track()
             if track is not None:
                 drivers = []
-                for approach, seed in list(self.lineup):
+                for car in list(self.race_cars()):
                     try:
-                        drivers.append(self.driver(approach, seed))
+                        drivers.append(self.driver(*car))
                     except Exception:
-                        self.failed.add((approach, seed))
-                        self.lineup.remove((approach, seed))
-                        self.status = f"Controller {config.LABELS[approach]} seed {seed} could not be loaded; skipped."
+                        self.drop_car(car)
+                        self.status = f"Controller {car_method(car)} seed {car[1]} could not be loaded; skipped."
                 if drivers:
                     self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS,
                                          setup=nets.drivers_setup(drivers), grip=self.grip)
@@ -829,7 +977,8 @@ class App:
             track, playback = self.shown_track(), self.playback
         else:
             playback = self.race
-            track = playback.track if playback is not None else (self.race_track() if self.race_available else None)
+            available = self.race_available or self.app_available
+            track = playback.track if playback is not None else (self.race_track() if available else None)
         if track is not None:
             camera, surface = self.track_surface(track)
             self.screen.blit(surface, self.view.topleft)
@@ -875,12 +1024,14 @@ class App:
                                               cars.y[i] + np.sin(angles) * lengths[row])
                     for k in range(config.N_RAYS):
                         pygame.draw.line(self.screen, RAY, (sx[i], sy[i]), (ex[k], ey[k]), 1)
-        for i, (approach, _) in enumerate(self.lineup):
-            color = hex_to_rgb(config.COLORS[approach])
+        for i, car in enumerate(self.race_cars()):
+            color = hex_to_rgb(config.COLORS[car[0]])
             if cars.crashed[i]:
                 color = tuple(int(0.5 * c + 127) for c in color)          # faded
             shape = car_polygon(sx[i], sy[i], cars.heading[i], size)
             pygame.draw.polygon(self.screen, color, shape)
+            if is_app(car):                                                # app cars: a white border
+                pygame.draw.polygon(self.screen, WHITE, shape, 3)
             pygame.draw.polygon(self.screen, INK, shape, 1)
 
     def text(self, string, x, y, font=None, color=INK):
@@ -959,9 +1110,9 @@ class App:
             self.button(pygame.Rect(x + 210, y, 30, 28), "+", lambda: self.change_population(1), enabled=idle)
             y += 36
         playing = self.process is not None and self.running is not None and self.running.is_set()
-        half = (w - 8) // 2
-        self.button(pygame.Rect(x, y, half, 32), "Pause" if playing else "Play", self.toggle_play, playing)
-        self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop, enabled=not idle)
+        self.button(pygame.Rect(x, y, third, 32), "Pause" if playing else "Play", self.toggle_play, playing)
+        self.button(pygame.Rect(x + third + 8, y, third, 32), "Stop", self.stop, enabled=not idle)
+        self.button(pygame.Rect(x + 2 * (third + 8), y, third, 32), "New run", self.new_run, enabled=idle)
         y += 42
         y = self.text("Show", x, y, self.small, MUTED)
         for k, mode in enumerate(("all", "best", "worst")):
@@ -1002,6 +1153,8 @@ class App:
         y = self.text(self.map_text(), x, y, self.small)
         r = self.latest
         if r is None:
+            if self.process is None and self.has_saved_run():
+                return self.text("Saved run found: Play resumes, New run restarts.", x, y, self.small, MUTED)
             return self.text("No generation completed yet.", x, y, self.small, MUTED)
         for line in stats_lines(r, r["approach"]):
             y = self.text(line, x, y, self.small)
@@ -1046,7 +1199,7 @@ class App:
         pygame.draw.lines(self.screen, color, False, points, 2)
 
     def draw_race_panel(self, x, y, w):
-        if not self.race_available:
+        if not self.race_available and not self.app_available:
             self.text("No trained controllers found.", x, y, self.small, MUTED)
             return
         idle = not self.racing
@@ -1058,29 +1211,47 @@ class App:
         y = self.draw_difficulty(x, y, w, self.race_level, self.set_race_level, idle)
         half = (w - 8) // 2
         self.button(pygame.Rect(x, y, half, 32), "Start race", self.start_race, self.racing,
-                    enabled=idle and bool(self.lineup))
+                    enabled=idle and bool(self.race_cars()))
         self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop_race, enabled=self.racing)
         y += 42
         y = self.draw_view_toggles(x, y, w)
         y = self.draw_network_button(x, y, w)
         self.button(pygame.Rect(x, y - 6, w, 26), self.network_car_label(), self.cycle_network_car,
-                    enabled=bool(self.lineup))
+                    enabled=bool(self.race_cars()))
         y += 28
-        y = self.text("Controllers", x, y, self.small, MUTED)
-        for approach in self.race_available:
-            self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
-            self.text(config.LABELS[approach], x + 16, y + 5, self.small)
-            self.button(pygame.Rect(x + 140, y, w - 140, 24), self.choice_label(approach),
-                        lambda a=approach: self.cycle_choice(a), enabled=idle)
-            y += 28
+        if self.app_available:
+            self.button(pygame.Rect(x, y, w, 22), self.race_group_label(), self.cycle_race_group)
+            y += 24
+        else:
+            y = self.text("Controllers", x, y, self.small, MUTED)
+        if self.race_group == "app" and self.app_available:
+            for approach in self.app_available:
+                self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
+                self.text(f"{config.LABELS[approach]} (app)", x + 16, y + 5, self.small)
+                self.button(pygame.Rect(x + 140, y, w - 140, 24), self.app_choice_label(approach),
+                            lambda a=approach: self.cycle_app_choice(a), enabled=idle)
+                y += 28
+        else:
+            for approach in self.race_available:
+                self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
+                self.text(config.LABELS[approach], x + 16, y + 5, self.small)
+                self.button(pygame.Rect(x + 140, y, w - 140, 24), self.choice_label(approach),
+                            lambda a=approach: self.cycle_choice(a), enabled=idle)
+                y += 28
         y += 4
         y = self.draw_speed_buttons(x, y, w)
         y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)", x, y, self.small, MUTED)
-        for position, i, laps, last, best, status in leaderboard(self.race, len(self.lineup)):
-            approach, seed = self.lineup[i]
-            self.swatch(approach, pygame.Rect(x, y + 3, 10, 10))
-            y = self.text(leaderboard_line(position, approach, seed, laps, last, best, status), x + 16, y,
-                          self.small)
+        cars = self.race_cars()
+        rows = leaderboard(self.race, len(cars))
+        room = max((self.panel.bottom - 30 - y) // (self.small.get_linesize() + 4), 1)
+        shown = rows if len(rows) <= room else rows[:room - 1]
+        for position, i, laps, last, best, status in shown:
+            car = cars[i]
+            self.swatch(car[0], pygame.Rect(x, y + 3, 10, 10))
+            y = self.text(leaderboard_line(position, car[0], car[1], laps, last, best, status, app=is_app(car)),
+                          x + 16, y, self.small)
+        if len(shown) < len(rows):
+            self.text(f"… {len(rows) - len(shown)} more", x + 16, y, self.small, MUTED)
 
 
 def main():
