@@ -17,9 +17,12 @@ TIME_EPS = 1e-9              # tolerance for comparisons of accumulated simulati
 # --- Sensors (spec §5.2) ---
 N_RAYS = 9
 RAY_ANGLES = np.radians(np.linspace(-90.0, 90.0, N_RAYS))   # index 0 = right, 4 = ahead, 8 = left
-RAY_RANGE = 50.0             # m
+RAY_RANGE = 50.0             # m, revision 3's sensor length and the ray input scale (an input of 1.0 is 50 m)
 RAY_MIN_STEP = 0.5           # m, smallest sphere-tracing step
-RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations per ray at most
+RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations of a RAY_RANGE ray; scaled with each ray's length (rev. 3.1 §2.1)
+
+# --- Car setup (revision 3.1 §2) ---
+DEFAULT_SETUP = (RAY_RANGE, 1.0)   # (sensor length m, steering sensitivity) of every car in revision 3
 
 # --- Track geometry (spec §4) ---
 CENTERLINE_SPACING = 1.0     # m
