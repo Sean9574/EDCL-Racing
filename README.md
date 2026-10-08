@@ -212,7 +212,10 @@ python -m racing.app
 On Windows 11 the window opens through WSLg.
 
 - **Training view:** choose an approach, run seed, difficulty and population size, then press Play (or Space).
-  Training follows the mastery rules and continues until Stop, which freezes the cars where they are. The panel shows
+  Training follows the mastery rules and continues until Stop, which freezes the cars where they are. Training runs in
+  step with the replay: each generation is replayed once, then the next one trains, so the generation on screen is the
+  one just trained. The playback speed sets the pace; Pause freezes both. In the race view training runs at full
+  speed. The panel shows
   the level, each map's success share against 90%, the streak, the target reduction and the population's mean sensor
   length and steering sensitivity.
 - **Saved viewer training:** training started here is kept in `results/app_runs/<method>/seed<k>/`, separate from the

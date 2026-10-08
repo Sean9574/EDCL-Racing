@@ -221,9 +221,11 @@ def save_app_model(approach, seed, model, champion_dir):
     os.replace(temporary, path)
 
 
-def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None):
+def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None,
+                 acks=None):
     """Training process: trains one approach with run seed `seed` and sends a report after every generation, trial
-    or epoch (revision 3 §9). An evolutionary run continues the saved run of the same approach and seed in the app
+    or epoch (revision 3 §9). With `acks`, training runs in step with the viewer: after each report it waits until
+    the viewer has replayed it (or is not watching), so the generation on screen is the one just trained. An evolutionary run continues the saved run of the same approach and seed in the app
     runs folder (App.new_run removes it to start over); imitation training always starts afresh. The run's best car
     so far is saved to the app champions folder so it can race (revision 3.1 §6.1); the reported results are never
     written. Returns 0, or UNUSABLE_RUN when the saved run cannot be resumed (other settings or a damaged file)."""
@@ -238,6 +240,8 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
         if "population" in report:
             save_app_car(report, app_champions_dir)
         reports.put(report)
+        if acks is not None:
+            acks.get()                      # in step with the viewer: wait until it has replayed this report
         running.wait()                      # training holds here while the viewer is paused
 
     common = dict(seed=seed, pop_size=size, start_level=level, out_dir=out_dir, on_generation=send,
@@ -292,13 +296,14 @@ def watch_parent(parent, kill, interval=1.0):
     kill(0, signal.SIGTERM)
 
 
-def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None):
+def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None,
+                    acks=None):
     """Entry point of the training process. It leads its own process group, so stopping it also stops the worker
     processes it starts (spec §10.2). A watcher thread ends the group if the viewer exits without stopping it. The
     process exits with the trainer's code, so the viewer can tell an unusable saved run (revision 3.1 §6.1)."""
     os.setpgrp()
     threading.Thread(target=watch_parent, args=(os.getppid(), os.killpg), daemon=True).start()
-    code = trainer_main(approach, size, seed, level, reports, running, app_runs_dir, app_champions_dir)
+    code = trainer_main(approach, size, seed, level, reports, running, app_runs_dir, app_champions_dir, acks)
     if code:
         sys.exit(code)
 
@@ -392,10 +397,13 @@ class App:
         self.process = None
         self.reports = None
         self.running = None
+        self.acks = None                    # tells the trainer a report has been replayed (training in step)
+        self.unacked = None                 # the report the trainer waits on until its replay ends
         self.halted = False                 # Stop freezes the training replay until the next Play
         self.latest = None
         self.history = []
         self.playback = None
+        self.playback_report = None
         self.playback_generation = None
         self.indices = None
         self.best_slot = 0
@@ -455,10 +463,11 @@ class App:
         self.reports = context.Queue()
         self.running = context.Event()
         self.running.set()
+        self.acks, self.unacked = context.Queue(), None
         size = self.population.get(self.approach, 0)
         self.process = context.Process(target=trainer_process, daemon=False,
                                        args=(self.approach, size, self.run_seed, self.difficulty, self.reports,
-                                             self.running, self.app_runs_dir, self.app_champions_dir))
+                                             self.running, self.app_runs_dir, self.app_champions_dir, self.acks))
         self.process.start()
         self.halted = False
         self.latest, self.history, self.playback, self.playback_generation = None, self.saved_history(), None, None
@@ -470,7 +479,7 @@ class App:
             self.start_training()
         elif self.running.is_set():
             self.running.clear()
-            self.status = "Paused at the next generation boundary."
+            self.status = "Paused."
         else:
             self.running.set()
             self.status = f"Training {config.LABELS[self.approach]}."
@@ -520,6 +529,23 @@ class App:
         self.process = None
         self.discard_reports()
 
+    @property
+    def paused(self):
+        """Pause holds the training and freezes its replay."""
+        return self.process is not None and self.running is not None and not self.running.is_set()
+
+    def acknowledge(self):
+        """Lets the trainer continue after the report it waits on (training in step with the viewer)."""
+        if self.unacked is None:
+            return
+        if self.acks is not None:
+            self.acks.put(True)
+            if self.mode == "train":
+                unit = ("generation" if "min_share" in self.unacked
+                        else "trial" if self.approach.startswith("kt") else "epoch")
+                self.status = f"Training {unit} {self.unacked['generation'] + 1}…"
+        self.unacked = None
+
     def stop(self):
         """Stop control: ends training in the training view and the race in the race view."""
         if self.mode == "race":
@@ -530,11 +556,12 @@ class App:
         self.status = "Stopped. Change the settings or press Play."
 
     def discard_reports(self):
-        """Drop the report queue so reports from a stopped trainer never reach a new view."""
-        if self.reports is not None and hasattr(self.reports, "cancel_join_thread"):
-            self.reports.cancel_join_thread()
-            self.reports.close()
-        self.reports = None
+        """Drop the report and acknowledgement queues so a stopped trainer never reaches a new view."""
+        for channel in (self.reports, self.acks):
+            if channel is not None and hasattr(channel, "cancel_join_thread"):
+                channel.cancel_join_thread()
+                channel.close()
+        self.reports, self.acks, self.unacked = None, None, None
 
     def drain_reports(self):
         if self.reports is None:
@@ -561,8 +588,13 @@ class App:
 
     def receive(self, report):
         """Show a report; the plot follows the lowest map success share (evolution, with level advancements, the
-        mastery goal and target cuts marked) or the validation accuracy (imitation)."""
+        mastery goal and target cuts marked) or the validation accuracy (imitation). The trainer waits until the
+        report has been replayed; in the race view nobody watches the training, so it continues at once."""
         self.latest = report
+        if self.acks is not None:
+            self.unacked = report
+            if self.mode == "race":
+                self.acknowledge()
         if "min_share" in report:
             marked = report.get("event") in ("level_up", "goal", "tightened")
             self.history.append((report["generation"], float(report["min_share"]), float("nan"), marked))
@@ -737,6 +769,9 @@ class App:
         self.playback = Playback(track, report_policy(report, self.indices), len(self.indices), laps=config.LAPS,
                                  setup=report_setup(report, self.indices), grip=self.grip)
         self.best_slot = int(np.argmax(fitness[self.indices]))
+        if report is not self.playback_report and self.process is not None:
+            self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
+        self.playback_report = report
         self.playback_generation = report["generation"]
         self.step_budget = 0.0
 
@@ -761,6 +796,8 @@ class App:
         entering = mode != self.mode
         self.mode = mode
         self.step_budget = 0.0
+        if mode == "race":
+            self.acknowledge()                       # nobody watches the training: it continues at full speed
         if mode == "race" and (entering or not self.race_available):
             self.load_race()
         elif mode == "train" and self.status.startswith("No trained controllers"):
@@ -929,11 +966,15 @@ class App:
         self.poll_reports()
         self.poll_network_window()
         if self.mode == "train":
-            if not self.halted and self.latest is not None and (self.playback is None or self.playback.over):
-                track = self.request_track(self.latest["seeds"][0], self.latest["level"])
-                if track is not None:
-                    self.start_playback(self.latest, track)
-            active = None if self.halted else self.playback
+            frozen = self.halted or self.paused
+            if not frozen and self.latest is not None:
+                if self.playback is not None and self.playback.over and self.playback_report is self.latest:
+                    self.acknowledge()               # replayed once: the next generation trains (in step)
+                elif self.playback is None or self.playback.over:
+                    track = self.request_track(self.latest["seeds"][0], self.latest["level"])
+                    if track is not None:
+                        self.start_playback(self.latest, track)
+            active = None if frozen else self.playback
         else:
             self.prepare_race()
             active = self.race if self.racing else None

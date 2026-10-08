@@ -312,6 +312,86 @@ def test_play_after_stop_moves_the_replay_again(window, monkeypatch):
     assert window.playback.cars.time > time_before
 
 
+def test_training_waits_until_the_viewer_has_replayed_the_generation(monkeypatch, tmp_path):
+    from racing import ga
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path)
+
+    def run(**kwargs):
+        for generation in (0, 1):
+            kwargs["on_generation"](ga_report(generation))
+
+    monkeypatch.setattr(ga, "run_ga", run)
+    reports, acks, running = queue.Queue(), queue.Queue(), threading.Event()
+    running.set()
+    trainer = threading.Thread(target=viewer.trainer_main, args=("ga", 30, 0, 1, reports, running),
+                               kwargs={"acks": acks}, daemon=True)
+    trainer.start()
+    try:
+        assert reports.get(timeout=5)["generation"] == 0
+        with pytest.raises(queue.Empty):
+            reports.get(timeout=0.5)                         # generation 1 waits for the replay of generation 0
+        acks.put(True)
+        assert reports.get(timeout=5)["generation"] == 1
+    finally:
+        acks.put(True)
+        acks.put(True)
+    trainer.join(timeout=5)
+    assert not trainer.is_alive()
+
+
+def test_each_generation_is_replayed_once_then_training_continues(window):
+    window.acks = queue.Queue()
+    window.receive(ga_report(0))
+    window.update(1 / 60)
+    playback = window.playback
+    assert playback is not None and window.acks.empty()             # still replaying: training waits
+    playback.cars.done[:] = True                                     # the replay ends
+    for _ in range(30):
+        window.update(1 / 60)
+    assert window.acks.qsize() == 1                                  # released exactly once
+    assert window.playback is playback                               # not replayed again while the next one trains
+    assert "generation 1" in window.status
+    window.receive(ga_report(1))
+    window.update(1 / 60)
+    assert window.playback is not playback and window.playback_generation == 1
+    assert window.acks.qsize() == 1                                  # generation 1 is not released before its replay
+
+
+def test_pause_freezes_the_replay(window):
+    class Alive:
+        pid = 0
+
+        def is_alive(self):
+            return True
+
+    window.process, window.running = Alive(), threading.Event()
+    window.running.set()
+    window.receive(ga_report())
+    for _ in range(10):
+        window.update(1 / 60)
+    window.toggle_play()                                             # Pause
+    frozen = window.playback.cars.time
+    for _ in range(30):
+        window.update(1 / 60)
+    assert window.playback.cars.time == frozen
+    window.toggle_play()                                             # Play
+    for _ in range(10):
+        window.update(1 / 60)
+    assert window.playback.cars.time > frozen
+
+
+def test_the_race_view_lets_training_run_free(window, tmp_path):
+    window.champions_dir = tmp_path
+    window.acks = queue.Queue()
+    window.receive(ga_report(0))
+    window.update(1 / 60)
+    assert window.acks.empty()                                       # waits for its replay in the training view
+    window.set_mode("race")
+    assert window.acks.qsize() == 1                                  # released when nobody watches the training
+    window.receive(ga_report(1))
+    assert window.acks.qsize() == 2                                  # and every report while the race view is shown
+
+
 def test_neat_report_plays_in_the_training_view(window):
     window.approach = "neat"
     window.receive(neat_report())
@@ -761,6 +841,7 @@ def test_training_process_is_not_a_daemon(window, monkeypatch):
     window.start_training()
     assert created["daemon"] is False and created["target"] is viewer.trainer_process
     assert created["args"][:4] == ("ga", config.GA_POP, config.RUN_SEEDS[1], 2)
+    assert window.acks is not None and created["args"][-1] is window.acks     # the trainer waits for the replays
 
 
 def test_stop_ends_the_trainer_process_group(window, monkeypatch):
@@ -1461,7 +1542,7 @@ def test_new_run_deletes_the_saved_run_and_its_app_car_then_starts(window, monke
     assert not run.exists()
     assert not paths.champion_path("ga", 0, champion_dir=window.app_champions_dir).exists()
     assert len(created) == 1 and created[0][:3] == ("ga", config.GA_POP, 0)
-    assert created[0][6:] == (window.app_runs_dir, window.app_champions_dir)
+    assert created[0][6:] == (window.app_runs_dir, window.app_champions_dir, window.acks)
     assert window.history == []
     window.new_run()                                    # ignored while training runs
     assert len(created) == 1

@@ -886,14 +886,16 @@ Training is observed live rather than recorded.
   - Training is started and paused with a play/pause control and ended with a stop control, which freezes the displayed cars. After a stop, the approach, run seed, difficulty and population size can be changed.
   - Changing a setting is possible only while no training is running.
 - **Training process:**
-  - Training runs in a separate process at full speed, with the configured number of worker
-    processes. The training process is not a daemon process, because joblib cannot start worker
+  - Training runs in a separate process, with the configured number of worker processes, in step with the view:
+    after each generation, trial or epoch it waits until the view has replayed it, so the generation on screen is
+    always the one just trained and every generation is shown. While the race view is shown, nobody watches the
+    training, so it runs at full speed. The training process is not a daemon process, because joblib cannot start worker
     processes from a daemon process; it is terminated explicitly when training stops or the
     application closes.
   - After each generation, completed Keras Tuner trial or baseline epoch, it sends the population, fitness values, map success shares, level, target factor and map seeds to the view through a `multiprocessing.Queue`.
   - When the training process ends, the view reads the queue once more, so the final report is
     displayed.
-  - Pausing halts training at the next generation boundary.
+  - Pausing freezes the replay and halts training at the next generation boundary.
   - Training started from the application writes only to `results/app_runs/`, never to the reported results, and is
     kept there (§10.6). The seeded ES in the application starts from the DAgger-refined baseline of the selected run
     seed. If it does not exist, the seeded ES cannot be started and the view states that notebook 03 must be run
@@ -903,9 +905,10 @@ Training is observed live rather than recorded.
     4× or 8× playback speed. At 1×, simulated time runs at twice real time.
   - Tracks are built in a background thread. While a new track is being built, the window stays
     responsive and playback starts once the track is ready.
-  - When playback ends, the view advances to the latest completed generation and skips any in
-    between.
-  - Rendering never slows training.
+  - Each generation is replayed once. When its playback ends, training continues and the view holds the finished
+    replay, stating which generation is being trained, until the next report arrives.
+  - The playback speed therefore sets the pace of training started in the application; the reported runs
+    (notebooks) never wait for a view.
 - **Track display:** the side panel shows the seed and level of the track being played back. The
   imitation views always use validation track 80, so its map is shown before training starts. The evolutionary approaches draw new maps every generation, so their map appears with the first
   generation.
