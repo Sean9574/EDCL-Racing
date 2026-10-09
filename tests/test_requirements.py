@@ -18,8 +18,8 @@ def pinned():
 
 def test_requirements_pin_every_package_exactly():
     pins = pinned()
-    assert {"numpy", "scipy", "pandas", "matplotlib", "tensorflow", "keras", "keras-tuner", "joblib", "pygame",
-            "nbclient", "nbformat", "ipykernel", "jupyter_client", "pytest"} == set(pins)
+    assert {"numpy", "scipy", "pandas", "matplotlib", "tensorflow", "keras", "keras-tuner", "scikit-learn", "joblib",
+            "pygame", "nbclient", "nbformat", "ipykernel", "jupyter_client", "pytest"} == set(pins)
     assert all(pins.values())
 
 

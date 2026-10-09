@@ -1219,7 +1219,8 @@ completes every curriculum level reliably.
 ## 15. Software Environment
 
 - **Environment:** Python 3.13 with the packages pinned in `requirements.txt` (numpy, scipy, pandas,
-  matplotlib, TensorFlow 2.21, Keras 3.13, keras-tuner, joblib, pygame, nbclient, nbformat, ipykernel,
+  matplotlib, TensorFlow 2.21, Keras 3.13, keras-tuner, scikit-learn (which keras-tuner's Bayesian optimization
+  needs), joblib, pygame, nbclient, nbformat, ipykernel,
   jupyter_client and pytest). A test verifies that the installed versions match the pinned ones.
 - **Platform:** Linux. On the Windows desktop used for the reported run, the Windows Subsystem for Linux
   (WSL 2) with the project in the Linux file system.
