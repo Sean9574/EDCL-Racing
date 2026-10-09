@@ -36,8 +36,9 @@ NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
 KERNEL_ENV = {"CUDA_VISIBLE_DEVICES": "-1",      # CPU only (spec §9): TensorFlow does not look for a GPU,
               "TF_CPP_MIN_LOG_LEVEL": "3"}      # and its C++ log stays out of the progress display
+KERNEL_LOG = "kernel_log.txt"                         # next to the run log: what the notebook kernels print themselves
 FRESH_REMOVE = ("runs", "champions", "tables", "figures", "dataset.npz", "dataset_info.json", "status.json",
-                "run_log.txt", "run_info.json")       # under results/; pilots, app_runs and archive are kept
+                "run_log.txt", "run_info.json", KERNEL_LOG)   # under results/; pilots, app_runs and archive are kept
 RECORD_STATES = {"summary.json": checkpoint.CHECKPOINT_NAME,      # run records that carry their settings, and the
                  "dagger.json": "dagger_state.pkl"}                # checkpoint a run finishes again from
 RECORD_FILES = tuple(RECORD_STATES)
@@ -117,9 +118,16 @@ def notebook_names(folder, start=None):
     return [name for name in names if start is None or name[:2] >= start]
 
 
-def execute(path, kernel_dir):
+def write_kernel(kernel_dir):
+    """The kernel spec the notebooks run with: this interpreter, GPUs hidden and TensorFlow's C++ log off."""
+    from ipykernel.kernelspec import write_kernel_spec
+    write_kernel_spec(Path(kernel_dir) / KERNEL, overrides={"env": KERNEL_ENV})
+
+
+def execute(path, kernel_dir, output=None):
     """Run every cell of one notebook in a new kernel on this interpreter, with the notebook's folder as working
-    directory, and save the outputs into the file, also when a cell fails."""
+    directory, and save the outputs into the file, also when a cell fails. What the kernel process prints itself
+    (library messages, not cell output) goes to the open file `output`, so it stays out of the progress display."""
     import nbformat
     from jupyter_client.kernelspec import KernelSpecManager
     from jupyter_client.manager import KernelManager
@@ -132,7 +140,7 @@ def execute(path, kernel_dir):
 
     def work():
         try:
-            client.execute()
+            client.execute(**({} if output is None else {"stdout": output, "stderr": output}))
         except BaseException as error:                # raised again below, in the main thread
             errors.append(error)
 
@@ -249,8 +257,6 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     """Execute the notebooks in order while the progress monitor shows the live status line and the milestones.
     The record keeps the entries of notebooks run earlier; each notebook's entry is replaced when it runs again.
     Every start is recorded with its code version, and a commit that differs from the previous start's is reported."""
-    from ipykernel.kernelspec import write_kernel_spec
-
     notebook_dir = Path(notebook_dir)
     info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
     version = code_version()
@@ -271,8 +277,8 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     try:
         log(f"run started: {' '.join(names)} ({config.N_JOBS} workers, power profile {info['power_profile']})",
             log_path)
-        with tempfile.TemporaryDirectory() as kernels:
-            write_kernel_spec(Path(kernels) / KERNEL, overrides={"env": KERNEL_ENV})
+        with tempfile.TemporaryDirectory() as kernels, open(Path(log_path).with_name(KERNEL_LOG), "a") as output:
+            write_kernel(kernels)
             for name in names:
                 entry = {"notebook": name, "started": now()}
                 info["notebooks"] = [e for e in info["notebooks"] if e["notebook"] != name] + [entry]
@@ -280,7 +286,7 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
                 log(f"start {name}", log_path)
                 began = time.time()
                 try:
-                    execute(notebook_dir / name, kernels)
+                    execute(notebook_dir / name, kernels, output)
                 except KeyboardInterrupt:              # Ctrl+C or kill: the kernel has been ended
                     entry["stopped"] = now()
                     entry["seconds"] = round(time.time() - began, 1)

@@ -192,8 +192,11 @@ record of the reported run.
   - **Milestones.** Level advancements, mastery goals, target reductions, completed runs, trained imitation
     networks and completed searches are printed as permanent lines and appended to `results/run_log.txt`.
   - **Quiet kernels.** The notebook kernels run with GPUs hidden (`CUDA_VISIBLE_DEVICES=-1`) and TensorFlow's
-    C++ log switched off (`TF_CPP_MIN_LOG_LEVEL=3`), so TensorFlow neither searches for a GPU on a machine that
-    has one nor writes its log into the progress display.
+    C++ log switched off (`TF_CPP_MIN_LOG_LEVEL=3`), so TensorFlow does not search for a GPU on a machine that
+    has one. Whatever a kernel process prints itself (library messages, as opposed to cell output, which is saved
+    in the notebook) is appended to `results/kernel_log.txt`, so it never enters the progress display.
+  - **Stopping.** Ctrl+C or `kill` stops the runner within seconds, also while a notebook prints nothing for a
+    long time: it ends the notebook's kernel and its worker processes, logs the stop and exits with code 130.
   - **Separate monitor.** `python -m racing.progress` shows the same display from another terminal, for
     a runner started in the background.
 - **Run record:** the runner writes `results/run_info.json`. It records the processor model, the number
@@ -498,8 +501,10 @@ the final epoch.
 The baseline is trained with seeds 0, 1 and 2. Two Keras settings that affect training speed but not
 the computed updates are fixed explicitly in `config.py` and recorded with the results:
 `steps_per_execution` (the number of batches executed per call into the compiled training function)
-and `jit_compile` (XLA compilation). Their values are chosen with the Keras training-time benchmark in
-`bench.py`.
+and `jit_compile` (XLA compilation). `steps_per_execution` is chosen with the Keras training-time benchmark in
+`bench.py`. XLA compilation is switched off: it trained about 11% faster per epoch, but on the desktop used for the
+reported run its compiler failed after about 130 Keras Tuner trials in one process ("Failed to materialize symbols")
+and kept failing, which stopped the search.
 
 ### 8.2 Hyperparameter search
 
@@ -816,8 +821,8 @@ The simulation is vectorized over individuals, and rays use sphere tracing (§5.
   three. Results are independent of the division, because cars do not interact.
 - **Number of workers:** chosen with the generation-time benchmark in `bench.py`, which times the same
   evaluation path the training runs use.
-- **Keras training:** the settings `steps_per_execution` and `jit_compile` (§8.1) are chosen with the
-  Keras training-time benchmark in `bench.py`.
+- **Keras training:** `steps_per_execution` (§8.1) is chosen with the Keras training-time benchmark in
+  `bench.py`; XLA compilation is off for reliability (§8.1).
 - **Fresh maps:** each generation builds its three maps in the worker processes that drive them. A map
   takes 0.1–0.6 s to build, against several seconds of driving. Every process keeps at most 8 built tracks, so memory stays constant over runs of many thousands of generations.
 - **Sensor length:** tracing time grows with a ray's length, so a population that evolves long sensors drives each

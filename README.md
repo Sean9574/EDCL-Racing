@@ -115,8 +115,8 @@ The run takes days rather than hours: every method trains until it masters the c
 faster. A live status line shows the current run, level, generation, the worst map's success share against 90%, the
 streak and the elapsed time (during the imitation training of notebook 02: the epoch and validation accuracy, or the
 Keras Tuner trial); level-ups, mastery goals, target reductions and finished runs are printed as permanent lines and
-kept in `results/run_log.txt`. The notebooks run on the CPU with TensorFlow's own log switched off, so a machine with
-an NVIDIA GPU shows no GPU messages.
+kept in `results/run_log.txt`. The notebooks run on the CPU, and what their kernels print themselves (TensorFlow and
+library messages) goes to `results/kernel_log.txt` instead of the terminal.
 
 Under WSL 2, Windows can stop the Linux distribution when no WSL terminal is open, which would end the run. Keep a
 WSL terminal open for the whole run (it may be minimized). The recommended way is `tmux`, which also lets a terminal
@@ -201,7 +201,8 @@ To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\resu
 ```bash
 python scripts/pilots.py ga es neat       # short runs from Easy: is the 90% requirement reachable?
 python -m racing.bench generation         # generation time per worker count; prints the EC_RACING_JOBS to use
-python -m racing.bench keras              # Keras epoch time per steps_per_execution and jit_compile
+python -m racing.bench keras              # Keras epoch time per steps_per_execution and jit_compile (XLA stays
+                                          # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
 The pilots write to `results/pilots/revision3.1/` and are not part of the reported results;

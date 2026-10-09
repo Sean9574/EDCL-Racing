@@ -150,7 +150,9 @@ HYPERBAND_FACTOR = 3
 HYPERBAND_ITERATIONS = 1
 SIZE_RULE_TOLERANCE = 0.01
 STEPS_PER_EXECUTION = 64     # batches per training-function call; racing/bench.py, s/epoch with XLA: 1: 0.367, 4: 0.201, 16: 0.134, 64: 0.128
-JIT_COMPILE = True           # XLA compilation; racing/bench.py: faster than without at every steps_per_execution (64: 0.128 vs 0.144 s)
+JIT_COMPILE = False          # XLA is ~11% faster per epoch (racing/bench.py, 64: 0.128 vs 0.144 s), but on the
+                             # desktop's i9-12900K its JIT failed after ~130 Keras Tuner trials ("Failed to
+                             # materialize symbols") and stayed broken in that process; reliability wins
 
 # --- DAgger (revision 3 §6.3) ---
 DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and as many more for the round's check

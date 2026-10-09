@@ -51,7 +51,7 @@ def run_main(runner, tmp_path, argv, monitor=False, out=None):
 @pytest.mark.parametrize("start", ["3", "07", "03_c", "03_c.ipynb"])
 def test_from_must_name_an_existing_notebook(runner, tmp_path, monkeypatch, capsys, start):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: pytest.fail("a notebook was run"))
     assert run_main(runner, tmp_path, ["--from", start]) == 2
     assert "01, 02, 03" in capsys.readouterr().err
     assert not (tmp_path / "info.json").exists() and not (tmp_path / "log.txt").exists()
@@ -60,7 +60,7 @@ def test_from_must_name_an_existing_notebook(runner, tmp_path, monkeypatch, caps
 def test_from_an_existing_notebook_runs_it_and_the_later_ones(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
     executed = []
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: executed.append(path.name))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: executed.append(path.name))
     assert run_main(runner, tmp_path, ["--from", "02"]) == 0
     assert executed == ["02_b.ipynb", "03_c.ipynb"]
     info = json.loads((tmp_path / "info.json").read_text())
@@ -70,7 +70,7 @@ def test_from_an_existing_notebook_runs_it_and_the_later_ones(runner, tmp_path, 
 
 def test_run_record_holds_the_settings_and_code_version(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     assert run_main(runner, tmp_path, []) == 0
     info = json.loads((tmp_path / "info.json").read_text())
     assert info["settings"] == json.loads(json.dumps(runner.checkpoint.settings_record()))
@@ -201,7 +201,7 @@ def changed_settings(runner):
 def test_results_from_other_settings_are_refused_until_fresh(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
     executed = []
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: executed.append(path.name))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: executed.append(path.name))
     record = tmp_path / "results" / "runs" / "ga" / "seed0" / "summary.json"
     record.parent.mkdir(parents=True)
     record.write_text(json.dumps({"approach": "ga", "settings": changed_settings(runner)}))
@@ -215,7 +215,7 @@ def test_results_from_other_settings_are_refused_until_fresh(runner, tmp_path, m
 
 def test_a_checkpoint_from_other_settings_is_refused(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: pytest.fail("a notebook was run"))
     path = tmp_path / "results" / "runs" / "neat" / "seed2" / runner.checkpoint.CHECKPOINT_NAME
     path.parent.mkdir(parents=True)
     runner.checkpoint.save(path, {"generation": 7, "settings": changed_settings(runner)})
@@ -226,7 +226,7 @@ def test_a_checkpoint_from_other_settings_is_refused(runner, tmp_path, monkeypat
 def test_records_without_settings_are_refused_until_fresh(runner, tmp_path, monkeypatch, capsys):
     """checkpoint.completed refuses a record without settings, so the runner refuses it before notebook 01."""
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     record = tmp_path / "results" / "runs" / "ga" / "seed0" / "summary.json"
     record.parent.mkdir(parents=True)
     record.write_text(json.dumps({"approach": "ga", "evals": 200000}))       # a revision 2.0 record
@@ -249,7 +249,7 @@ def test_fresh_removes_results_but_keeps_pilots_viewer_runs_and_archive(runner, 
 
 def test_fresh_cannot_be_combined_with_from(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: pytest.fail("a notebook was run"))
     assert run_main(runner, tmp_path, ["--fresh", "--from", "02"]) == 2
     assert "--fresh" in capsys.readouterr().err
 
@@ -257,7 +257,7 @@ def test_fresh_cannot_be_combined_with_from(runner, tmp_path, monkeypatch, capsy
 def test_a_settings_mismatch_inside_a_notebook_stops_with_code_3(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
 
-    def stopped(path, kernel_dir):
+    def stopped(path, kernel_dir, output=None):
         raise RuntimeError("SettingsMismatch: TARGET_FACTOR: recorded 1.2, current 1.3")
 
     monkeypatch.setattr(runner, "execute", stopped)
@@ -267,7 +267,7 @@ def test_a_settings_mismatch_inside_a_notebook_stops_with_code_3(runner, tmp_pat
 
 def test_the_monitor_prints_the_runner_milestones(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     out = io.StringIO()
     assert run_main(runner, tmp_path, [], monitor=True, out=out) == 0
     text = out.getvalue()
@@ -277,7 +277,7 @@ def test_the_monitor_prints_the_runner_milestones(runner, tmp_path, monkeypatch)
 
 def test_a_rerun_keeps_the_record_of_earlier_notebooks(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     assert run_main(runner, tmp_path, []) == 0
     assert run_main(runner, tmp_path, ["--from", "03"]) == 0
     info = json.loads((tmp_path / "info.json").read_text())
@@ -289,7 +289,7 @@ def test_an_unreadable_record_is_named_and_only_that_file_is_to_be_deleted(runne
     """A record cut short by a reboot is not a settings change: --fresh would remove every result."""
     three_notebooks(tmp_path)
     executed = []
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: executed.append(path.name))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: executed.append(path.name))
     record = tmp_path / "results" / "runs" / "baseline" / "seed0" / "summary.json"
     record.parent.mkdir(parents=True)
     record.write_text("")
@@ -309,7 +309,7 @@ def test_an_unreadable_record_is_named_and_only_that_file_is_to_be_deleted(runne
 def test_an_unreadable_summary_next_to_its_checkpoint_finishes_by_itself(runner, tmp_path, monkeypatch):
     """The run redoes its final selection from the checkpoint (checkpoint.completed), so the runner starts."""
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     run = tmp_path / "results" / "runs" / "ga" / "seed0"
     run.mkdir(parents=True)
     (run / "summary.json").write_text("")
@@ -320,7 +320,7 @@ def test_an_unreadable_summary_next_to_its_checkpoint_finishes_by_itself(runner,
 
 def test_the_run_record_is_synced_to_disk(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     written, real = [], runner.checkpoint.write_json
     monkeypatch.setattr(runner.checkpoint, "write_json",
                         lambda path, data: written.append(Path(path).name) or real(path, data))
@@ -338,7 +338,7 @@ def hold_lock(results):
 
 def test_a_second_runner_on_the_same_results_stops_with_code_4(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: pytest.fail("a notebook was run"))
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: pytest.fail("a notebook was run"))
     (tmp_path / "results" / "runs").mkdir(parents=True)                 # what --fresh would remove
     held = hold_lock(tmp_path / "results")
     held.write("4242\n")                                                # the holder records its process
@@ -358,7 +358,7 @@ def test_the_runner_holds_the_lock_for_the_whole_run_and_releases_it(runner, tmp
     three_notebooks(tmp_path)
     seen = []
 
-    def execute(path, kernel_dir):
+    def execute(path, kernel_dir, output=None):
         assert (tmp_path / "results" / ".runner.lock").read_text() == f"{runner.os.getpid()}\n"
         try:
             hold_lock(tmp_path / "results").close()
@@ -378,7 +378,7 @@ def test_the_runner_holds_the_lock_for_the_whole_run_and_releases_it(runner, tmp
 
 def test_the_lock_creates_the_results_folder(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     assert not (tmp_path / "results").exists()
     assert run_main(runner, tmp_path, []) == 0
     assert (tmp_path / "results" / ".runner.lock").exists()
@@ -387,7 +387,7 @@ def test_the_lock_creates_the_results_folder(runner, tmp_path, monkeypatch):
 
 def test_each_start_records_its_code_version_and_a_changed_commit_is_reported(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     versions = iter([{"git_commit": "a" * 40, "git_dirty": False}, {"git_commit": "a" * 40, "git_dirty": True},
                      {"git_commit": "b" * 40, "git_dirty": False}])
     monkeypatch.setattr(runner, "code_version", lambda: next(versions))
@@ -407,7 +407,7 @@ def test_each_start_records_its_code_version_and_a_changed_commit_is_reported(ru
 def test_a_record_from_before_per_start_versions_is_compared_with_its_last_commit(runner, tmp_path, monkeypatch,
                                                                                   capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     monkeypatch.setattr(runner, "code_version", lambda: {"git_commit": "b" * 40, "git_dirty": False})
     (tmp_path / "info.json").write_text(json.dumps({"git_commit": "c" * 40, "runs": [{"started": "x", "from": None}],
                                                     "notebooks": []}))
@@ -417,7 +417,7 @@ def test_a_record_from_before_per_start_versions_is_compared_with_its_last_commi
 
 def test_an_unknown_code_version_is_not_reported_as_a_change(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: None)
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: None)
     versions = iter([{"git_commit": "unknown", "git_dirty": "unknown"}, {"git_commit": "b" * 40, "git_dirty": False}])
     monkeypatch.setattr(runner, "code_version", lambda: next(versions))
     assert run_main(runner, tmp_path, []) == 0 and run_main(runner, tmp_path, []) == 0
@@ -427,7 +427,7 @@ def test_an_unknown_code_version_is_not_reported_as_a_change(runner, tmp_path, m
 def test_notebook_kernels_use_the_cpu_without_tensorflow_logs(runner, tmp_path, monkeypatch):
     three_notebooks(tmp_path)
     specs = []
-    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: specs.append(
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: specs.append(
         json.loads((Path(kernel_dir) / runner.KERNEL / "kernel.json").read_text())))
     assert run_main(runner, tmp_path, []) == 0
     assert len(specs) == 3 and specs[0]["env"] == {"CUDA_VISIBLE_DEVICES": "-1", "TF_CPP_MIN_LOG_LEVEL": "3"}
@@ -477,3 +477,25 @@ def test_ctrl_c_or_kill_stops_a_quiet_notebook_and_its_kernel(runner, tmp_path, 
             process.kill()
         if Path(f"/proc/{kernel}").exists():
             os.kill(kernel, signal.SIGKILL)
+
+
+def test_kernel_output_goes_to_a_log_next_to_the_run_log(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    outputs = []
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: outputs.append(output.name))
+    assert run_main(runner, tmp_path, []) == 0
+    assert outputs == [str(tmp_path / runner.KERNEL_LOG)] * 3
+    assert runner.KERNEL_LOG in runner.FRESH_REMOVE
+
+
+@pytest.mark.slow
+def test_a_kernels_own_messages_stay_out_of_the_terminal(runner, tmp_path, capfd):
+    folder = tmp_path / "notebooks"
+    folder.mkdir()
+    write_notebook(folder / "01_a.ipynb", "import os\nos.write(2, b'native message from the kernel\\n')\nprint('cell')")
+    kernels = tmp_path / "kernels"
+    runner.write_kernel(kernels)
+    with open(tmp_path / "kernel_log.txt", "a") as output:
+        runner.execute(folder / "01_a.ipynb", kernels, output)
+    assert "native message" not in capfd.readouterr().err
+    assert "native message from the kernel" in (tmp_path / "kernel_log.txt").read_text()
