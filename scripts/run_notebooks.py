@@ -7,17 +7,22 @@ In background:   mkdir -p results
                  nohup python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
 Progress:        python -m racing.progress                     (from another terminal)
 
+Stop:            Ctrl+C, or from another terminal: pkill -f scripts/run_notebooks.py
+                 (the notebook's kernel is ended too; run again to continue where it stopped)
+
 Exit codes: 0 finished; 1 a notebook failed; 2 invalid options; 3 earlier results were produced with different
 settings (run again with --fresh) or cannot be read (delete the files named); 4 another runner is using the same
-results.
+results; 130 stopped with Ctrl+C or kill.
 """
 import argparse
 import fcntl
 import os
 import platform
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +43,7 @@ RECORD_STATES = {"summary.json": checkpoint.CHECKPOINT_NAME,      # run records 
 RECORD_FILES = tuple(RECORD_STATES)
 STATE_FILES = tuple(RECORD_STATES.values())
 LOCK_NAME = ".runner.lock"                            # under results/; held by the running runner
+STOPPED = 130                                         # exit code after Ctrl+C or kill (128 + SIGINT)
 
 
 def now():
@@ -122,12 +128,27 @@ def execute(path, kernel_dir):
     notebook = nbformat.read(path, as_version=4)
     manager = KernelManager(kernel_name=KERNEL, kernel_spec_manager=KernelSpecManager(kernel_dirs=[str(kernel_dir)]))
     client = NotebookClient(notebook, km=manager, timeout=None, resources={"metadata": {"path": str(path.parent)}})
+    errors = []
+
+    def work():
+        try:
+            client.execute()
+        except BaseException as error:                # raised again below, in the main thread
+            errors.append(error)
+
+    # The client waits for the kernel's next message without a time limit, so a notebook that prints nothing for
+    # hours would hold off Ctrl+C and kill. It runs in a thread; the main thread only waits and can always stop.
+    worker = threading.Thread(target=work, name=f"notebook {path.name}", daemon=True)
+    worker.start()
     try:
-        client.execute()
+        while worker.is_alive():
+            worker.join(0.2)
     finally:
-        nbformat.write(notebook, path)
         if manager.is_alive():
-            manager.shutdown_kernel(now=True)          # a finished notebook's kernel does not stay resident
+            manager.shutdown_kernel(now=True)          # a finished or stopped notebook's kernel does not stay resident
+        nbformat.write(notebook, path)
+    if errors:
+        raise errors[0]
 
 
 def write_info(info, path):
@@ -260,6 +281,12 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
                 began = time.time()
                 try:
                     execute(notebook_dir / name, kernels)
+                except KeyboardInterrupt:              # Ctrl+C or kill: the kernel has been ended
+                    entry["stopped"] = now()
+                    entry["seconds"] = round(time.time() - began, 1)
+                    write_info(info, info_path)
+                    log(f"STOPPED {name}: the run was stopped; run again to continue where it stopped", log_path)
+                    return STOPPED
                 except Exception as error:             # a failing cell; its output is saved in the notebook
                     text = str(error).strip()
                     entry["failed"] = text.splitlines()[-1] if text else type(error).__name__
@@ -282,6 +309,11 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
             watcher.stop()
 
 
+def stop_on_kill(signum, frame):
+    """kill (SIGTERM) stops the run like Ctrl+C: the notebook's kernel is ended and the run log says so."""
+    raise KeyboardInterrupt
+
+
 def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
          results_dir=config.RESULTS_DIR, status_path=config.STATUS_PATH, monitor=True, out=None):
     parser = argparse.ArgumentParser(description="Run the EC Racing experiment notebooks in order. An interrupted "
@@ -299,6 +331,17 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
             print("error: --fresh starts over from the first notebook and cannot be combined with --from",
                   file=sys.stderr)
             return 2
+    previous = signal.signal(signal.SIGTERM, stop_on_kill)
+    try:
+        return locked_main(args, notebook_dir, log_path, info_path, results_dir, status_path, monitor, out)
+    except KeyboardInterrupt:                          # stopped before or after a notebook ran
+        return STOPPED
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_path, monitor, out):
+    """main() once the options are valid: takes the results lock, checks earlier results and runs."""
     lock = lock_results(results_dir)
     if lock is None:
         holder = lock_holder(results_dir)

@@ -2,6 +2,11 @@ import fcntl
 import importlib.util
 import io
 import json
+import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import nbformat
@@ -426,3 +431,49 @@ def test_notebook_kernels_use_the_cpu_without_tensorflow_logs(runner, tmp_path, 
         json.loads((Path(kernel_dir) / runner.KERNEL / "kernel.json").read_text())))
     assert run_main(runner, tmp_path, []) == 0
     assert len(specs) == 3 and specs[0]["env"] == {"CUDA_VISIBLE_DEVICES": "-1", "TF_CPP_MIN_LOG_LEVEL": "3"}
+
+
+STOP_SECONDS = 30            # a stopped runner ends its kernel and exits within this time
+
+
+def quiet_runner(tmp_path):
+    """Starts the runner in its own process on one notebook that prints nothing for ten minutes, as a long training
+    cell does. Returns the process and the file the notebook writes its kernel's process id to."""
+    folder = tmp_path / "notebooks"
+    folder.mkdir()
+    pid_file = tmp_path / "kernel.pid"
+    write_notebook(folder / "01_quiet.ipynb",
+                   f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(600)")
+    script = (f"import importlib.util, sys\n"
+              f"spec = importlib.util.spec_from_file_location('run_notebooks', {str(SCRIPT)!r})\n"
+              f"runner = importlib.util.module_from_spec(spec)\n"
+              f"spec.loader.exec_module(runner)\n"
+              f"sys.exit(runner.main([], notebook_dir={str(folder)!r}, log_path={str(tmp_path / 'log.txt')!r}, "
+              f"info_path={str(tmp_path / 'info.json')!r}, results_dir={str(tmp_path / 'results')!r}, "
+              f"status_path={str(tmp_path / 'status.json')!r}, monitor=False))\n")
+    process = subprocess.Popen([sys.executable, "-c", script], cwd=SCRIPT.parent.parent)
+    deadline = time.time() + 120
+    while not (pid_file.exists() and pid_file.read_text()):
+        assert process.poll() is None and time.time() < deadline, "the notebook never started"
+        time.sleep(0.2)
+    return process, int(pid_file.read_text())
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stop", [signal.SIGINT, signal.SIGTERM])
+def test_ctrl_c_or_kill_stops_a_quiet_notebook_and_its_kernel(runner, tmp_path, stop):
+    """The test signals only the runner and the kernel it started itself."""
+    process, kernel = quiet_runner(tmp_path)
+    try:
+        process.send_signal(stop)
+        assert process.wait(timeout=STOP_SECONDS) == runner.STOPPED
+        deadline = time.time() + 10
+        while Path(f"/proc/{kernel}").exists() and time.time() < deadline:
+            time.sleep(0.2)
+        assert not Path(f"/proc/{kernel}").exists()
+        assert "STOPPED 01_quiet.ipynb" in (tmp_path / "log.txt").read_text()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        if Path(f"/proc/{kernel}").exists():
+            os.kill(kernel, signal.SIGKILL)

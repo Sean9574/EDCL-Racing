@@ -143,9 +143,11 @@ From another terminal, watch the run with:
 python -m racing.progress                            # live status; Ctrl+C stops watching only
 ```
 
-- **Stopping and resuming:** stop with Ctrl+C (or `kill` the background process). Start the same command again to
-  continue: finished runs are skipped and an interrupted run continues from its last checkpoint, losing at most one
-  generation. A resumed run produces exactly the results of an uninterrupted one.
+- **Stopping and resuming:** stop with Ctrl+C, or from another terminal with `pkill -f scripts/run_notebooks.py`.
+  The runner ends the notebook's kernel (and its worker processes), notes the stop in the run log and exits with
+  code 130 within a few seconds. Start the same command again to continue: finished runs are skipped and an
+  interrupted run continues from its last checkpoint, losing at most one generation. A resumed run produces exactly
+  the results of an uninterrupted one.
 - **One runner at a time:** a second `run_notebooks.py` on the same `results/` stops at once with exit code 4 and
   names the process that holds `results/.runner.lock`.
 - **After a crash or power loss:** if a result file was cut short, the runner lists it and exits with code 3. Delete
