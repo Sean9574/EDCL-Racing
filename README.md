@@ -113,8 +113,10 @@ python scripts/run_notebooks.py
 
 The run takes days rather than hours: every method trains until it masters the curriculum and can no longer get
 faster. A live status line shows the current run, level, generation, the worst map's success share against 90%, the
-streak and the elapsed time; level-ups, mastery goals, target reductions and finished runs are printed as permanent
-lines and kept in `results/run_log.txt`.
+streak and the elapsed time (during the imitation training of notebook 02: the epoch and validation accuracy, or the
+Keras Tuner trial); level-ups, mastery goals, target reductions and finished runs are printed as permanent lines and
+kept in `results/run_log.txt`. The notebooks run on the CPU with TensorFlow's own log switched off, so a machine with
+an NVIDIA GPU shows no GPU messages.
 
 Under WSL 2, Windows can stop the Linux distribution when no WSL terminal is open, which would end the run. Keep a
 WSL terminal open for the whole run (it may be minimized). The recommended way is `tmux`, which also lets a terminal

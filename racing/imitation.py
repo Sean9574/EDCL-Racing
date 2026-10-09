@@ -2,12 +2,13 @@
 selected architectures with each run seed. Each trained network is saved as its imitation stage (revision 3 §6.5)."""
 import csv
 import json
+import math
 import time
 from pathlib import Path
 
 import numpy as np
 
-from racing import checkpoint, config, nets, paths
+from racing import checkpoint, config, nets, paths, progress
 from racing.backend import keras_cpu
 
 TUNER_CLASSES = {"kt_random": "RandomSearch", "kt_hyperband": "Hyperband", "kt_bayesian": "BayesianOptimization"}
@@ -77,6 +78,26 @@ def epoch_reporter(on_epoch):
     return EpochReporter()
 
 
+def best_of(best, value):
+    """The larger of two validation accuracies, ignoring a missing (nan) one."""
+    return value if math.isnan(best) else best if math.isnan(value) else max(best, value)
+
+
+def epoch_status(approach, seed, on_epoch=None):
+    """on_epoch of a reported training run: shows the epoch and its validation accuracy in the live status line
+    (revision 3 §8.3), then calls on_epoch."""
+    began, best = time.time(), [float("nan")]
+
+    def report(epoch, model, val_accuracy):
+        best[0] = best_of(best[0], val_accuracy)
+        progress.write_status({"approach": approach, "seed": seed, "stage": "imitation", "epoch": epoch + 1,
+                               "val_accuracy": val_accuracy, "best": best[0], "elapsed": time.time() - began})
+        if on_epoch is not None:
+            on_epoch(epoch, model, val_accuracy)
+
+    return report
+
+
 def fit(model, data, epochs, on_epoch=None):
     """Train with early stopping on validation accuracy. Returns the Keras history and the wall time."""
     callbacks = [early_stopping()]
@@ -91,7 +112,7 @@ def fit(model, data, epochs, on_epoch=None):
 STAGE_FILE = "imitation.keras"     # the trained network in its run directory (revision 3 §6.5)
 
 
-def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None):
+def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None, report=True):
     """Save the trained network as the imitation stage, then write the run's summary. The summary records the
     settings and is written last, so its presence marks a complete run (revision 3 §8.2). The final controller of an
     imitation method comes from its speed push (revision 3 §6.4), not from here."""
@@ -102,6 +123,9 @@ def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None):
                "wall_time": wall_time, "stage_path": str(stage), **(extra or {}),
                "settings": checkpoint.settings_record()}
     checkpoint.write_json(Path(out_dir) / "summary.json", summary)
+    if report:
+        progress.milestone(f"{config.LABELS[approach]} seed {seed}: imitation trained, {summary['epochs']} epochs, "
+                           f"val accuracy {progress.accuracy(summary['val_accuracy'])}")
     return summary
 
 
@@ -123,7 +147,9 @@ def previous_run(out_dir, resume):
     return None
 
 
-def train_baseline(data, out_dir=None, on_epoch=None, epochs=config.MAX_EPOCHS, seed=0, resume=True):
+def train_baseline(data, out_dir=None, on_epoch=None, epochs=config.MAX_EPOCHS, seed=0, resume=True, report=True):
+    """The baseline network with `seed`. With report (the experiment, not the viewer), the live status line shows
+    each epoch and the run log its end."""
     out_dir = Path(out_dir or paths.run_dir("baseline", seed))
     done = previous_run(out_dir, resume)
     if done is not None:
@@ -131,14 +157,14 @@ def train_baseline(data, out_dir=None, on_epoch=None, epochs=config.MAX_EPOCHS, 
     start_run(out_dir)
     keras_cpu().utils.set_random_seed(seed)
     model = build_baseline()
-    history, wall_time = fit(model, data, epochs, on_epoch)
+    history, wall_time = fit(model, data, epochs, epoch_status("baseline", seed, on_epoch) if report else on_epoch)
     return finish_run("baseline", seed, model, history, wall_time, out_dir,
-                      extra={"learning_rate": config.LEARNING_RATE})
+                      extra={"learning_rate": config.LEARNING_RATE}, report=report)
 
 
 def make_tuner(approach, directory, seed=0, on_trial=None, max_trials=config.KT_TRIALS,
                max_epochs=config.MAX_EPOCHS, hyperband_iterations=config.HYPERBAND_ITERATIONS,
-               bayes_initial=config.KT_BAYES_INITIAL):
+               bayes_initial=config.KT_BAYES_INITIAL, on_status=None):
     keras_cpu()
     import keras_tuner as kt
     base = getattr(kt, TUNER_CLASSES[approach])
@@ -155,9 +181,12 @@ def make_tuner(approach, directory, seed=0, on_trial=None, max_trials=config.KT_
 
         def on_trial_end(self, trial):
             super().on_trial_end(trial)
-            if on_trial is not None and trial.score is not None:
+            if trial.score is not None:
                 self.completed += 1
-                on_trial(self.completed, self.load_model(trial), float(trial.score))
+                if on_status is not None:                    # the live status line (no model needed)
+                    on_status(self.completed, float(trial.score))
+                if on_trial is not None:
+                    on_trial(self.completed, self.load_model(trial), float(trial.score))
 
     common = {"hypermodel": build_hypermodel, "objective": "val_accuracy", "seed": seed,
               "directory": str(directory), "project_name": approach, "overwrite": True}
@@ -214,10 +243,11 @@ def most_trained(records):
 
 def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SEED, max_trials=config.KT_TRIALS,
               max_epochs=config.MAX_EPOCHS, hyperband_iterations=config.HYPERBAND_ITERATIONS,
-              bayes_initial=config.KT_BAYES_INITIAL, export_models=True, resume=True):
+              bayes_initial=config.KT_BAYES_INITIAL, export_models=True, resume=True, report=True):
     """One Keras Tuner search (spec §8.2). Writes trials.csv, summary.json and, with export_models, the most-trained
     model of every configuration. Final controllers come from retrain(). With resume, a complete search recorded with
-    the current settings is returned instead of run again (revision 3 §8.2)."""
+    the current settings is returned instead of run again (revision 3 §8.2). With report (the experiment, not the
+    viewer), the live status line shows each completed trial and the run log the search's end."""
     out_dir = Path(out_dir or paths.search_dir(approach))
     if resume:
         done = checkpoint.completed(out_dir)
@@ -226,9 +256,18 @@ def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SE
     paths.remove(out_dir / "trials.csv", out_dir / "summary.json", out_dir / "models")
     out_dir.mkdir(parents=True, exist_ok=True)
     keras_cpu().utils.set_random_seed(seed)
+    start, best = time.time(), [float("nan")]
+    trials = None if approach == "kt_hyperband" else max_trials     # Hyperband's trial count follows from its budget
+
+    def on_status(completed, score):
+        best[0] = best_of(best[0], score)
+        progress.write_status({"approach": approach, "stage": "search", "trial": completed, "trials": trials,
+                               "best": best[0], "elapsed": time.time() - start})
+
+    if report:
+        on_status(0, float("nan"))
     tuner = make_tuner(approach, out_dir / "tuner", seed, on_trial, max_trials, max_epochs, hyperband_iterations,
-                       bayes_initial)
-    start = time.time()
+                       bayes_initial, on_status=on_status if report else None)
     tuner.search(data["X_train"], data["y_train"], validation_data=(data["X_val"], data["y_val"]),
                  epochs=max_epochs, batch_size=config.BATCH_SIZE, callbacks=[early_stopping()], verbose=0)
     wall_time = time.time() - start
@@ -254,11 +293,15 @@ def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SE
                "chosen_params": chosen["params"], "chosen_hyperparameters": chosen["hyperparameters"],
                "settings": checkpoint.settings_record()}
     checkpoint.write_json(out_dir / "summary.json", summary)
+    if report:
+        progress.milestone(f"{config.LABELS[approach]} search: {len(records)} trials, chosen network "
+                           f"{chosen['params']} parameters, val accuracy {progress.accuracy(chosen['val_accuracy'])}")
     return summary
 
 
-def retrain(approach, data, seed, search=None, out_dir=None, epochs=config.MAX_EPOCHS, resume=True):
-    """Train the architecture selected by a search from scratch with `seed` (spec §8.3)."""
+def retrain(approach, data, seed, search=None, out_dir=None, epochs=config.MAX_EPOCHS, resume=True, report=True):
+    """Train the architecture selected by a search from scratch with `seed` (spec §8.3). With report, the live
+    status line shows each epoch and the run log its end."""
     search = Path(search or paths.search_dir(approach))
     out_dir = Path(out_dir or paths.run_dir(approach, seed))
     done = previous_run(out_dir, resume)
@@ -269,6 +312,7 @@ def retrain(approach, data, seed, search=None, out_dir=None, epochs=config.MAX_E
     keras_cpu().utils.set_random_seed(seed)
     model = build_network(architecture(chosen), chosen["activation"], float(chosen["dropout"]),
                           float(chosen["learning_rate"]))
-    history, wall_time = fit(model, data, epochs)
+    history, wall_time = fit(model, data, epochs, epoch_status(approach, seed) if report else None)
     return finish_run(approach, seed, model, history, wall_time, out_dir,
-                      extra={"hyperparameters": chosen, "learning_rate": float(chosen["learning_rate"])})
+                      extra={"hyperparameters": chosen, "learning_rate": float(chosen["learning_rate"])},
+                      report=report)

@@ -183,12 +183,17 @@ record of the reported run.
 - **Progress display:**
   - **Status file.** Every run writes its current state to `results/status.json` after each generation
     or round: the run number out of the total, the method, seed, level, generation, lowest map success
-    share, streak, target reduction and elapsed time.
+    share, streak, target reduction and elapsed time. The imitation training writes it after every epoch (epoch,
+    validation accuracy and the best so far) and each Keras Tuner search after every completed trial (trial
+    number, best validation accuracy), so the line is live from the second notebook on.
   - **Live line.** While the runner executes the notebooks, it displays the status as a single line that
     is updated in place, for example
     `[run 9/24] GA seed 1 · Hard · gen 412 · worst map 84% / 90% ███████████▍ · streak 1/3 · 2h 13m`.
-  - **Milestones.** Level advancements, mastery goals, target reductions and completed runs are printed
-    as permanent lines and appended to `results/run_log.txt`.
+  - **Milestones.** Level advancements, mastery goals, target reductions, completed runs, trained imitation
+    networks and completed searches are printed as permanent lines and appended to `results/run_log.txt`.
+  - **Quiet kernels.** The notebook kernels run with GPUs hidden (`CUDA_VISIBLE_DEVICES=-1`) and TensorFlow's
+    C++ log switched off (`TF_CPP_MIN_LOG_LEVEL=3`), so TensorFlow neither searches for a GPU on a machine that
+    has one nor writes its log into the progress display.
   - **Separate monitor.** `python -m racing.progress` shows the same display from another terminal, for
     a runner started in the background.
 - **Run record:** the runner writes `results/run_info.json`. It records the processor model, the number

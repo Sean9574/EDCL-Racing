@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from racing import checkpoint, config, imitation, nets, paths
+from racing import checkpoint, config, imitation, nets, paths, progress
 
 
 def synced_writes(monkeypatch):
@@ -77,6 +77,30 @@ def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     assert summary["learning_rate"] == config.LEARNING_RATE
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 431
     assert checkpoint.completed(tmp_path / "run")["val_accuracy"] == summary["val_accuracy"]
+
+
+def test_reported_training_shows_its_progress_and_logs_its_end(toy_data, tmp_path):
+    summary = imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=2, seed=1)
+    status = progress.read_status()
+    assert status["approach"] == "baseline" and status["seed"] == 1 and status["stage"] == "imitation"
+    assert status["epoch"] == summary["epochs"] and status["best"] == pytest.approx(summary["val_accuracy"])
+    assert "Baseline seed 1: imitation trained" in config.RUN_LOG_PATH.read_text()
+
+
+def test_viewer_training_reports_nothing(toy_data, tmp_path):
+    imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, resume=False, report=False)
+    assert not config.STATUS_PATH.exists() and not config.RUN_LOG_PATH.exists()
+
+
+def test_a_retrained_network_shows_its_progress(monkeypatch, toy_data, tmp_path):
+    search = tmp_path / "search"
+    search.mkdir()
+    chosen = {"layers": 1, "units_0": 8, "activation": "relu", "dropout": 0.0, "learning_rate": 0.001}
+    (search / "summary.json").write_text(json.dumps({"chosen_hyperparameters": chosen}))
+    imitation.retrain("kt_random", toy_data, seed=2, search=search, out_dir=tmp_path / "run", epochs=1)
+    status = progress.read_status()
+    assert status["approach"] == "kt_random" and status["seed"] == 2 and status["stage"] == "imitation"
+    assert "KT Random seed 2: imitation trained" in config.RUN_LOG_PATH.read_text()
 
 
 def test_the_training_summary_is_synced_to_disk(monkeypatch, toy_data, tmp_path):
@@ -189,6 +213,38 @@ def test_the_search_summary_is_synced_to_disk(monkeypatch, toy_data, tmp_path):
     summary = imitation.run_tuner("kt_random", toy_data, out_dir=tmp_path / "search", export_models=False)
     assert written == ["summary.json"] and summary["chosen_trial"] == "00"
     assert checkpoint.completed(tmp_path / "search")["chosen_params"] == nets.n_params((8,))
+
+
+def test_a_search_shows_each_trial_and_logs_its_end(monkeypatch, toy_data, tmp_path):
+    def make_tuner(*args, on_status=None, **kwargs):
+        tuner = FakeTuner()
+        tuner.search = lambda *a, **k: on_status(1, 0.5)
+        return tuner
+
+    monkeypatch.setattr(imitation, "make_tuner", make_tuner)
+    imitation.run_tuner("kt_random", toy_data, out_dir=tmp_path / "search", export_models=False)
+    status = progress.read_status()
+    assert status["stage"] == "search" and status["approach"] == "kt_random"
+    assert status["trial"] == 1 and status["trials"] == config.KT_TRIALS and status["best"] == 0.5
+    assert "KT Random search: 1 trials" in config.RUN_LOG_PATH.read_text()
+
+
+def test_a_viewer_search_reports_nothing(monkeypatch, toy_data, tmp_path):
+    def make_tuner(*args, on_status=None, **kwargs):
+        assert on_status is None
+        return FakeTuner()
+
+    monkeypatch.setattr(imitation, "make_tuner", make_tuner)
+    imitation.run_tuner("kt_random", toy_data, out_dir=tmp_path / "search", export_models=False, resume=False,
+                        report=False)
+    assert not config.STATUS_PATH.exists() and not config.RUN_LOG_PATH.exists()
+
+
+@pytest.mark.slow
+def test_a_real_search_shows_each_trial(toy_data, tmp_path):
+    run_small_search("kt_random", toy_data, tmp_path)
+    status = progress.read_status()
+    assert status["stage"] == "search" and status["trial"] == 3 and status["trials"] == 3
 
 
 def run_small_search(approach, toy_data, tmp_path, seen=None):

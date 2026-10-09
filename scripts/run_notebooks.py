@@ -29,6 +29,8 @@ from racing import checkpoint, config, paths, progress  # noqa: E402
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
+KERNEL_ENV = {"CUDA_VISIBLE_DEVICES": "-1",      # CPU only (spec §9): TensorFlow does not look for a GPU,
+              "TF_CPP_MIN_LOG_LEVEL": "3"}      # and its C++ log stays out of the progress display
 FRESH_REMOVE = ("runs", "champions", "tables", "figures", "dataset.npz", "dataset_info.json", "status.json",
                 "run_log.txt", "run_info.json")       # under results/; pilots, app_runs and archive are kept
 RECORD_STATES = {"summary.json": checkpoint.CHECKPOINT_NAME,      # run records that carry their settings, and the
@@ -249,7 +251,7 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
         log(f"run started: {' '.join(names)} ({config.N_JOBS} workers, power profile {info['power_profile']})",
             log_path)
         with tempfile.TemporaryDirectory() as kernels:
-            write_kernel_spec(Path(kernels) / KERNEL)
+            write_kernel_spec(Path(kernels) / KERNEL, overrides={"env": KERNEL_ENV})
             for name in names:
                 entry = {"notebook": name, "started": now()}
                 info["notebooks"] = [e for e in info["notebooks"] if e["notebook"] != name] + [entry]

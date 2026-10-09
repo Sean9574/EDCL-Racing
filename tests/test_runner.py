@@ -417,3 +417,12 @@ def test_an_unknown_code_version_is_not_reported_as_a_change(runner, tmp_path, m
     monkeypatch.setattr(runner, "code_version", lambda: next(versions))
     assert run_main(runner, tmp_path, []) == 0 and run_main(runner, tmp_path, []) == 0
     assert "warning" not in capsys.readouterr().err
+
+
+def test_notebook_kernels_use_the_cpu_without_tensorflow_logs(runner, tmp_path, monkeypatch):
+    three_notebooks(tmp_path)
+    specs = []
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir: specs.append(
+        json.loads((Path(kernel_dir) / runner.KERNEL / "kernel.json").read_text())))
+    assert run_main(runner, tmp_path, []) == 0
+    assert len(specs) == 3 and specs[0]["env"] == {"CUDA_VISIBLE_DEVICES": "-1", "TF_CPP_MIN_LOG_LEVEL": "3"}

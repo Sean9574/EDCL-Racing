@@ -280,11 +280,11 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
               "leveled_up": False})
 
     if approach == "baseline":                         # resume=False: always train live, never skip (revision 3 §9)
-        imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False,
+        imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False, report=False,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
     else:
         imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False,
-                            resume=False)
+                            resume=False, report=False)
     return 0
 
 

@@ -786,14 +786,14 @@ def test_viewer_imitation_training_never_resumes(monkeypatch, tmp_path):
     fake_imitation(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(imitation, "train_baseline",
-                        lambda data, **kwargs: calls.append(("baseline", kwargs["resume"], kwargs.get("champion_dir"))))
+                        lambda data, **kwargs: calls.append(("baseline", kwargs["resume"], kwargs["report"])))
     monkeypatch.setattr(imitation, "run_tuner",
-                        lambda approach, data, **kwargs: calls.append((approach, kwargs["resume"], None)))
+                        lambda approach, data, **kwargs: calls.append((approach, kwargs["resume"], kwargs["report"])))
     running = threading.Event()
     running.set()
     viewer.trainer_main("baseline", 0, 0, 1, queue.Queue(), running)
     viewer.trainer_main("kt_random", 0, 0, 1, queue.Queue(), running)
-    assert calls == [("baseline", False, None), ("kt_random", False, None)]
+    assert calls == [("baseline", False, False), ("kt_random", False, False)]     # never the experiment's status
 
 
 def test_trainer_main_passes_seed_level_and_seeded_start(monkeypatch, tmp_path):

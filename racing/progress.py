@@ -100,17 +100,30 @@ def duration(seconds):
     return f"{days}d {hours}h {minutes:02d}m" if days else f"{hours}h {minutes:02d}m"
 
 
+def accuracy(value):
+    value = _number(value)
+    return "–" if math.isnan(value) else f"{100 * value:.1f}%"
+
+
 def format_status(status):
     """The one-line status, for example
     '[run 14/24] GA seed 1 · Hard · gen 412 · worst map 84% / 90% ███████████████▊     · streak 1/3 · 2h 13m'."""
     status = status or {}
     approach, seed = status.get("approach"), status.get("seed")
-    position, total = run_number(approach, seed)
     name = config.LABELS.get(approach, approach or "?")
-    parts = [f"[run {position or '–'}/{total}] {name} seed {'?' if seed is None else seed}"]
     stage = status.get("stage", "evolution")
+    if stage == "search":                          # a Keras Tuner search belongs to no run seed
+        total = status.get("trials")
+        trials = f"trial {status.get('trial', 0)}" + (f"/{total}" if total else "")
+        return " · ".join([f"[search] {name}", trials, f"best val acc {accuracy(status.get('best'))}",
+                           duration(status.get("elapsed"))])
+    position, total = run_number(approach, seed)
+    parts = [f"[run {position or '–'}/{total}] {name} seed {'?' if seed is None else seed}"]
     streak = status.get("streak", 0)
-    if stage == "dagger":
+    if stage == "imitation":
+        parts += [f"imitation epoch {status.get('epoch', '?')}",
+                  f"val acc {accuracy(status.get('val_accuracy'))} (best {accuracy(status.get('best'))})"]
+    elif stage == "dagger":
         parts += [f"DAgger round {status.get('round', '?')}",
                   f"checks {status.get('checks', '?')}/{config.DAGGER_MAPS}",
                   f"streak {streak}/{config.DAGGER_STREAK}"]

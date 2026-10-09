@@ -99,6 +99,20 @@ def test_dagger_line(order):
     assert line == "[run 2/6] Baseline seed 1 · DAgger round 7 · checks 16/20 · streak 1/3 · 0h 42m"
 
 
+def test_imitation_line(order):
+    line = progress.format_status({"approach": "baseline", "seed": 1, "stage": "imitation", "epoch": 12,
+                                   "val_accuracy": 0.9123, "best": 0.9156, "elapsed": 190})
+    assert line == "[run 2/6] Baseline seed 1 · imitation epoch 12 · val acc 91.2% (best 91.6%) · 0h 03m"
+
+
+def test_search_line(order):
+    line = progress.format_status({"approach": "kt_random", "stage": "search", "trial": 7, "trials": 30,
+                                   "best": 0.9214, "elapsed": 720})
+    assert line == "[search] KT Random · trial 7/30 · best val acc 92.1% · 0h 12m"
+    hyperband = progress.format_status({"approach": "kt_hyperband", "stage": "search", "trial": 0, "elapsed": 5})
+    assert hyperband == "[search] KT Hyperband · trial 0 · best val acc – · 0h 00m"
+
+
 def test_incomplete_status_still_formats(order):
     assert progress.format_status({"approach": "ga"}).startswith("[run –/6] GA seed ?")
     assert progress.format_status({"approach": "ga", "seed": 0, "min_share": None, "level": None})
