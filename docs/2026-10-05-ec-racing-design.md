@@ -167,6 +167,19 @@ record of the reported run.
   05 ES → 06 seeded ES → 07 NEAT → 08 evaluation. The seeded ES depends on the DAgger-refined baseline
   from notebook 03. Notebooks run one at a time, so no two methods compete for the processor while
   their training time is measured.
+- **Runs side by side and on several machines.** One run gains little beyond 6 to 8 worker processes
+  (`racing/bench.py`), so the evolutionary runs of notebooks 04 to 07 may instead be trained side by side,
+  `scripts/run_notebooks.py --runs ga:1,neat:0 --at-once 2`, and on several machines with
+  `scripts/fleet.py` (plan in `scripts/fleet.toml`). Each run is then trained directly by
+  `racing/train.py`, which makes exactly the call of its notebook (checked by a test), with its own status file
+  and output log; the notebooks later find the runs complete and only report them. A run's results depend only
+  on its seed and the settings, so where it trains changes only its training time. Each run's summary records
+  the machine it finished on (host, processor, worker count), and the training cost is compared by evaluations,
+  which are exact on any machine; training times are reported as context, with the machines named.
+  `fleet.py setup` gives a server the desktop's commit (as a git bundle), the pinned environment and the
+  refined baselines the seeded ES starts from; `start` starts every machine's runs in a detached tmux session
+  only when every machine is ready; `collect` copies a server's finished runs to the desktop after checking their
+  settings and never replaces a different copy; `finish` then runs notebooks 04 to 08.
 - **Kernel:** each notebook runs in a kernel started with the same Python interpreter as the runner,
   with `notebooks/` as the working directory.
 - **Checkpoints.** Every evolutionary run saves a checkpoint after each generation. It contains the
@@ -197,6 +210,8 @@ record of the reported run.
     in the notebook) is appended to `results/kernel_log.txt`, so it never enters the progress display.
   - **Stopping.** Ctrl+C or `kill` stops the runner within seconds, also while a notebook prints nothing for a
     long time: it ends the notebook's kernel and its worker processes, logs the stop and exits with code 130.
+  - **Runs side by side.** Each run writes its own status file in `results/status/`, and the display shows
+    one live line per run, in run order.
   - **Separate monitor.** `python -m racing.progress` shows the same display from another terminal, for
     a runner started in the background.
 - **Run record:** the runner writes `results/run_info.json`. It records the processor model, the number

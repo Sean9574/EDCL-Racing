@@ -277,6 +277,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                        champion_path=str(method.save_champion(index, seed, champion_dir)),
                        final_setup=setup.to_dict(method.population.setup[index]))
     summary["wall_time"] = active()                                # includes the final selection (spec §9.1)
+    summary["machine"] = checkpoint.machine_record()               # runs may be trained on several machines
     checkpoint.write_json(out_dir / SUMMARY_NAME, summary)
     if reporting:
         found = "" if summary["val_successes"] is None else (

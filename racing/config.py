@@ -205,4 +205,6 @@ PILOTS_DIR = RESULTS_DIR / "pilots"
 RUN_INFO_PATH = RESULTS_DIR / "run_info.json"
 RUN_LOG_PATH = RESULTS_DIR / "run_log.txt"
 STATUS_PATH = RESULTS_DIR / "status.json"
+STATUS_DIR = RESULTS_DIR / "status"          # one status file per run when runs train side by side (fleet)
+TRAIN_LOGS_DIR = RESULTS_DIR / "train_logs"  # what each run trained side by side prints itself
 STATUS_STALE_AFTER = 600.0   # s; the monitor marks an older status as not updated, as a stopped run leaves it

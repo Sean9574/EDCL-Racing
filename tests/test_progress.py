@@ -237,3 +237,65 @@ def test_a_recent_status_has_no_note(tmp_path, order):
     assert out.getvalue() == progress.format_status(written) + "\n"
     assert progress.stale_note({}) == progress.stale_note({"updated": "not a time"}) == ""
 
+
+
+# ----- runs trained side by side: one status file each -----
+
+def side_by_side_statuses(folder):
+    folder.mkdir(exist_ok=True)
+    progress.write_status(status(seed=2, generation=7), folder / "ga-seed2.json")
+    progress.write_status(status(approach="baseline", seed=0, generation=3), folder / "baseline-seed0.json")
+    (folder / "broken.json").write_text("{half")
+    return [status(approach="baseline", seed=0, generation=3), status(seed=2, generation=7)]
+
+
+def test_statuses_of_runs_side_by_side_are_read_in_run_order(tmp_path, order):
+    expected = side_by_side_statuses(tmp_path / "status")
+    read = progress.read_statuses(tmp_path / "status")
+    assert [(s["approach"], s["seed"]) for s in read] == [(s["approach"], s["seed"]) for s in expected]
+    assert progress.read_statuses(tmp_path / "none") == []
+
+
+def test_without_a_terminal_each_run_side_by_side_gets_a_line(tmp_path, order):
+    expected = side_by_side_statuses(tmp_path / "status")
+    out = io.StringIO()
+    monitor = progress.Monitor(None, tmp_path / "log.txt", out=out, live=False, period=0.0,
+                               status_dir=tmp_path / "status")
+    monitor.poll()
+    assert out.getvalue().splitlines() == [progress.format_status(s) for s in expected]
+
+
+def test_live_lines_of_runs_side_by_side_are_redrawn_in_place(tmp_path, order):
+    expected = side_by_side_statuses(tmp_path / "status")
+    out = io.StringIO()
+    monitor = progress.Monitor(None, tmp_path / "log.txt", out=out, live=True, status_dir=tmp_path / "status")
+    monitor.poll()
+    first = out.getvalue()
+    assert first == "\n".join(progress.format_status(s) for s in expected)
+    progress.milestone("GA seed 2: Hard mastered at generation 7, now Extra hard", tmp_path / "log.txt")
+    monitor.poll()
+    later = out.getvalue()[len(first):]
+    assert later.startswith("\r\x1b[1A\x1b[J") and "Hard mastered at generation 7, now Extra hard\n" in later
+    assert later.endswith(progress.format_status(expected[1]))
+    monitor.finish_line()
+    assert out.getvalue().endswith("\n") and monitor.block == 0
+
+
+def test_runs_side_by_side_wait_for_their_first_status(tmp_path):
+    out = io.StringIO()
+    monitor = progress.Monitor(None, tmp_path / "log.txt", out=out, live=False, period=0.0,
+                               status_dir=tmp_path / "status")
+    monitor.poll()
+    assert out.getvalue() == progress.WAITING + "\n"
+
+
+def test_main_follows_runs_side_by_side_when_there_are_any(tmp_path, monkeypatch, capsys, order):
+    expected = side_by_side_statuses(config.STATUS_DIR)
+
+    def interrupt(seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(progress.time, "sleep", interrupt)
+    assert progress.main(["--log", str(tmp_path / "log.txt")]) == 0
+    printed = capsys.readouterr().out
+    assert all(progress.format_status(s) in printed for s in expected)

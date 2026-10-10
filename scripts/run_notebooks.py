@@ -3,6 +3,9 @@
 Run with:        python scripts/run_notebooks.py               (continues where an earlier run stopped)
 Start over:      python scripts/run_notebooks.py --fresh       (removes the earlier results first)
 From a notebook: python scripts/run_notebooks.py --from 04
+Side by side:    python scripts/run_notebooks.py --runs ga:1,neat:0,neat:1 --at-once 3
+                 (trains these evolutionary runs directly, three at a time, without their notebooks; the notebooks
+                 find them complete later. scripts/fleet.py starts this on several machines.)
 In background:   mkdir -p results
                  nohup python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
 Progress:        python -m racing.progress                     (from another terminal)
@@ -10,9 +13,9 @@ Progress:        python -m racing.progress                     (from another ter
 Stop:            Ctrl+C, or from another terminal: pkill -f scripts/run_notebooks.py
                  (the notebook's kernel is ended too; run again to continue where it stopped)
 
-Exit codes: 0 finished; 1 a notebook failed; 2 invalid options; 3 earlier results were produced with different
-settings (run again with --fresh) or cannot be read (delete the files named); 4 another runner is using the same
-results; 130 stopped with Ctrl+C or kill.
+Exit codes: 0 finished; 1 a notebook or run failed; 2 invalid options, or a run's input is missing; 3 earlier
+results were produced with different settings (run again with --fresh) or cannot be read (delete the files named);
+4 another runner is using the same results; 130 stopped with Ctrl+C or kill.
 """
 import argparse
 import fcntl
@@ -30,7 +33,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
-from racing import checkpoint, config, paths, progress  # noqa: E402
+from racing import checkpoint, config, paths, progress, train  # noqa: E402
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
@@ -38,13 +41,16 @@ KERNEL_ENV = {"CUDA_VISIBLE_DEVICES": "-1",      # CPU only (spec §9): TensorFl
               "TF_CPP_MIN_LOG_LEVEL": "3"}      # and its C++ log stays out of the progress display
 KERNEL_LOG = "kernel_log.txt"                         # next to the run log: what the notebook kernels print themselves
 FRESH_REMOVE = ("runs", "champions", "tables", "figures", "dataset.npz", "dataset_info.json", "status.json",
-                "run_log.txt", "run_info.json", KERNEL_LOG)   # under results/; pilots, app_runs and archive are kept
+                "run_log.txt", "run_info.json", KERNEL_LOG, "status", "train_logs", "machines")
+                # under results/; pilots, app_runs and archive are kept
 RECORD_STATES = {"summary.json": checkpoint.CHECKPOINT_NAME,      # run records that carry their settings, and the
                  "dagger.json": "dagger_state.pkl"}                # checkpoint a run finishes again from
 RECORD_FILES = tuple(RECORD_STATES)
 STATE_FILES = tuple(RECORD_STATES.values())
 LOCK_NAME = ".runner.lock"                            # under results/; held by the running runner
 STOPPED = 130                                         # exit code after Ctrl+C or kill (128 + SIGINT)
+POLL_SECONDS = 0.5                                    # how often runs trained side by side are checked
+STOP_GRACE = 20.0                                     # s a stopped training process may take before it is killed
 
 
 def now():
@@ -57,12 +63,7 @@ def log(message, path):
 
 
 def processor():
-    cpuinfo = Path("/proc/cpuinfo")
-    if cpuinfo.exists():
-        for line in cpuinfo.read_text().splitlines():
-            if line.startswith("model name"):
-                return line.split(":", 1)[1].strip()
-    return platform.processor() or "unknown"
+    return checkpoint.processor()
 
 
 def power_profile():
@@ -315,18 +316,165 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
             watcher.stop()
 
 
+def run_label(approach, seed):
+    return f"{approach}:{seed}"
+
+
+def train_command(approach, seed, status_file):
+    """The process that trains one run side by side: racing/train.py, with its own status file."""
+    return [sys.executable, "-m", "racing.train", approach, str(seed), "--status", str(status_file)]
+
+
+def last_line(path):
+    try:
+        lines = [line for line in Path(path).read_text(errors="replace").splitlines() if line.strip()]
+    except OSError:
+        return ""
+    return lines[-1].strip() if lines else ""
+
+
+def stop_processes(processes, grace=STOP_GRACE):
+    """End training processes and their worker processes: each runs in its own process group, which gets SIGTERM,
+    then SIGKILL after `grace` seconds. A run saves its checkpoint after every generation, so it continues from the
+    last finished generation."""
+    for process in processes:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.time() + grace
+    for process in processes:
+        try:
+            process.wait(timeout=max(deadline - time.time(), 0.1))
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            process.wait()
+
+
+def missing_inputs(runs, runs_dir):
+    """Messages for runs that cannot start here: a seeded ES starts from its seed's refined baseline (notebook 03)."""
+    missing = []
+    for approach, seed in runs:
+        path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"
+        if approach == "es_seeded" and not path.exists():
+            missing.append(f"{run_label(approach, seed)} starts from the refined baseline {path}, which is not here "
+                           f"(scripts/fleet.py setup copies it to a server)")
+    return missing
+
+
+def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
+                     status_dir=config.STATUS_DIR, logs_dir=config.TRAIN_LOGS_DIR, monitor=True, out=None,
+                     command=train_command):
+    """Train the evolutionary runs `runs` [(approach, seed)] directly, `at_once` at a time, each in its own process
+    (racing/train.py) with its own status file and output log, while the monitor shows one line per run. A finished
+    run is never trained again; an interrupted one continues from its checkpoint. A run that fails is reported and
+    the others go on. Returns 0, 1 if a run failed, or STOPPED after Ctrl+C or kill, which stops every run."""
+    info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
+    version = code_version()
+    warning = code_change(info, version)
+    info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
+                 "power_profile": power_profile(), "versions": versions(),
+                 "settings": checkpoint.settings_record(), **version})
+    names = [run_label(approach, seed) for approach, seed in runs]
+    info.setdefault("runs", []).append({"started": now(), "side_by_side": names, "at_once": at_once,
+                                        "host": platform.node(), **version})
+    info.setdefault("trained", [])
+    if warning is not None:
+        print(warning, file=sys.stderr)
+        log(warning, log_path)
+    status_dir, logs_dir = Path(status_dir), Path(logs_dir)
+    paths.remove(status_dir)                           # the monitor shows only this start's runs
+    status_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, **KERNEL_ENV, "PYTHONUNBUFFERED": "1"}
+    pending, active, failed = list(runs), {}, []
+    watcher = progress.Monitor(None, log_path, out=out, status_dir=status_dir) if monitor else None
+    if watcher is not None:
+        watcher.start()
+    try:
+        log(f"run started: {' '.join(names)}, {at_once} at a time ({config.N_JOBS} workers each, "
+            f"{platform.node()})", log_path)
+        while pending or active:
+            while pending and len(active) < at_once:
+                approach, seed = pending.pop(0)
+                name = run_label(approach, seed)
+                status_file = status_dir / f"{approach}-seed{seed}.json"
+                output = open(logs_dir / f"{approach}-seed{seed}.log", "a")
+                process = subprocess.Popen(command(approach, seed, status_file), cwd=PROJECT, env=env, stdout=output,
+                                           stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                           start_new_session=True)   # Ctrl+C reaches the runner, which stops it
+                entry = {"run": name, "started": now()}
+                info["trained"] = [e for e in info["trained"] if e["run"] != name] + [entry]
+                write_info(info, info_path)
+                active[process] = (name, status_file, output, entry, time.time())
+                log(f"start {name}", log_path)
+            for process in list(active):
+                code = process.poll()
+                if code is None:
+                    continue
+                name, status_file, output, entry, began = active.pop(process)
+                output.close()
+                paths.remove(status_file)
+                entry["seconds"] = round(time.time() - began, 1)
+                if code == 0:
+                    entry["finished"] = now()
+                    log(f"done {name} in {entry['seconds'] / 60:.1f} min", log_path)
+                else:
+                    entry["failed"] = last_line(output.name) or f"exit code {code}"
+                    failed.append(name)
+                    log(f"FAILED {name}: {entry['failed']} (output: {output.name})", log_path)
+                write_info(info, info_path)
+            if pending or active:
+                time.sleep(POLL_SECONDS)
+        log("runs finished" if not failed else f"runs finished; failed: {' '.join(failed)}", log_path)
+        return 1 if failed else 0
+    except KeyboardInterrupt:                          # Ctrl+C or kill: every run stops at its last checkpoint
+        stop_processes(list(active))
+        for name, status_file, output, entry, began in active.values():
+            output.close()
+            paths.remove(status_file)
+            entry["stopped"] = now()
+            entry["seconds"] = round(time.time() - began, 1)
+        write_info(info, info_path)
+        stopped = [name for name, *_ in active.values()]
+        log(f"STOPPED {' '.join(stopped) or 'the runs'}: run again to continue where they stopped", log_path)
+        return STOPPED
+    finally:
+        if watcher is not None:
+            watcher.stop()
+
+
 def stop_on_kill(signum, frame):
     """kill (SIGTERM) stops the run like Ctrl+C: the notebook's kernel is ended and the run log says so."""
     raise KeyboardInterrupt
 
 
 def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
-         results_dir=config.RESULTS_DIR, status_path=config.STATUS_PATH, monitor=True, out=None):
+         results_dir=config.RESULTS_DIR, status_path=config.STATUS_PATH, monitor=True, out=None,
+         status_dir=config.STATUS_DIR, logs_dir=config.TRAIN_LOGS_DIR):
     parser = argparse.ArgumentParser(description="Run the EC Racing experiment notebooks in order. An interrupted "
                                                  "run continues where it stopped.")
     parser.add_argument("--from", dest="start", help="number of the first notebook to run, for example 04")
     parser.add_argument("--fresh", action="store_true", help="remove the earlier results and start over")
+    parser.add_argument("--runs", help="train these evolutionary runs side by side instead of running notebooks, "
+                                       "for example ga:1,neat:0")
+    parser.add_argument("--at-once", type=int, default=1, help="with --runs: how many train at the same time")
     args = parser.parse_args(argv)
+    if args.runs is not None:
+        try:
+            args.runs = train.parse_runs(args.runs)
+        except ValueError as error:
+            print(f"error: --runs {error}", file=sys.stderr)
+            return 2
+        if args.start is not None or args.fresh:
+            print("error: --runs cannot be combined with --from or --fresh", file=sys.stderr)
+            return 2
+        if args.at_once < 1:
+            print("error: --at-once must be at least 1", file=sys.stderr)
+            return 2
     if args.start is not None:
         prefixes = sorted({name[:2] for name in notebook_names(notebook_dir)})
         if args.start not in prefixes:
@@ -339,14 +487,16 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
             return 2
     previous = signal.signal(signal.SIGTERM, stop_on_kill)
     try:
-        return locked_main(args, notebook_dir, log_path, info_path, results_dir, status_path, monitor, out)
+        return locked_main(args, notebook_dir, log_path, info_path, results_dir, status_path, monitor, out,
+                           status_dir, logs_dir)
     except KeyboardInterrupt:                          # stopped before or after a notebook ran
         return STOPPED
     finally:
         signal.signal(signal.SIGTERM, previous)
 
 
-def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_path, monitor, out):
+def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_path, monitor, out,
+                status_dir=config.STATUS_DIR, logs_dir=config.TRAIN_LOGS_DIR):
     """main() once the options are valid: takes the results lock, checks earlier results and runs."""
     lock = lock_results(results_dir)
     if lock is None:
@@ -373,6 +523,14 @@ def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_pat
             print("Run again with --fresh to remove them and start over.", file=sys.stderr)
         if problems or unreadable:
             return 3
+        runs = getattr(args, "runs", None)
+        if runs is not None:
+            missing = missing_inputs(runs, Path(results_dir) / "runs")
+            for message in missing:
+                print(f"error: {message}", file=sys.stderr)
+            if missing:
+                return 2
+            return run_side_by_side(runs, args.at_once, log_path, info_path, status_dir, logs_dir, monitor, out)
         return run(notebook_dir, args.start, log_path, info_path, status_path, monitor, out)
     finally:
         lock.close()                                   # releases the lock

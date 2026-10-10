@@ -150,6 +150,7 @@ def test_the_final_controller_comes_from_the_kept_cars_at_the_tightest_mastered_
     saved = np.load(paths.champion_path("ga", 4, ".npy", tmp_path / "champions"))
     assert np.array_equal(saved, method.population.weights[candidates[-1]])
     assert summary["val_successes"] == 20 and summary["wall_time"] > 0
+    assert summary["machine"] == checkpoint.machine_record()     # runs of one experiment may come from several machines
 
 
 def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):

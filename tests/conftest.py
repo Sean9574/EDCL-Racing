@@ -28,6 +28,8 @@ def private_progress_files(tmp_path_factory, monkeypatch):
     folder = tmp_path_factory.mktemp("progress")
     monkeypatch.setattr(config, "STATUS_PATH", folder / "status.json")
     monkeypatch.setattr(config, "RUN_LOG_PATH", folder / "run_log.txt")
+    monkeypatch.setattr(config, "STATUS_DIR", folder / "status")
+    monkeypatch.setattr(config, "TRAIN_LOGS_DIR", folder / "train_logs")
 
 
 @pytest.fixture(autouse=True)

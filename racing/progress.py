@@ -3,11 +3,15 @@ milestones to the run log; the runner, or a monitor in another terminal, shows t
 status.
 
 Watch a run started in the background with:  ~/miniconda3/bin/python -m racing.progress
+
+Runs trained side by side (scripts/run_notebooks.py --runs) each write their own status file in results/status/; the
+monitor then shows one line per run.
 """
 import argparse
 import json
 import math
 import os
+import shutil
 import sys
 import threading
 import time
@@ -46,6 +50,15 @@ def read_status(path=None):
     except (OSError, ValueError):
         return None
     return status if isinstance(status, dict) else None
+
+
+def read_statuses(folder=None):
+    """The status of every run in `folder` (one file per run trained side by side), in the experiment's run
+    order; unreadable files are left out."""
+    folder = Path(config.STATUS_DIR if folder is None else folder)
+    statuses = [status for status in (read_status(path) for path in sorted(folder.glob("*.json")))
+                if status is not None]
+    return sorted(statuses, key=lambda s: (run_number(s.get("approach"), s.get("seed"))[0], str(s.get("approach"))))
 
 
 def milestone(message, path=None):
@@ -155,10 +168,13 @@ def stale_note(status, now=None):
 class Monitor:
     """Shows the run log's new lines and the status line (revision 3 §8.3). In a terminal the status line is
     updated in place; otherwise, as under nohup, it is printed as a whole line at most once per `period` seconds. A
-    status that has not been updated for config.STATUS_STALE_AFTER seconds says so."""
+    status that has not been updated for config.STATUS_STALE_AFTER seconds says so. With `status_dir`, the folder
+    of runs trained side by side, it shows one status line per run instead."""
 
-    def __init__(self, status_path=None, log_path=None, out=None, interval=1.0, live=None, period=60.0):
+    def __init__(self, status_path=None, log_path=None, out=None, interval=1.0, live=None, period=60.0,
+                 status_dir=None):
         self.status_path = status_path
+        self.status_dir = status_dir
         self.log_path = Path(config.RUN_LOG_PATH if log_path is None else log_path)
         self.out = sys.stdout if out is None else out
         self.interval = interval
@@ -167,6 +183,7 @@ class Monitor:
         self.offset = self.log_path.stat().st_size if self.log_path.exists() else 0   # only lines written from now
         self.partial = ""
         self.shown = 0                     # length of the live line on screen
+        self.block = 0                     # status lines on screen, with status_dir
         self.last_print = None
         self.lock = threading.Lock()
         self.stopping = threading.Event()
@@ -188,13 +205,32 @@ class Monitor:
         *lines, self.partial = (self.partial + data.decode("utf-8", errors="replace")).split("\n")
         return lines
 
+    def status_texts(self):
+        if self.status_dir is None:
+            status = read_status(self.status_path)
+            return [WAITING if status is None else format_status(status) + stale_note(status)]
+        return [format_status(status) + stale_note(status) for status in read_statuses(self.status_dir)] or [WAITING]
+
+    def draw_block(self, lines, texts):
+        """Replace the status lines on screen with `texts`, printing the new log lines above them. Each line is cut
+        to the terminal's width, so that a wrapped line cannot leave the cursor below the block."""
+        width = max(shutil.get_terminal_size((200, 24)).columns - 1, 20)
+        if self.block:
+            self.out.write("\r" + "\x1b[1A" * (self.block - 1) + "\x1b[J")   # back to the block's first line
+        for line in lines:
+            self.out.write(line + "\n")
+        self.out.write("\n".join(text[:width] for text in texts))
+        self.block = len(texts)
+
     def poll(self):
         """Print the run log's new lines as permanent lines, then refresh the status line."""
         with self.lock:
             lines = self.new_log_lines()
-            status = read_status(self.status_path)
-            text = WAITING if status is None else format_status(status) + stale_note(status)
-            if self.live:
+            texts = self.status_texts()
+            text = texts[0]
+            if self.live and self.status_dir is not None:
+                self.draw_block(lines, texts)
+            elif self.live:
                 if lines and self.shown:
                     self.out.write("\r" + " " * self.shown + "\r")
                     self.shown = 0
@@ -207,7 +243,8 @@ class Monitor:
                     self.out.write(line + "\n")
                 now = time.monotonic()
                 if self.last_print is None or now - self.last_print >= self.period:
-                    self.out.write(text + "\n")
+                    for text in texts:
+                        self.out.write(text + "\n")
                     self.last_print = now
             self.out.flush()
 
@@ -224,10 +261,10 @@ class Monitor:
     def finish_line(self):
         """End a live status line, so later output starts on a new line."""
         with self.lock:
-            if self.live and self.shown:
+            if self.live and (self.shown or self.block):
                 self.out.write("\n")
                 self.out.flush()
-                self.shown = 0
+                self.shown = self.block = 0
 
     def stop(self):
         """Stop the background thread, poll a last time and end the live line."""
@@ -241,6 +278,8 @@ class Monitor:
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Show the progress of the running EC Racing experiment.")
     parser.add_argument("--status", default=None, help="status file (default: results/status.json)")
+    parser.add_argument("--status-dir", default=None,
+                        help="folder of runs trained side by side (default: results/status/ when it holds any)")
     parser.add_argument("--log", default=None, help="run log (default: results/run_log.txt)")
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between updates")
     args = parser.parse_args(argv)
@@ -248,7 +287,10 @@ def main(argv=None):
     if log_path.exists():
         for line in log_path.read_text().splitlines()[-RECENT:]:
             print(line)
-    monitor = Monitor(args.status, log_path, interval=args.interval)
+    status_dir = args.status_dir
+    if status_dir is None and args.status is None and any(Path(config.STATUS_DIR).glob("*.json")):
+        status_dir = config.STATUS_DIR
+    monitor = Monitor(args.status, log_path, interval=args.interval, status_dir=status_dir)
     try:
         while True:
             monitor.poll()

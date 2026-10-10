@@ -4,6 +4,7 @@ is never resumed and its results are never reused."""
 import json
 import os
 import pickle
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -66,6 +67,23 @@ def plain(value):
 def settings_record():
     """{name: value} of the settings that affect results, in JSON form."""
     return {name: plain(getattr(config, name)) for name in SETTINGS_KEYS}
+
+
+def processor():
+    """The processor's model name, from /proc/cpuinfo on Linux."""
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.exists():
+        for line in cpuinfo.read_text().splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    return platform.processor() or "unknown"
+
+
+def machine_record():
+    """The machine a run finished on: runs of one experiment may be trained on several machines (scripts/fleet.py),
+    so each run's summary says where, with how many worker processes."""
+    return {"host": platform.node() or "unknown", "processor": processor(), "logical_processors": os.cpu_count(),
+            "n_jobs": config.N_JOBS}
 
 
 def check_settings(recorded):

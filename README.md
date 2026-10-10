@@ -176,7 +176,10 @@ python -m racing.progress                            # live status; Ctrl+C stops
 | `08_evaluate` | Tables and figures |
 
 The processor, worker count, package versions, settings, code version (git commit) and notebook times are recorded
-in `results/run_info.json`. All reported times come from one machine.
+in `results/run_info.json`. Each evolutionary run's `summary.json` also records the machine it finished on (host,
+processor, worker count), because runs may be trained side by side or on several machines (below). Their training
+times then depend on the machine and on what else ran on it, so compare the methods' cost by evaluations
+(`evals`, exact on any machine) and give training times as context.
 
 Results are written to `results/`, which is not under version control:
 
@@ -190,11 +193,60 @@ Results are written to `results/`, which is not under version control:
 | `results/champions/best_seeds.json` | Each method's best seed on the validation maps |
 | `results/tables/`, `results/figures/` | Results tables (CSV and Markdown) and figures, including the network figure |
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
+| `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
+| `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
 | `results/pilots/revision3/`, `results/pilots/revision3.1/` | Pilot runs of revision 3 and of revision 3.1 (with setup evolution) |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
 
 To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\results` in File Explorer.
+
+### Several machines
+
+One run cannot use more than about 6 to 8 worker processes (`python -m racing.bench generation`), so a machine with
+more processors trains several runs side by side, and several machines can share the evolutionary runs of notebooks
+04 to 07. The runs are independent and fixed by their seeds and settings, so where they train changes only their
+training times.
+
+**Side by side on one machine:** `python scripts/run_notebooks.py --runs ga:1,neat:0,neat:1,neat:2 --at-once 4`
+trains these runs directly (`python -m racing.train <approach> <seed>`, the same call as the notebook), each in its own
+process with its own status line and output log in `results/train_logs/`. Ctrl+C stops them all; the same command
+continues them. Afterwards, `python scripts/run_notebooks.py --from 04` finds the runs complete and only reports them.
+
+**On several machines:** `scripts/fleet.py` starts, watches, stops and collects runs on the desktop and on servers
+reached from it, following `scripts/fleet.toml` (which machine trains which runs, how many at a time, with how many
+workers each). It runs on the desktop, in its Ubuntu shell with the `ec-racing` environment active. A server is reached
+with Windows' `ssh.exe`, which goes through the school VPN (GlobalProtect); WSL's own `ssh` does not.
+
+Once, connect GlobalProtect and give the server Windows' SSH key, so that fleet.py can log in without a password:
+
+```bash
+ssh-keygen.exe -t ed25519                            # press Enter three times
+cat "/mnt/c/Users/<Windows user>/.ssh/id_ed25519.pub" | ssh.exe <user>@<server> "mkdir -p ~/.ssh; chmod 700 ~/.ssh; cat >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys"
+ssh.exe -o BatchMode=yes <user>@<server> hostname    # prints the server's name, without a password
+```
+
+Then, with GlobalProtect connected:
+
+```bash
+python scripts/fleet.py setup      # the server gets this commit's code, Python 3.13 with the pinned packages, and the
+                                   # refined baselines its seeded ES runs start from (again after every code change)
+python scripts/fleet.py start      # every machine starts its runs in a detached tmux session named "fleet"
+python scripts/fleet.py status     # one line per run in training on every machine, and the latest milestones
+python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
+python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
+python scripts/fleet.py finish     # once every run has finished: collect, then notebooks 04 to 08 here
+```
+
+- `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
+  code changes first; a server gets the last commit), its environment and inputs, and no runner is still training
+  on any machine. Stop a runner started by hand first (Ctrl+C in its tmux session).
+- The runs keep going when GlobalProtect or SSH disconnects; only fleet.py's commands need the connection. On the
+  desktop, keep WSL running as for any run (see above).
+- `collect` never replaces a run: a run that is already here in another version, an unfinished copy of it, or a run
+  made with other settings is reported and left alone.
+- Watch a session directly with `tmux attach -t fleet` (on a server, after `ssh.exe <user>@<server>`); detach with
+  Ctrl+b then d. After the runner ends, the window stays open and shows its exit code.
 
 ## Pilots and benchmarks
 

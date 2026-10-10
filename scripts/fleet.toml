@@ -1,0 +1,17 @@
+# Which machine trains which runs, for scripts/fleet.py. A run is approach:seed, and each run belongs to one machine.
+# The machine without a host is the one fleet.py runs on (the desktop); servers are reached from it with `ssh`.
+#   at_once: runs trained side by side; workers: worker processes of each run (EC_RACING_JOBS), best a multiple of 3,
+#   the maps of a generation (python -m racing.bench generation: one run gains little beyond 6 to 8).
+
+[machines.desktop]
+at_once = 4
+workers = 6
+runs = ["ga:1", "neat:0", "neat:1", "neat:2"]
+
+[machines.server]
+host = "sbrainard@10.0.11.14"
+ssh = "ssh.exe"          # Windows' client: it reaches the school network through GlobalProtect, WSL's does not
+dir = "ec-racing"        # the project folder, in the home folder on the server
+at_once = 3
+workers = 6
+runs = ["ga:2", "es:0", "es:1", "es:2", "es_seeded:0", "es_seeded:1", "es_seeded:2"]

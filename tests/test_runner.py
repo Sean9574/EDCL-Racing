@@ -499,3 +499,178 @@ def test_a_kernels_own_messages_stay_out_of_the_terminal(runner, tmp_path, capfd
         runner.execute(folder / "01_a.ipynb", kernels, output)
     assert "native message" not in capfd.readouterr().err
     assert "native message from the kernel" in (tmp_path / "kernel_log.txt").read_text()
+
+
+# ----- runs trained side by side (--runs) -----
+
+def fake_training(tmp_path, seconds=0.3, fail=()):
+    """A train_command stand-in: each 'run' writes its start and end times and a status, sleeps, and exits with code
+    3 (printing 'boom') if it is in `fail`, else 0."""
+    def command(approach, seed, status_file):
+        name = f"{approach}-{seed}"
+        code = 3 if (approach, seed) in fail else 0
+        script = (f"import json, sys, time\n"
+                  f"open({str(tmp_path / (name + '.start'))!r}, 'w').write(repr(time.time()))\n"
+                  f"json.dump({{'approach': {approach!r}, 'seed': {seed}}}, open({str(status_file)!r}, 'w'))\n"
+                  f"time.sleep({seconds})\n"
+                  f"print({'boom' if code else 'ok'!r})\n"
+                  f"open({str(tmp_path / (name + '.end'))!r}, 'w').write(repr(time.time()))\n"
+                  f"sys.exit({code})\n")
+        return [sys.executable, "-c", script]
+    return command
+
+
+def side_by_side(runner, tmp_path, runs, at_once, command, monitor=False, out=None):
+    return runner.run_side_by_side(runs, at_once, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+                                   status_dir=tmp_path / "status", logs_dir=tmp_path / "train_logs",
+                                   monitor=monitor, out=out, command=command)
+
+
+def most_at_once(tmp_path, names):
+    spans = [(float((tmp_path / f"{n}.start").read_text()), float((tmp_path / f"{n}.end").read_text())) for n in names]
+    return max(sum(start <= moment < end for start, end in spans) for moment, _ in spans)
+
+
+def test_runs_side_by_side_train_at_most_at_once_and_are_recorded(runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
+    runs = [("ga", 0), ("ga", 1), ("es", 0)]
+    assert side_by_side(runner, tmp_path, runs, 2, fake_training(tmp_path)) == 0
+    assert most_at_once(tmp_path, ["ga-0", "ga-1", "es-0"]) == 2
+    log = (tmp_path / "log.txt").read_text()
+    for name in ("ga:0", "ga:1", "es:0"):
+        assert f"start {name}" in log and f"done {name}" in log
+    assert "runs finished" in log and "2 at a time" in log
+    info = json.loads((tmp_path / "info.json").read_text())
+    assert [e["run"] for e in info["trained"]] == ["ga:0", "ga:1", "es:0"]
+    assert all("finished" in e for e in info["trained"])
+    assert info["runs"][-1]["side_by_side"] == ["ga:0", "ga:1", "es:0"] and info["runs"][-1]["at_once"] == 2
+    assert list((tmp_path / "status").iterdir()) == []                  # each run's status goes when it ends
+    assert (tmp_path / "train_logs" / "ga-seed1.log").read_text().strip() == "ok"
+
+
+def test_a_failing_run_is_reported_and_the_others_go_on(runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
+    runs = [("ga", 0), ("neat", 1), ("es", 2)]
+    assert side_by_side(runner, tmp_path, runs, 1, fake_training(tmp_path, 0.05, fail={("neat", 1)})) == 1
+    log = (tmp_path / "log.txt").read_text()
+    assert "FAILED neat:1: boom" in log and "done ga:0" in log and "done es:2" in log
+    assert "failed: neat:1" in log
+    info = json.loads((tmp_path / "info.json").read_text())
+    assert {e["run"]: ("failed" in e) for e in info["trained"]} == {"ga:0": False, "neat:1": True, "es:2": False}
+
+
+def test_the_monitor_shows_a_line_per_run_side_by_side(runner, tmp_path, monkeypatch, order):
+    monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
+    out = io.StringIO()
+    monkeypatch.setattr(runner.progress.Monitor, "__init__", wrap_monitor(runner.progress.Monitor.__init__))
+    assert side_by_side(runner, tmp_path, [("ga", 0), ("es", 0)], 2, fake_training(tmp_path, 1.5),
+                        monitor=True, out=out) == 0
+    text = out.getvalue()
+    assert "GA seed 0" in text and "ES seed 0" in text and "start ga:0" in text
+
+
+def wrap_monitor(init):
+    """Monitor.__init__ that polls quickly and prints every status, so a short test sees the lines."""
+    def wrapped(self, *args, **kwargs):
+        init(self, *args, **{**kwargs, "interval": 0.05, "period": 0.0, "live": False})
+    return wrapped
+
+
+@pytest.fixture
+def order(monkeypatch):
+    from racing import config
+    monkeypatch.setattr(config, "RUN_ORDER", (("ga", 0), ("es", 0)))
+
+
+def test_stop_processes_ends_a_training_and_its_workers(runner):
+    process = subprocess.Popen([sys.executable, "-c", "import subprocess, sys, time\n"
+                                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+                                "time.sleep(600)"], start_new_session=True)
+    time.sleep(0.5)
+    runner.stop_processes([process], grace=5)
+    assert process.returncode is not None
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process.pid, 0)                                         # nothing of the group is left
+
+
+@pytest.mark.parametrize("argv", [["--runs", "baseline:0"], ["--runs", "ga:3"], ["--runs", "ga:1,ga:1"],
+                                  ["--runs", "ga:1", "--from", "01"], ["--runs", "ga:1", "--fresh"],
+                                  ["--runs", "ga:1", "--at-once", "0"]])
+def test_invalid_runs_are_refused_before_anything_starts(runner, tmp_path, monkeypatch, capsys, argv):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("runs were started"))
+    assert run_main(runner, tmp_path, argv) == 2
+    assert "error:" in capsys.readouterr().err
+    assert not (tmp_path / "info.json").exists()
+
+
+def test_a_seeded_es_run_needs_its_refined_baseline(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("runs were started"))
+    assert run_main(runner, tmp_path, ["--runs", "es_seeded:1,ga:0"]) == 2
+    error = capsys.readouterr().err
+    assert "es_seeded:1" in error and "baseline/seed1/dagger.keras" in error and "ga:0" not in error
+    refined = tmp_path / "results" / "runs" / "baseline" / "seed1" / "dagger.keras"
+    refined.parent.mkdir(parents=True)
+    refined.write_bytes(b"model")
+    started = []
+    monkeypatch.setattr(runner, "run_side_by_side", lambda runs, at_once, *a, **k: started.append((runs, at_once)) or 0)
+    assert run_main(runner, tmp_path, ["--runs", "es_seeded:1,ga:0", "--at-once", "2"]) == 0
+    assert started == [([("es_seeded", 1), ("ga", 0)], 2)]
+
+
+def test_runs_side_by_side_take_the_results_lock(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("runs were started"))
+    with hold_lock(tmp_path / "results"):
+        assert run_main(runner, tmp_path, ["--runs", "ga:0"]) == 4
+
+
+def test_fresh_also_removes_the_side_by_side_files(runner):
+    assert {"status", "train_logs", "machines"} <= set(runner.FRESH_REMOVE)
+
+
+def stopping_runner(tmp_path):
+    """The runner in its own process with two quiet runs side by side. Returns the process and the files the runs
+    write their process ids to."""
+    pids = [tmp_path / "a.pid", tmp_path / "b.pid"]
+    script = (f"import importlib.util, signal, sys\n"
+              f"spec = importlib.util.spec_from_file_location('run_notebooks', {str(SCRIPT)!r})\n"
+              f"runner = importlib.util.module_from_spec(spec)\n"
+              f"spec.loader.exec_module(runner)\n"
+              f"signal.signal(signal.SIGTERM, runner.stop_on_kill)\n"
+              f"pids = {[str(p) for p in pids]!r}\n"
+              f"def command(approach, seed, status_file):\n"
+              f"    return [sys.executable, '-c', f'import os, time; open({{pids[seed]!r}}, \"w\").write(str(os.getpid())); "
+              f"time.sleep(600)']\n"
+              f"sys.exit(runner.run_side_by_side([('ga', 0), ('ga', 1)], 2, {str(tmp_path / 'log.txt')!r}, "
+              f"{str(tmp_path / 'info.json')!r}, {str(tmp_path / 'status')!r}, {str(tmp_path / 'logs')!r}, "
+              f"monitor=False, command=command))\n")
+    process = subprocess.Popen([sys.executable, "-c", script], cwd=SCRIPT.parent.parent)
+    deadline = time.time() + 60
+    while not all(p.exists() and p.read_text() for p in pids):
+        assert process.poll() is None and time.time() < deadline, "the runs never started"
+        time.sleep(0.1)
+    return process, [int(p.read_text()) for p in pids]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stop", [signal.SIGINT, signal.SIGTERM])
+def test_ctrl_c_or_kill_stops_every_run_side_by_side(runner, tmp_path, stop):
+    process, children = stopping_runner(tmp_path)
+    try:
+        process.send_signal(stop)
+        assert process.wait(timeout=STOP_SECONDS) == runner.STOPPED
+        time.sleep(0.5)
+        assert not any(Path(f"/proc/{pid}").exists() for pid in children)
+        log = (tmp_path / "log.txt").read_text()
+        assert "STOPPED ga:0 ga:1" in log
+        info = json.loads((tmp_path / "info.json").read_text())
+        assert all("stopped" in e for e in info["trained"])
+    finally:
+        if process.poll() is None:
+            process.kill()
+        for pid in children:
+            if Path(f"/proc/{pid}").exists():
+                os.kill(pid, signal.SIGKILL)
