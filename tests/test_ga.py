@@ -33,7 +33,7 @@ def test_tournament_prefers_fitter_individuals():
 
 def test_initial_population_has_no_kept_cars_and_no_strength():
     method = started()
-    assert method.population.weights.shape == (30, 431) and not method.is_kept.any()
+    assert method.population.weights.shape == (30, 463) and not method.is_kept.any()
     assert math.isnan(method.step_size) and method.approach == "ga" and method.log_fields() == {}
 
 
@@ -100,7 +100,7 @@ def test_run_ga_uses_the_seed_folder_and_saves_the_champion(monkeypatch, tmp_pat
     summary = ga.run_ga(seed=3, pop_size=20, max_generations=2, champion_dir=tmp_path / "champions")
     assert (tmp_path / "runs" / "ga" / "seed3" / "log.csv").exists() and summary["approach"] == "ga"
     assert summary["champion_path"] == str(paths.champion_path("ga", 3, champion_dir=tmp_path / "champions"))
-    assert np.load(paths.champion_path("ga", 3, ".npy", tmp_path / "champions")).shape == (431,)
+    assert np.load(paths.champion_path("ga", 3, ".npy", tmp_path / "champions")).shape == (463,)
 
 
 def test_run_ga_returns_a_completed_run(monkeypatch, tmp_path):

@@ -20,10 +20,10 @@ def synced_writes(monkeypatch):
 @pytest.fixture
 def toy_data():
     rng = np.random.default_rng(0)
-    w = rng.normal(size=(10, 15))
+    w = rng.normal(size=(config.N_INPUTS, 15))
 
     def make(n):
-        x = rng.random((n, 10)).astype(np.float32)
+        x = rng.random((n, config.N_INPUTS)).astype(np.float32)
         return x, np.argmax(x @ w, axis=1).astype(np.int64)
 
     (x_tr, y_tr), (x_va, y_va), (x_te, y_te) = make(3000), make(500), make(500)
@@ -43,7 +43,7 @@ def test_select_smallest_prefers_accuracy_on_equal_size():
 
 def test_baseline_has_431_parameters_and_the_configured_keras_settings():
     model = imitation.build_baseline()
-    assert model.count_params() == 431
+    assert model.count_params() == 463
     assert model.steps_per_execution == config.STEPS_PER_EXECUTION and model.jit_compile == config.JIT_COMPILE
 
 
@@ -57,7 +57,7 @@ def test_parameter_count_follows_from_the_architecture():
               "learning_rate": 1e-3}
     assert imitation.architecture(values) == [16, 8]
     model = imitation.build_network(imitation.architecture(values), "tanh", 0.1, 1e-3)
-    assert nets.n_params(tuple(imitation.architecture(values))) == model.count_params() == 447
+    assert nets.n_params(tuple(imitation.architecture(values))) == model.count_params() == 479      # 12·16+16 + 16·8+8 + 8·15+15
 
 
 def test_load_dataset_round_trip(tmp_path, toy_data):
@@ -75,7 +75,7 @@ def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     assert stage.exists() and summary["stage_path"] == str(stage)
     assert len(seen) == summary["epochs"] and summary["val_accuracy"] > 0.2 and summary["seed"] == 2
     assert summary["learning_rate"] == config.LEARNING_RATE
-    assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 431
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 463
     assert checkpoint.completed(tmp_path / "run")["val_accuracy"] == summary["val_accuracy"]
 
 

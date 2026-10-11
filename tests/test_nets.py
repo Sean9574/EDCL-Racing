@@ -4,12 +4,12 @@ from racing import config, nets, population
 
 
 def test_baseline_parameter_count():
-    assert nets.n_params() == 431
+    assert nets.n_params() == 463
 
 
 def test_init_population_shape_and_zero_biases():
     w = nets.init_population(np.random.default_rng(0), 7)
-    assert w.shape == (7, 431)
+    assert w.shape == (7, 463)
     for _, bias in nets.unflatten(w):
         assert np.all(bias == 0.0)
 
@@ -45,16 +45,16 @@ def test_from_flat_matches_population_forward():
     obs = rng.random((20, config.N_INPUTS))
     net = nets.from_flat(w[0])
     assert np.array_equal(net.act(obs), nets.act(np.repeat(w, 20, axis=0), obs))
-    assert net.n_params == 431
+    assert net.n_params == 463
 
 
 def test_to_keras_matches_numpy():
     rng = np.random.default_rng(5)
-    w = nets.init_population(rng, 1)[0] + rng.normal(0, 0.2, 431)
+    w = nets.init_population(rng, 1)[0] + rng.normal(0, 0.2, 463)
     model = nets.to_keras(w)
     obs = rng.random((300, config.N_INPUTS)).astype(np.float32)
     keras_classes = np.argmax(model.predict(obs, verbose=0), axis=1)
-    assert model.count_params() == 431
+    assert model.count_params() == 463
     assert np.mean(keras_classes == nets.from_flat(w).act(obs)) >= 0.99
 
 
@@ -96,7 +96,7 @@ def test_load_champion_drives_with_float64_weights(tmp_path):
     flat = nets.init_population(np.random.default_rng(5), 1)[0]
     population.save_dense_champion("es", 0, nets.DensePopulation(flat[None, :]), 0, tmp_path)
     model, driver = nets.load_champion("es", 0, tmp_path)
-    assert model.count_params() == 431
+    assert model.count_params() == 463
     assert np.array_equal(np.concatenate([np.concatenate([w.ravel(), b]) for w, b in driver.layers]), flat)
 
 
@@ -105,7 +105,7 @@ def test_load_champion_without_weights_file_uses_the_keras_model(tmp_path):
     (tmp_path / "baseline").mkdir()
     model.save(tmp_path / "baseline" / "seed0.keras")
     _, driver = nets.load_champion("baseline", 0, tmp_path)
-    assert driver.n_params == 431
+    assert driver.n_params == 463
 
 
 def test_mixed_policy_drives_each_car_with_its_own_network():

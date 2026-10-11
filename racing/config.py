@@ -54,7 +54,8 @@ TRACK_CACHE_SIZE = 8         # built tracks kept per process (an Extra hard trac
                              # fresh every generation, so a larger cache only costs memory in every worker
 
 # --- Network interface (spec §6) ---
-N_INPUTS = N_RAYS + 1
+WIDTH_SCALE = 20.0           # m, input scale of the road width (revision 3.2 §3)
+N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (revision 3.2 §3)
 STEER_LEVELS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
 THROTTLE_LEVELS = np.array([-1.0, 0.0, 1.0])               # brake, coast, gas
 N_ACTIONS = len(STEER_LEVELS) * len(THROTTLE_LEVELS)       # 15

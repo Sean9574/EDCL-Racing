@@ -103,15 +103,29 @@ def cast_rays(track, x, y, heading, lengths=None):
     return np.minimum(t, reach).reshape(n, config.N_RAYS)
 
 
+def road_position(track, cars, rows):
+    """Position across the road of the cars `rows`: −1 at the left edge, 0 on the centerline, +1 at the right edge,
+    relative to the driving direction, from each car's matched centerline point (revision 3.2 §3)."""
+    i = np.asarray(cars.index[rows]) % len(track.centerline)
+    tangent = track.tangent[i]
+    dx = cars.x[rows] - track.centerline[i, 0]
+    dy = cars.y[rows] - track.centerline[i, 1]
+    left = -dx * tangent[:, 1] + dy * tangent[:, 0]          # component along the left normal
+    return np.clip(-left / (track.width / 2), -1.0, 1.0)
+
+
 def sense(track, cars):
-    """Network inputs: ray distances / RAY_RANGE (each car's rays reach its own sensor length, so a ray input can
-    exceed 1; revision 3.1 §2.1) and speed / SPEED_SCALE. Rows of cars that are done stay zero."""
+    """Network inputs (revision 3.2 §3): ray distances / RAY_RANGE (each car's rays reach its own sensor length, so a
+    ray input can exceed 1; revision 3.1 §2.1), speed / SPEED_SCALE, position across the road (−1 at the left edge,
+    +1 at the right edge) and road width / WIDTH_SCALE. Rows of cars that are done stay zero."""
     obs = np.zeros((len(cars.x), config.N_INPUTS))
     live = np.flatnonzero(~cars.done)
     if live.size:
         rays = cast_rays(track, cars.x[live], cars.y[live], cars.heading[live], cars.ray_length[live])
         obs[live, :config.N_RAYS] = rays / config.RAY_RANGE
         obs[live, config.N_RAYS] = cars.speed[live] / config.SPEED_SCALE
+        obs[live, config.N_RAYS + 1] = road_position(track, cars, live)
+        obs[live, config.N_RAYS + 2] = track.width / config.WIDTH_SCALE
     return obs
 
 

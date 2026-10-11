@@ -3,6 +3,9 @@ import pytest
 
 from racing import config, neat
 
+O0, O1 = neat.OUTPUT_IDS[0], neat.OUTPUT_IDS[1]              # the first two output nodes
+H0, H1 = neat.FIRST_HIDDEN, neat.FIRST_HIDDEN + 1           # the first two hidden nodes
+
 
 def grown(rng, innovations, rounds=25):
     """A genome grown by many structural mutations, with some connections disabled and random biases."""
@@ -58,10 +61,10 @@ def test_initial_genome_connects_every_input_to_every_output():
     genome = neat.initial_genome(np.random.default_rng(0), neat.Innovations())
     assert genome.node_ids.tolist() == list(neat.OUTPUT_IDS)
     assert np.all(genome.bias == 0.0)
-    assert len(genome.innov) == neat.N_IN * neat.N_OUT == 150
+    assert len(genome.innov) == neat.N_IN * neat.N_OUT == 180
     assert set(zip(genome.src.tolist(), genome.dst.tolist())) == {(i, o) for i in neat.INPUT_IDS for o in neat.OUTPUT_IDS}
     assert np.all(np.diff(genome.innov) > 0) and genome.enabled.all()
-    assert genome.n_params == 165
+    assert genome.n_params == 195
     assert 0.8 < np.std(genome.weight) < 1.2                     # standard normal weights
 
 
@@ -70,7 +73,7 @@ def test_innovation_record_is_shared_by_all_genomes():
     innovations = neat.Innovations()
     a, b = neat.initial_genome(rng, innovations), neat.initial_genome(rng, innovations)
     assert np.array_equal(a.innov, b.innov) and not np.array_equal(a.weight, b.weight)
-    assert innovations.conn(0, 10) == innovations.conn(0, 10) == int(a.innov[0])
+    assert innovations.conn(0, O0) == innovations.conn(0, O0) == int(a.innov[0])
     node = innovations.split(5)
     assert innovations.split(5) == node == neat.FIRST_HIDDEN
     assert innovations.fresh_node() == node + 1 and innovations.split(5) == node
@@ -81,13 +84,13 @@ def test_innovation_record_is_shared_by_all_genomes():
 
 def test_creates_cycle_follows_all_connections():
     genome = neat.Genome.from_dict({
-        "node_ids": [10, 25, 26], "bias": [0.0] * 3,
-        "innov": [0, 1, 2], "src": [0, 25, 26], "dst": [25, 26, 10],
-        "weight": [1.0] * 3, "enabled": [True, False, True]})   # 0 -> 25 -> 26 -> 10, the middle one disabled
-    assert neat.creates_cycle(genome, 25, 25)                    # self-loop
-    assert neat.creates_cycle(genome, 26, 25)                    # closes 25 -> 26 even though it is disabled
-    assert not neat.creates_cycle(genome, 0, 26)
-    assert not neat.creates_cycle(genome, 25, 10)
+        "node_ids": [O0, H0, H1], "bias": [0.0] * 3,
+        "innov": [0, 1, 2], "src": [0, H0, H1], "dst": [H0, H1, O0],
+        "weight": [1.0] * 3, "enabled": [True, False, True]})   # 0 -> H0 -> H1 -> O0, the middle one disabled
+    assert neat.creates_cycle(genome, H0, H0)                    # self-loop
+    assert neat.creates_cycle(genome, H1, H0)                    # closes H0 -> H1 even though it is disabled
+    assert not neat.creates_cycle(genome, 0, H1)
+    assert not neat.creates_cycle(genome, H0, O0)
 
 
 def test_add_node_splits_a_connection():
@@ -157,7 +160,7 @@ def test_weight_mutation_rates(monkeypatch):
     assert abs(replaced - config.NEAT_REPLACE) < 0.02                 # σ = 0: only replacements change weights
     moved = np.concatenate([neat.mutate(rng, g, innovations, 1.0).weight for g in genomes])
     assert abs(np.mean(moved != before) - (config.NEAT_REPLACE + config.NEAT_PERTURB)) < 0.03
-    assert all(g.n_params == 165 for g in genomes)                     # the parents are unchanged
+    assert all(g.n_params == 195 for g in genomes)                     # the parents are unchanged
 
 
 def test_mutate_adds_structure_with_its_probabilities(monkeypatch):
@@ -166,7 +169,7 @@ def test_mutate_adds_structure_with_its_probabilities(monkeypatch):
     rng = np.random.default_rng(7)
     innovations = neat.Innovations()
     genome = neat.mutate(rng, neat.initial_genome(rng, innovations), innovations, 0.1)
-    assert len(genome.node_ids) == neat.N_OUT + 1 and len(genome.innov) == 152
+    assert len(genome.node_ids) == neat.N_OUT + 1 and len(genome.innov) == 182
 
 
 def test_crossover_aligns_genes_by_innovation():
@@ -201,24 +204,24 @@ def test_distance():
     b = a.copy()
     b.weight = b.weight + 1.0
     assert np.isclose(neat.distance(a, b), config.NEAT_C3 * 1.0)
-    c = neat.add_node(rng, a, innovations)                             # two excess genes, N = 152
-    assert np.isclose(neat.distance(a, c), config.NEAT_C1 * 2 / 152)
-    small = neat.Genome.from_dict({"node_ids": [10], "bias": [0.0], "innov": [0, 3], "src": [0, 1], "dst": [10, 10],
+    c = neat.add_node(rng, a, innovations)                             # two excess genes, N = 182
+    assert np.isclose(neat.distance(a, c), config.NEAT_C1 * 2 / 182)
+    small = neat.Genome.from_dict({"node_ids": [O0], "bias": [0.0], "innov": [0, 3], "src": [0, 1], "dst": [O0, O0],
                                    "weight": [1.0, 1.0], "enabled": [True, True]})
-    other = neat.Genome.from_dict({"node_ids": [10], "bias": [0.0], "innov": [0, 1, 5], "src": [0, 2, 3],
-                                   "dst": [10, 10, 10], "weight": [2.0, 1.0, 1.0], "enabled": [True, True, True]})
+    other = neat.Genome.from_dict({"node_ids": [O0], "bias": [0.0], "innov": [0, 1, 5], "src": [0, 2, 3],
+                                   "dst": [O0, O0, O0], "weight": [2.0, 1.0, 1.0], "enabled": [True, True, True]})
     # matching 0 (|Δw| = 1); disjoint 1 and 3 (below the smaller maximum 3); excess 5; N = 1 below 20 genes
     assert np.isclose(neat.distance(small, other), config.NEAT_C1 * 1 + config.NEAT_C2 * 2 + config.NEAT_C3 * 1.0)
 
 
 def test_node_depths_are_longest_enabled_paths():
     genome = neat.Genome.from_dict({
-        "node_ids": [10, 11, 25, 26], "bias": [0.0] * 4,
-        "innov": [0, 1, 2, 3, 4, 5], "src": [0, 25, 0, 26, 1, 2], "dst": [25, 26, 26, 10, 11, 10],
+        "node_ids": [O0, O1, H0, H1], "bias": [0.0] * 4,
+        "innov": [0, 1, 2, 3, 4, 5], "src": [0, H0, 0, H1, 1, 2], "dst": [H0, H1, H1, O0, O1, O0],
         "weight": [1.0] * 6, "enabled": [True, True, True, True, False, True]})
     depth = neat.node_depths(genome)
-    assert depth[0] == 0 and depth[25] == 1 and depth[26] == 2 and depth[10] == 3
-    assert depth[11] == 1                                              # no enabled input: bias only
+    assert depth[0] == 0 and depth[H0] == 1 and depth[H1] == 2 and depth[O0] == 3
+    assert depth[O1] == 1                                              # no enabled input: bias only
     assert all(depth[o] >= 1 for o in neat.OUTPUT_IDS if o in depth)
 
 

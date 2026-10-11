@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from racing import neat, netfig, nets
+from racing import config, neat, netfig, nets
 
 
 def dense_driver():
@@ -9,17 +9,20 @@ def dense_driver():
 
 
 def neat_driver():
-    """Input 0 -> hidden 25 -> output 10, input 1 -> output 11, and a disabled input 2 -> output 12."""
-    genome = neat.Genome(node_ids=np.array([*neat.OUTPUT_IDS, 25], dtype=np.int64), bias=np.zeros(16),
-                         innov=np.array([0, 1, 2, 3], dtype=np.int64), src=np.array([0, 25, 1, 2], dtype=np.int64),
-                         dst=np.array([25, 10, 11, 12], dtype=np.int64), weight=np.array([1.0, -2.0, 0.5, 0.3]),
-                         enabled=np.array([True, True, True, False]))
+    """Input 0 -> a hidden node -> the first output, input 1 -> the second output, and a disabled input 2 -> the
+    third output."""
+    hidden, out = neat.FIRST_HIDDEN, list(neat.OUTPUT_IDS)
+    genome = neat.Genome(node_ids=np.array([*neat.OUTPUT_IDS, hidden], dtype=np.int64), bias=np.zeros(neat.N_OUT + 1),
+                         innov=np.array([0, 1, 2, 3], dtype=np.int64), src=np.array([0, hidden, 1, 2], dtype=np.int64),
+                         dst=np.array([hidden, out[0], out[1], out[2]], dtype=np.int64),
+                         weight=np.array([1.0, -2.0, 0.5, 0.3]), enabled=np.array([True, True, True, False]))
     return neat.NeatNet(genome)
 
 
 def test_labels_name_the_rays_speed_and_actions():
     inputs = netfig.input_labels()
-    assert len(inputs) == 10 and inputs[0] == "−90°" and inputs[4] == "0°" and inputs[8] == "+90°"
+    assert inputs[-3:] == ["speed", "position", "width"] and len(inputs) == config.N_INPUTS
+    assert len(inputs) == config.N_INPUTS and inputs[0] == "−90°" and inputs[4] == "0°" and inputs[8] == "+90°"
     assert inputs[9] == "speed"
     outputs = netfig.output_labels()
     assert len(outputs) == 15 and outputs[0] == "R1 brake" and outputs[8] == "S gas" and outputs[14] == "L1 gas"
@@ -28,14 +31,15 @@ def test_labels_name_the_rays_speed_and_actions():
 def test_dense_graph_matches_the_network():
     driver = dense_driver()
     graph = netfig.network_graph(driver)
-    assert [len(c) for c in graph["columns"]] == [10, 16, 15] and len(graph["edges"]) == 10 * 16 + 16 * 15
+    assert [len(c) for c in graph["columns"]] == [config.N_INPUTS, 16, 15]
+    assert len(graph["edges"]) == config.N_INPUTS * 16 + 16 * 15
     weights = {(a, i, b, j): w for a, i, b, j, w in graph["edges"]}
     assert weights[(0, 3, 1, 7)] == driver.layers[0][0][3, 7] and weights[(1, 5, 2, 14)] == driver.layers[1][0][5, 14]
 
 
 def test_neat_graph_places_hidden_nodes_by_depth_and_skips_disabled_connections():
     graph = netfig.network_graph(neat_driver())
-    assert [len(c) for c in graph["columns"]] == [10, 1, 15]
+    assert [len(c) for c in graph["columns"]] == [config.N_INPUTS, 1, 15]
     assert sorted(graph["edges"]) == sorted([(0, 0, 1, 0, 1.0), (1, 0, 2, 0, -2.0), (0, 1, 2, 1, 0.5)])
 
 

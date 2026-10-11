@@ -19,7 +19,7 @@ def input_labels():
     for angle in np.degrees(config.RAY_ANGLES):
         degrees = int(round(float(angle)))
         labels.append("0°" if degrees == 0 else f"{degrees:+d}°".replace("-", "−"))
-    return labels + ["speed"]
+    return labels + ["speed", "position", "width"]
 
 
 def output_labels():

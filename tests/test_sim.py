@@ -258,7 +258,7 @@ def test_a_default_setup_reproduces_a_revision_3_drive():
     rng_new, rng_old = np.random.default_rng(7), np.random.default_rng(7)
     for _ in range(900):
         obs_new, obs_old = sim.sense(track, new), reference_sense(track, old)
-        assert np.array_equal(obs_new, obs_old)
+        assert np.array_equal(obs_new[:, :config.N_RAYS + 1], obs_old[:, :config.N_RAYS + 1])   # revision 3's columns
         actions = []
         for cars, rng in ((new, rng_new), (old, rng_old)):
             classes = controls_to_class(*expert.expert_controls(track, cars))
@@ -351,3 +351,42 @@ def test_simulate_passes_the_grip_and_the_setup(monkeypatch, circle_track):
 def test_start_cars_rejects_a_setup_of_the_wrong_shape(circle_track):
     with pytest.raises(ValueError, match="setup"):
         sim.start_cars(circle_track, 3, setup=default_setups(2))
+
+
+# ----- position across the road and road width (revision 3.2 §3) -----
+
+def placed(track, offset_left, index=0):
+    """One car at centerline point `index` (lap-counting), `offset_left` m to the left of the driving direction."""
+    cars = sim.start_cars(track, 1)
+    i = index % len(track.centerline)
+    tx, ty = track.tangent[i]
+    cars.x[:] = track.centerline[i, 0] - ty * offset_left
+    cars.y[:] = track.centerline[i, 1] + tx * offset_left
+    cars.index[:] = index
+    return cars
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_position_runs_from_the_left_edge_to_the_right_edge(circle_track, reverse):
+    track = circle_track if not reverse else build_track(circle_track.centerline[::-1], circle_track.width, 0, 1)
+    half = track.width / 2
+    for offset, expected in ((0.0, 0.0), (half / 2, -0.5), (-half / 2, 0.5), (half * 0.999, -0.999)):
+        cars = placed(track, offset)
+        assert sim.road_position(track, cars, np.array([0])) == pytest.approx([expected], abs=1e-3)
+
+
+def test_position_wraps_the_lap_counting_index(circle_track):
+    m = len(circle_track.centerline)
+    a = sim.road_position(circle_track, placed(circle_track, 2.0, index=7), np.array([0]))
+    b = sim.road_position(circle_track, placed(circle_track, 2.0, index=7 + 2 * m), np.array([0]))
+    assert a == pytest.approx(b) and a[0] == pytest.approx(-2.0 / (circle_track.width / 2), abs=1e-3)
+
+
+def test_sense_adds_position_and_width_and_keeps_done_rows_zero(circle_track):
+    cars = sim.start_cars(circle_track, 2)
+    cars.done[1] = True
+    obs = sim.sense(circle_track, cars)
+    assert obs.shape == (2, 12) == (2, config.N_INPUTS)
+    assert obs[0, config.N_RAYS + 1] == pytest.approx(0.0, abs=1e-6)
+    assert obs[0, config.N_RAYS + 2] == pytest.approx(circle_track.width / config.WIDTH_SCALE)
+    assert not obs[1].any()

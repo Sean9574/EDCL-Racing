@@ -23,7 +23,7 @@ def test_generation_time_uses_the_evaluation_task_division(monkeypatch):
 
 def test_keras_epoch_time_on_toy_data():
     rng = np.random.default_rng(0)
-    x = rng.random((600, 10)).astype(np.float32)
+    x = rng.random((600, config.N_INPUTS)).astype(np.float32)
     data = {"X_train": x[:500], "y_train": rng.integers(0, 15, 500), "X_val": x[500:],
             "y_val": rng.integers(0, 15, 100)}
     assert bench.keras_epoch_time(data, steps_per_execution=4, jit_compile=False, epochs=1) > 0.0

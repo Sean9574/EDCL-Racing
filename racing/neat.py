@@ -13,11 +13,11 @@ from racing import setup as car_setup
 from racing.backend import keras_cpu
 from racing.curriculum import StepSize, success_fraction
 
-N_IN = config.N_INPUTS                         # 10
+N_IN = config.N_INPUTS                         # 12
 N_OUT = config.N_ACTIONS                       # 15
 INPUT_IDS = range(0, N_IN)
 OUTPUT_IDS = range(N_IN, N_IN + N_OUT)
-FIRST_HIDDEN = N_IN + N_OUT                    # 25
+FIRST_HIDDEN = N_IN + N_OUT                    # 27
 CONNECTION_ATTEMPTS = 20                       # random node pairs one add-connection mutation tries
 
 
