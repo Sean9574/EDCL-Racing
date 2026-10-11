@@ -759,3 +759,17 @@ def test_ctrl_c_or_kill_stops_every_running_job_and_lists_the_waiting_ones(runne
         for pid in children:
             if Path(f"/proc/{pid}").exists():
                 os.kill(pid, signal.SIGKILL)
+
+
+def test_check_reports_earlier_results_of_other_settings_without_running_anything(runner, tmp_path, monkeypatch,
+                                                                                  capsys):
+    three_notebooks(tmp_path)
+    monkeypatch.setattr(runner, "execute", lambda *a, **k: pytest.fail("a notebook was run"))
+    assert run_main(runner, tmp_path, ["--check"]) == 0
+    old = tmp_path / "results" / "runs" / "ga" / "seed0" / "summary.json"
+    old.parent.mkdir(parents=True)
+    checkpoint.write_json(old, {"settings": {**checkpoint.settings_record(), "GRIP": 99.0}})
+    assert run_main(runner, tmp_path, ["--check"]) == 3
+    assert "GRIP" in capsys.readouterr().err
+    with hold_lock(tmp_path / "results"):
+        assert run_main(runner, tmp_path, ["--check"]) == 3              # read-only: no lock needed

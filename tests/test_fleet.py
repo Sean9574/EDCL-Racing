@@ -533,3 +533,46 @@ def test_the_plan_reads_jobs(fake):
     (here,) = fake.fleet.load_plan(plan)
     assert [job.label for job in here.runs] == ["nb:01", "nb:02", "baseline:0", "es_seeded:0"]
     assert fake.fleet.train_command(here).endswith("--runs nb:01,nb:02,baseline:0,es_seeded:0 --at-once 1")
+
+
+def test_start_refuses_a_machine_whose_earlier_results_have_other_settings(fake):
+    fake.ready_server()
+    script = fake.server_project() / "scripts" / "run_notebooks.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("import sys; sys.exit(3 if '--check' in sys.argv else 0)\n")
+    python = fake.home("server") / "miniforge3" / "envs" / "ec-racing" / "bin" / "python"
+    python.write_text(f"#!/bin/sh\nexec {sys.executable} \"$@\"\n")
+    with pytest.raises(fake.fleet.FleetError, match="fleet.py archive"):
+        fake.fleet.start(fake.machines(), out=io.StringIO())
+    assert fake.session("server") is None and fake.session("desktop") is None
+
+
+def test_archive_moves_the_earlier_results_on_every_machine(fake):
+    fake.ready_server()
+    python = fake.home("server") / "miniforge3" / "envs" / "ec-racing" / "bin" / "python"
+    python.write_text(f"#!/bin/sh\necho \"$@\" > {fake.tmp / 'server-args'}\n")
+    assert "scripts/run_notebooks.py --archive revision3.1" in fake.fleet.archive_script(fake.machines()[0],
+                                                                                       "revision3.1")
+    out = io.StringIO()
+    fake.fleet.archive([fake.machines()[1]], "revision3.1", out=out)
+    assert (fake.tmp / "server-args").read_text().strip() == "scripts/run_notebooks.py --archive revision3.1"
+
+
+def test_a_dagger_run_from_a_server_joins_its_imitation_files_here(fake):
+    fake.ready_server()
+    machines = [fake.machines()[0], fake.fleet.Machine("server", jobs.parse_jobs("kt_random:1"), host="me@server",
+                                                       ssh="ssh")]
+    server = fake.server_project() / "results"
+    finished_run(server, "kt_random", 1)
+    for results in (server, fake.desktop / "results"):                   # notebook 02 made these on the desktop
+        run = results / "runs" / "kt_random" / "seed1"
+        run.mkdir(parents=True, exist_ok=True)
+        (run / "imitation.keras").write_bytes(b"imitation network")
+        checkpoint.write_json(run / "summary.json", {"settings": checkpoint.settings_record(), "epochs": 9})
+    out = io.StringIO()
+    assert fake.fleet.collect(machines, out=out) == 0, out.getvalue()
+    here = fake.desktop / "results" / "runs" / "kt_random" / "seed1"
+    assert (here / "speed" / "summary.json").exists() and (here / "imitation.keras").read_bytes() == b"imitation network"
+    (server / "runs" / "kt_random" / "seed1" / "imitation.keras").write_bytes(b"another network")
+    shutil.rmtree(here / "speed")
+    assert fake.fleet.collect(machines, out=io.StringIO()) == 1          # a differing file is never replaced

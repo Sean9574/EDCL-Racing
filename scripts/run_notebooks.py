@@ -521,6 +521,25 @@ def run_side_by_side(job_list, at_once, log_path=config.RUN_LOG_PATH, info_path=
             watcher.stop()
 
 
+def report_results(results_dir):
+    """Check the earlier results (check_results) and print what stops a run; True if anything does."""
+    problems, unreadable = check_results(Path(results_dir) / "runs")
+    if unreadable:
+        print("error: these result files cannot be read, probably because a crash or reboot cut them short:",
+              file=sys.stderr)
+        for path in unreadable:
+            print(f"  {path}", file=sys.stderr)
+        print("Delete only these files and run again: the steps they belong to are redone, every other result "
+              "is kept.", file=sys.stderr)
+    if problems:
+        print("error: earlier results were produced with different settings:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print("Run again with --fresh to remove them and start over, or keep them with --archive NAME.",
+              file=sys.stderr)
+    return bool(problems or unreadable)
+
+
 def stop_on_kill(signum, frame):
     """kill (SIGTERM) stops the run like Ctrl+C: the notebook's kernel is ended and the run log says so."""
     raise KeyboardInterrupt
@@ -537,10 +556,14 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
                                        "method and notebooks 01 and 02, for example nb:01,nb:02,baseline:0,ga:1")
     parser.add_argument("--at-once", type=int, default=1, help="with --runs: how many run at the same time")
     parser.add_argument("--archive", metavar="NAME", help="move the earlier results to results/archive/NAME/ and exit")
+    parser.add_argument("--check", action="store_true",
+                        help="only check whether the earlier results can be continued (exit code 0, or 3)")
     parser.add_argument("--notebook-job", help=argparse.SUPPRESS)        # one notebook, for --runs
     args = parser.parse_args(argv)
     if args.notebook_job is not None:
         return notebook_job(args.notebook_job, notebook_dir, log_path)
+    if args.check:                                     # read-only, so no lock (scripts/fleet.py start asks this)
+        return 3 if report_results(results_dir) else 0
     if args.archive is not None and (args.fresh or args.start is not None or args.runs is not None):
         print("error: --archive moves the earlier results and runs nothing; use it on its own", file=sys.stderr)
         return 2
@@ -603,20 +626,7 @@ def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_pat
             return 0
         if args.fresh:
             fresh_start(results_dir)
-        problems, unreadable = check_results(Path(results_dir) / "runs")
-        if unreadable:
-            print("error: these result files cannot be read, probably because a crash or reboot cut them short:",
-                  file=sys.stderr)
-            for path in unreadable:
-                print(f"  {path}", file=sys.stderr)
-            print("Delete only these files and run again: the steps they belong to are redone, every other result "
-                  "is kept.", file=sys.stderr)
-        if problems:
-            print("error: earlier results were produced with different settings:", file=sys.stderr)
-            for problem in problems:
-                print(f"  {problem}", file=sys.stderr)
-            print("Run again with --fresh to remove them and start over.", file=sys.stderr)
-        if problems or unreadable:
+        if report_results(results_dir):
             return 3
         job_list = getattr(args, "runs", None)
         if job_list is not None:

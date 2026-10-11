@@ -465,3 +465,11 @@ def test_the_robustness_table_counts_finishes_per_method_and_width():
     assert ga["18 m finished (1 maps)"] == "1 / 1"
     es = table[table["Method"] == "ES"].iloc[0]
     assert es["18 m finished (1 maps)"] == "0 / 1" and es["18 m mean lap (s)"] == "–"
+
+
+def test_the_robustness_table_gives_finishes_per_seed():
+    frame = drive_rows([("ga", 0, 1000, True, True, False, 20.0), ("ga", 1, 1000, False, False, True, np.nan),
+                        ("ga", 2, 1000, True, False, False, 22.0)])
+    frame["width"] = 14.0
+    ga = evaluate.robustness_table(frame, (14.0,)).iloc[0]
+    assert ga["14 m finished per seed"] == "1, 0, 1" and ga["14 m finished (1 maps)"] == "2 / 3"

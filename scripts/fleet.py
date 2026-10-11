@@ -10,6 +10,7 @@ with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through
   python scripts/fleet.py stop      Ctrl+C in every session: the runs stop and continue where they stopped at the
                                     next start
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
+  python scripts/fleet.py archive NAME   every machine moves its earlier results to results/archive/NAME/
   python scripts/fleet.py finish    once all 24 runs have finished: collect, then notebooks 03 to 08 (they find
                                     the runs complete and report them) and the evaluation, in the "fleet" session here
 
@@ -537,7 +538,9 @@ def probe_script(machine):
              'if flock -n results/.runner.lock true; then echo "lock free"; '
              'else echo "lock held $(head -c 20 results/.runner.lock 2>/dev/null)"; fi',
              f"tmux has-session -t {SESSION} 2>/dev/null && echo 'session yes' || echo 'session no'",
-             f"[ -x {machine.python} ] || echo 'python missing'"]
+             f"[ -x {machine.python} ] || echo 'python missing'",
+             f"if [ -x {machine.python} ] && [ -f scripts/run_notebooks.py ]; then "
+             f"{machine.python} scripts/run_notebooks.py --check >/dev/null 2>&1 || echo 'results differ'; fi"]
     for local, target in external_inputs(machine):
         lines.append(f"[ -f {shlex.quote(target)} ] || echo 'missing {target}'")
     return "\n".join(lines) + "\n"
@@ -549,7 +552,7 @@ def probe(machine):
         key, _, value = line.partition(" ")
         if key == "missing":
             facts["missing"].append(value)
-        elif key in ("commit", "lock", "session", "python", "project"):
+        elif key in ("commit", "lock", "session", "python", "project", "results"):
             facts[key] = value
     return facts
 
@@ -576,6 +579,9 @@ def readiness(machine, facts, commit):
                         "(python scripts/fleet.py stop, or Ctrl+C in its tmux session)")
     if "python" in facts:
         problems.append(f"{machine.where}: no ec-racing Python; run: python scripts/fleet.py setup")
+    if "results" in facts:
+        problems.append(f"{machine.where}: its earlier results were made with other settings or cannot be read, so "
+                        "its runner would stop at once; keep them aside first: python scripts/fleet.py archive NAME")
     for target in facts["missing"]:
         problems.append(f"{machine.where}: {target} is missing; run: python scripts/fleet.py setup")
     return problems
@@ -739,7 +745,7 @@ def place_run(staging, results, run, source):
         if same_file(here, record):
             return "already here"
         raise FleetError(f"{name}: a different finished run is already in {target}; nothing was copied")
-    if target.exists():
+    if target.exists() and not joins(incoming, target, approach):
         raise FleetError(f"{name}: an unfinished copy of this run is in {target}; delete that folder if the run "
                          f"from {source} should replace it")
     for champion in champions:
@@ -747,12 +753,28 @@ def place_run(staging, results, run, source):
         if existing.exists() and not same_file(existing, champion):
             raise FleetError(f"{name}: {existing} belongs to a different run; nothing was copied")
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(incoming), str(target))
+    if target.exists():
+        shutil.copytree(incoming, target, dirs_exist_ok=True)                # adds the run to notebook 02's files
+    else:
+        shutil.move(str(incoming), str(target))
     for champion in champions:
         destination = results / "champions" / approach / champion.name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(champion), str(destination))
     return "copied"
+
+
+def joins(incoming, target, approach):
+    """Whether a run collected from a server may be added to the folder `target` here: an imitation method's folder
+    holds the files notebook 02 made here (the server got them from here), so it joins when every file in both is
+    identical. An evolutionary run's folder here is an unfinished copy of the same run, which is never mixed in."""
+    if approach not in config.IMITATION_APPROACHES:
+        return False
+    for path in incoming.rglob("*"):
+        twin = target / path.relative_to(incoming)
+        if path.is_file() and twin.exists() and not same_file(path, twin):
+            return False
+    return True
 
 
 def collect(machines, out=sys.stdout, results=None):
@@ -828,13 +850,33 @@ def finish(machines, out=sys.stdout):
     return 0
 
 
+def archive_script(machine, name):
+    return (f"cd {machine.root} 2>/dev/null || {{ echo 'no project here, nothing to archive'; exit 0; }}\n"
+            f"{machine.python} scripts/run_notebooks.py --archive {shlex.quote(name)}\n")
+
+
+def archive(machines, name, out=sys.stdout):
+    """Move every machine's earlier results to results/archive/NAME/ (run_notebooks.py --archive), so the next start
+    begins afresh everywhere (revision 3.2 §6.1)."""
+    problems = 0
+    for machine in machines:
+        code, answer, err = run_shell(machine, archive_script(machine, name))
+        print(f"{machine.where}: {(answer.strip() or err.strip() or f'exit code {code}').splitlines()[-1]}", file=out)
+        problems += code != 0
+    return 1 if problems else 0
+
+
 COMMANDS = {"setup": setup, "start": start, "status": status, "stop": stop, "finish": finish}
 
 
 def main(argv=None, plan=PLAN, out=sys.stdout):
     parser = argparse.ArgumentParser(description="Train the experiment's runs on several machines at once.")
-    parser.add_argument("command", choices=[*COMMANDS, "collect"])
+    parser.add_argument("command", choices=[*COMMANDS, "collect", "archive"])
+    parser.add_argument("name", nargs="?", help="with archive: the archive's name, for example revision3.1")
     args = parser.parse_args(argv)
+    if (args.command == "archive") != (args.name is not None):
+        print("error: archive takes a name (fleet.py archive revision3.1), and only archive does", file=sys.stderr)
+        return 2
     try:
         machines = load_plan(plan)
     except PlanError as error:
@@ -843,6 +885,8 @@ def main(argv=None, plan=PLAN, out=sys.stdout):
     try:
         if args.command == "collect":
             return 1 if collect(machines, out) else 0
+        if args.command == "archive":
+            return archive(machines, args.name, out)
         return COMMANDS[args.command](machines, out=out)
     except FleetError as error:
         print(f"error: {error}", file=sys.stderr)

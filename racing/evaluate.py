@@ -99,8 +99,8 @@ def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, le
 
 
 def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
-    """Revision 3.2 §5.2: per method and width, the maps finished and succeeded (all seeds) and the mean lap time on
-    finished maps; each width's first column names how many maps it covers."""
+    """Revision 3.2 §5.2: per method and width, the maps finished (in total and per seed) and succeeded, and the mean
+    lap time on finished maps; each width's first column names how many maps it covers."""
     rows = []
     for approach in config.APPROACHES:
         sub = frame[frame["approach"] == approach]
@@ -112,6 +112,8 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
             maps = frame.loc[frame["width"] == width, "track"].nunique()
             lap = cell.loc[cell["finished"].astype(bool), "lap_time"]
             row[f"{width:g} m finished ({maps} maps)"] = f"{int(cell['finished'].sum())} / {len(cell)}"
+            per_seed = cell.groupby("run_seed")["finished"].sum()
+            row[f"{width:g} m finished per seed"] = ", ".join(str(int(v)) for v in per_seed.sort_index())
             row[f"{width:g} m succeeded"] = f"{int(cell['success'].sum())} / {len(cell)}"
             row[f"{width:g} m mean lap (s)"] = "–" if lap.empty else f"{lap.mean():.2f}"
         rows.append(row)

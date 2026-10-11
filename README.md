@@ -258,12 +258,14 @@ python scripts/fleet.py start      # every machine starts its runs in a detached
 python scripts/fleet.py status     # one line per run in training on every machine, and the latest milestones
 python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
 python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
+python scripts/fleet.py archive revision3.1   # every machine moves its earlier results to results/archive/revision3.1/
 python scripts/fleet.py finish     # once all 24 runs have finished: collect, then notebooks 03 to 08 here
 ```
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
-  code changes first; a server gets the last commit), its environment and inputs, and no runner is still training
-  on any machine. Stop a runner started by hand first (Ctrl+C in its tmux session).
+  code changes first; a server gets the last commit), its environment and inputs, no machine holds earlier results
+  made with other settings (keep those aside with `fleet.py archive NAME`), and no runner is still training on any
+  machine. Stop a runner started by hand first (Ctrl+C in its tmux session).
 - The runs keep going when GlobalProtect or SSH disconnects; only fleet.py's commands need the connection. On the
   desktop, keep WSL running as for any run (see above).
 - fleet.py opens few SSH connections per command (`setup` three, `start` two, `status` one, `collect` two) and, as
