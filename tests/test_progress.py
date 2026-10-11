@@ -299,3 +299,9 @@ def test_main_follows_runs_side_by_side_when_there_are_any(tmp_path, monkeypatch
     assert progress.main(["--log", str(tmp_path / "log.txt")]) == 0
     printed = capsys.readouterr().out
     assert all(progress.format_status(s) in printed for s in expected)
+
+
+def test_the_speed_push_line_shows_its_75_percent_requirement(order):
+    push = progress.format_status(status(stage="speed push", target_reduction=0.1, level=4))
+    levels = progress.format_status(status())
+    assert "/ 75%" in push and "/ 90%" not in push and "/ 90%" in levels

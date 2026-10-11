@@ -147,9 +147,10 @@ def format_status(status):
             reduction = _number(status.get("target_reduction"))
             parts.append("speed push" if math.isnan(reduction) else f"speed push −{100 * reduction:.1f}%")
         share = _number(status.get("min_share"))
-        fill = 0.0 if math.isnan(share) else share / config.MASTERY_FRACTION
+        need = config.SPEED_MASTERY_FRACTION if stage == "speed push" else config.MASTERY_FRACTION   # revision 3.2 §4
+        fill = 0.0 if math.isnan(share) else share / need
         parts += [f"gen {status.get('generation', '?')}",
-                  f"worst map {percent(share)} / {percent(config.MASTERY_FRACTION)} {bar(fill)}",
+                  f"worst map {percent(share)} / {percent(need)} {bar(fill)}",
                   f"streak {streak}/{config.MASTERY_STREAK}"]
     parts.append(duration(status.get("elapsed")))
     return " · ".join(parts)

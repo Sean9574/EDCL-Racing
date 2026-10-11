@@ -222,13 +222,14 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         evals += n
         cap = int(config.KEEP_MAX_FRACTION * n)
         kept = survivors(rng, result.fitness, result.all_success, result.lap_share, cap, config.ELITE_FLOOR)
+        speed_push = tracker.goal_reached                   # the rule this generation is judged by (revision 3.2 §4)
         event = tracker.update(result.min_share)
         now = active()
         report = {"approach": method.approach, "seed": seed, "generation": generation, "level": level,
                   "factor": factor, "target_reduction": tracker.target_reduction, "streak": tracker.streak,
                   "seeds": maps, "population": method.population, "fitness": result.fitness,
                   "all_success": result.all_success, "is_kept": method.is_kept, "map_shares": result.map_shares,
-                  "min_share": result.min_share, "n_kept": len(kept),
+                  "min_share": result.min_share, "speed_push": speed_push, "n_kept": len(kept),
                   "kept_success": share(result.all_success[method.is_kept]),
                   "child_success": children_success(result, method.is_kept), "median_lap": median_lap(result),
                   "step_size": float(method.step_size), "best": float(result.fitness.max()),

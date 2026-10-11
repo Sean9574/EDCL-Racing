@@ -3,7 +3,7 @@ import pickle
 
 import numpy as np
 
-from racing import config
+from racing import config, curriculum
 from racing.curriculum import (EVENTS, MasteryTracker, SeedSource, StepSize, mutation_strength, success_fraction,
                                survivors)
 
@@ -218,3 +218,39 @@ def test_step_size_is_clipped_and_round_trips():
 def test_success_fraction_counts_ties_as_half():
     child, parent = np.array([2.0, 1.0, 3.0, 0.0]), np.array([1.0, 1.0, 1.0, 1.0])
     assert success_fraction(child, parent) == (1.0 + 0.5 + 1.0 + 0.0) / 4
+
+
+# ----- revision 3.2 §4: the speed push -----
+
+def at_goal():
+    tracker = MasteryTracker(level=config.MAX_LEVEL)
+    for _ in range(config.MASTERY_STREAK):
+        event = tracker.update(1.0)
+    assert event == "goal" and tracker.goal_reached
+    return tracker
+
+
+def test_the_speed_push_passes_at_75_percent_and_the_levels_need_90():
+    assert curriculum.mastery_fraction(False) == 0.9 and curriculum.mastery_fraction(True) == 0.75
+    level = MasteryTracker(level=1)
+    level.update(0.8)
+    assert level.streak == 0
+    tracker = at_goal()
+    tracker.update(0.75)
+    assert tracker.streak == 1
+    tracker.update(0.74)
+    assert tracker.streak == 0
+
+
+def test_each_mastered_target_is_2_percent_shorter():
+    tracker = at_goal()
+    first = tracker.factor
+    for _ in range(config.MASTERY_STREAK):
+        event = tracker.update(0.8)
+    assert event == "tightened" and math.isclose(tracker.factor, first * 0.98)
+
+
+def test_the_speed_push_ends_after_300_generations_without_a_mastery():
+    tracker = at_goal()
+    events = [tracker.update(0.5) for _ in range(300)]
+    assert events[-1] == "end_speed" and events[:-1] == [None] * 299

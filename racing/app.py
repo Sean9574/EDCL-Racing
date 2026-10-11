@@ -19,7 +19,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import numpy as np
 import pygame
 
-from racing import checkpoint, config, netwindow, nets, paths, population, sim
+from racing import checkpoint, config, curriculum, netwindow, nets, paths, population, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -405,7 +405,8 @@ def stats_lines(report, approach):
     if "species" in report:
         last += f"    Species {report['species']}"
     lines = (f"{level}    Generation {report['generation']}",
-             f"Maps succeeded: {share_text(report['map_shares'])}  (need {percent(config.MASTERY_FRACTION)})",
+             f"Maps succeeded: {share_text(report['map_shares'])}  "
+             f"(need {percent(curriculum.mastery_fraction(report.get('speed_push', False)))})",
              f"Streak {report['streak']}/{config.MASTERY_STREAK}    Target cut mastered: {mastered}",
              f"{size_name}: {number(report['step_size'])}    Kept {int(np.sum(report['is_kept']))}",
              last)
@@ -1455,8 +1456,8 @@ class App:
             if marked:
                 px = point(g, lo)[0]
                 pygame.draw.line(self.screen, MUTED, (px, rect.top + 22), (px, rect.bottom - 2), 1)
-        if shares:                                          # the 90% requirement
-            y = point(gens[0], config.MASTERY_FRACTION)[1]
+        if shares:                                          # the requirement of the latest generation
+            y = point(gens[0], curriculum.mastery_fraction(self.latest.get("speed_push", False)))[1]
             pygame.draw.line(self.screen, BUTTON_ACTIVE, (rect.left + 6, y), (rect.right - 6, y), 1)
         if not np.isnan(second).all():
             pygame.draw.lines(self.screen, MUTED, False, [point(g, v) for g, v in zip(gens, second)], 1)

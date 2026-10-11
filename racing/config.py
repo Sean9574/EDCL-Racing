@@ -86,8 +86,9 @@ TRACKS_PER_GEN = 3
 TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LAPS expert laps (revision 3 §4.1)
 MASTERY_FRACTION = 0.9       # lowest map success share for a passing generation (revision 3 §4.3)
 MASTERY_STREAK = 3           # consecutive passing generations to advance a level or master a target
-SPEED_STEP = 0.95            # target factor multiplier per mastered target in the speed push (revision 3 §4.4)
-SPEED_PATIENCE = 500         # generations without mastering the current target that end the speed push
+SPEED_STEP = 0.98            # target factor multiplier per mastered target in the speed push (revision 3.2 §4)
+SPEED_MASTERY_FRACTION = 0.75  # lowest map success share of a passing speed-push generation (revision 3.2 §4)
+SPEED_PATIENCE = 300         # generations without mastering the current target that end the speed push
 SAFETY_PATIENCE = 2000       # generations without a new best 3-generation mean lowest share that end a run (§4.5)
 KEEP_MAX_FRACTION = 0.9      # kept cars fill at most this share of the population (revision 3 §4.2)
 ELITE_FLOOR = 50             # at least this many of the fittest cars are kept

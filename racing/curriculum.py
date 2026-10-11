@@ -54,6 +54,12 @@ def survivors(rng, fitness, all_success, lap_share, cap, floor):
     return np.array(chosen, dtype=np.int64)
 
 
+def mastery_fraction(speed_push):
+    """Lowest map success share of a passing generation: MASTERY_FRACTION on the levels, SPEED_MASTERY_FRACTION in
+    the speed push (revision 3.2 §4)."""
+    return config.SPEED_MASTERY_FRACTION if speed_push else config.MASTERY_FRACTION
+
+
 class MasteryTracker:
     """Levels, the mastery goal, the speed push and the safety stop (revision 3 §4.3-4.5). update() takes the lowest
     map success share of one generation and returns one of EVENTS or None."""
@@ -89,7 +95,7 @@ class MasteryTracker:
     def update(self, min_share):
         if self.done:
             return None
-        self.streak = self.streak + 1 if min_share >= config.MASTERY_FRACTION else 0
+        self.streak = self.streak + 1 if min_share >= mastery_fraction(self.goal_reached) else 0
         if self.goal_reached:
             if self.streak >= config.MASTERY_STREAK:
                 self._master()
