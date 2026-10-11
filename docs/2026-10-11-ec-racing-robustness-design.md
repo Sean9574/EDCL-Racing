@@ -49,7 +49,7 @@ are removed; the levels now differ only in their corners and features.
 The generator already sizes the offsets of chicanes and esses by the width and requires separate parts of the road to
 stay a road width plus OVERLAP_MARGIN (6 m) apart; both use the map's own width. The expert's lap time, and therefore the
 target times, are measured on each map at its width. A slow test checks that every fixed map builds: the dataset maps,
-the validation maps 80–99, the test maps 1000–1019, and the first 500 training maps of every level.
+the validation maps 80–99, the test maps 1000–1019, and the first 200 training maps of every level.
 
 ### 2.3 Unchanged
 
@@ -120,9 +120,9 @@ covers.
 
 ### 6.1 Starting over
 
-The runner gains `--archive NAME`, allowed only with `--fresh`: instead of deleting the earlier results, it moves them to
-`results/archive/NAME/`. The revision 3.1 results are archived as `revision3.1`. Pilots, viewer runs and earlier archives
-stay where they are.
+The runner gains `--archive NAME`, a step of its own: it moves what `--fresh` would delete to `results/archive/NAME/`
+and exits without running anything, so the next start begins afresh. The revision 3.1 results are archived as
+`revision3.1`. Pilots, viewer runs and earlier archives stay where they are.
 
 ### 6.2 Imitation runs side by side
 
@@ -201,7 +201,7 @@ affects the evaluation.
   build, and leave out builds that fail the spacing check; the table reports finishes, successes and lap times per
   method and width.
 - **Viewer:** a controller with 10 inputs is left out of the race with a message; the map line names the width.
-- **Execution:** `--archive` moves exactly what `--fresh` would delete and refuses to overwrite an existing archive; the
+- **Execution:** `--archive` moves exactly what `--fresh` would delete, runs nothing else and refuses to overwrite an existing archive; the
   DAgger calls of `racing/train.py` match notebook 03; a job starts only when its inputs exist and then without delay,
   waiting jobs hold no slot, a job whose input nothing will produce is refused before anything starts, and the
   dependants of a failed job are reported; notebook jobs save their outputs; `finish` requires all 24 runs and runs
