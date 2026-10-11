@@ -640,6 +640,7 @@ def test_a_job_whose_input_nobody_makes_is_refused_before_anything_starts(runner
     refined = tmp_path / "results" / "runs" / "baseline" / "seed1" / "dagger.json"
     refined.parent.mkdir(parents=True)
     checkpoint.write_json(refined, {"settings": checkpoint.settings_record()})     # a refinement of these settings
+    refined.with_name("dagger.keras").write_bytes(b"network")
     started_with = []
     monkeypatch.setattr(runner, "run_side_by_side",
                         lambda job_list, at_once, *a, **k: started_with.append(([j.label for j in job_list], at_once))
@@ -728,9 +729,8 @@ def stopping_runner(tmp_path):
               f"sys.exit(runner.run_side_by_side(jobs.parse_jobs('baseline:0,ga:1,es_seeded:0'), 2, "
               f"{str(tmp_path / 'log.txt')!r}, {str(tmp_path / 'info.json')!r}, {str(tmp_path / 'status')!r}, "
               f"{str(tmp_path / 'logs')!r}, monitor=False, command=command, results_dir={str(tmp_path / 'r')!r}))\n")
-    for name in ("runs/baseline/seed0/summary.json",):                  # baseline:0's own input exists
-        path = tmp_path / "r" / name
-        path.parent.mkdir(parents=True)
+    for path in jobs.needs(jobs.parse_job("baseline:0"), tmp_path / "r"):      # baseline:0's own inputs exist
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}")
     process = subprocess.Popen([sys.executable, "-c", script], cwd=SCRIPT.parent.parent)
     deadline = time.time() + 60

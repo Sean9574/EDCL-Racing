@@ -1,12 +1,20 @@
-# Which machine trains which runs, for scripts/fleet.py. A run is approach:seed, and each run belongs to one machine.
+# Which machine runs which jobs, for scripts/fleet.py (revision 3.2 §6.3). A job is a run, approach:seed, or one of
+# the notebooks nb:01 (dataset) and nb:02 (imitation and Keras Tuner searches); each belongs to one machine. A job
+# starts as soon as a slot is free and its inputs exist, in the order listed, so the longest runs come first.
 # The machine without a host is the one fleet.py runs on (the desktop); servers are reached from it with `ssh`.
-#   at_once: runs trained side by side; workers: worker processes of each run (EC_RACING_JOBS), best a multiple of 3,
-#   the maps of a generation (python -m racing.bench generation: one run gains little beyond 6 to 8).
+#   at_once: jobs run side by side; workers: worker processes of each run (EC_RACING_JOBS), best a multiple of 3, the
+#   maps of a generation (python -m racing.bench generation: one run gains little beyond 6 to 8).
+# The split balances the expected work from revision 3.1's run lengths: the desktop two NEAT slots of about 13 h and
+# two slots for the notebooks, the 12 DAgger runs and the seeded ES runs, about 20 h; the server one NEAT slot of
+# about 20 h and two slots for GA and ES, about 23 h.
 
 [machines.desktop]
 at_once = 4
 workers = 6
-runs = ["ga:1", "neat:0", "neat:1", "neat:2"]
+runs = ["neat:0", "neat:1", "nb:01", "nb:02",
+        "baseline:0", "baseline:1", "baseline:2", "kt_random:0", "kt_random:1", "kt_random:2",
+        "kt_hyperband:0", "kt_hyperband:1", "kt_hyperband:2", "kt_bayesian:0", "kt_bayesian:1", "kt_bayesian:2",
+        "es_seeded:0", "es_seeded:1", "es_seeded:2"]
 
 [machines.server]
 host = "sbrainard@10.0.11.14"
@@ -14,4 +22,4 @@ ssh = "ssh.exe"          # Windows' client: it reaches the school network throug
 dir = "ec-racing"        # the project folder, in the home folder on the server
 at_once = 3
 workers = 6
-runs = ["ga:2", "es:0", "es:1", "es:2", "es_seeded:0", "es_seeded:1", "es_seeded:2"]
+runs = ["neat:2", "ga:0", "ga:1", "ga:2", "es:0", "es:1", "es:2"]

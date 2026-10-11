@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from racing import checkpoint, config, progress
+from racing import checkpoint, config, jobs, paths, progress
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "fleet.py"
 TMUX_STUB = """#!/bin/bash
@@ -79,8 +79,8 @@ class Fake:
         return home
 
     def machines(self):
-        return [self.fleet.Machine("desktop", [("ga", 1), ("neat", 0)], at_once=2, workers=6),
-                self.fleet.Machine("server", [("ga", 2), ("es_seeded", 0)], at_once=3, workers=6, host="me@server",
+        return [self.fleet.Machine("desktop", jobs.parse_jobs("ga:1,neat:0"), at_once=2, workers=6),
+                self.fleet.Machine("server", jobs.parse_jobs("ga:2,es_seeded:0"), at_once=3, workers=6, host="me@server",
                                    ssh="ssh")]
 
     def server_project(self):
@@ -101,9 +101,10 @@ class Fake:
         python.parent.mkdir(parents=True, exist_ok=True)
         python.write_text("#!/bin/sh\n")
         python.chmod(0o755)
-        refined = project / "results" / "runs" / "baseline" / "seed0" / "dagger.keras"
-        refined.parent.mkdir(parents=True, exist_ok=True)
-        refined.write_bytes(b"refined baseline")
+        refined = project / "results" / "runs" / "baseline" / "seed0"
+        refined.mkdir(parents=True, exist_ok=True)
+        (refined / "dagger.keras").write_bytes(b"refined baseline")
+        checkpoint.write_json(refined / "dagger.json", {"settings": checkpoint.settings_record()})
 
     def session(self, name):
         """The command the machine's fleet session was started with, or None."""
@@ -128,14 +129,15 @@ def test_the_plan_names_each_machines_runs(fake):
     plan = write_plan(fake.tmp, '[machines.here]\nat_once = 2\nruns = ["ga:1"]\n'
                                 '[machines.far]\nhost = "me@far"\nssh = "ssh.exe"\nworkers = 3\nruns = ["es:0", "neat:2"]\n')
     here, far = fake.fleet.load_plan(plan)
-    assert (here.local, here.runs, here.at_once, here.workers) == (True, [("ga", 1)], 2, 6)
+    assert (here.local, here.runs, here.at_once, here.workers) == (True, jobs.parse_jobs("ga:1"), 2, 6)
     assert (far.local, far.host, far.ssh, far.dir, far.runs, far.at_once) == (False, "me@far", "ssh.exe", "ec-racing",
-                                                                              [("es", 0), ("neat", 2)], 1)
+                                                                              jobs.parse_jobs("es:0,neat:2"), 1)
 
 
 @pytest.mark.parametrize("text, message", [
     ('[machines.a]\nruns = ["ga:1"]\n[machines.b]\nhost = "x"\nruns = ["ga:1"]\n', "on both a and b"),
-    ('[machines.a]\nruns = ["baseline:0"]\n', "approach must be one of"),
+    ('[machines.a]\nruns = ["nb:03"]\n', "notebook jobs are"),
+    ('[machines.a]\nruns = ["ga:3"]\n', "seed must be one of"),
     ('[machines.a]\nhost = "x"\nruns = ["ga:1"]\n', "exactly one machine"),
     ('[machines.a]\nruns = []\n[machines.b]\nruns = []\n', "exactly one machine"),
     ('[machines.a]\nrun = ["ga:1"]\n', "unknown keys run"),
@@ -147,12 +149,15 @@ def test_a_plan_that_cannot_work_is_refused(fake, text, message):
         fake.fleet.load_plan(write_plan(fake.tmp, text))
 
 
-def test_the_repository_plan_gives_each_remaining_run_one_machine(fake):
+def test_the_repository_plan_runs_the_whole_experiment_once_with_no_inputs_from_elsewhere(fake, monkeypatch):
+    monkeypatch.setattr(fake.fleet, "PROJECT", SCRIPT.parent.parent)
     machines = fake.fleet.load_plan()
-    runs = [run for machine in machines for run in machine.runs]
-    assert len(runs) == len(set(runs)) and sum(machine.local for machine in machines) == 1
-    assert all(machine.workers % len(range(config.TRACKS_PER_GEN)) == 0 for machine in machines)
-
+    labels = [job.label for machine in machines for job in machine.runs]
+    expected = {"nb:01", "nb:02"} | {f"{a}:{s}" for a in config.APPROACHES for s in config.RUN_SEEDS}
+    assert len(labels) == len(set(labels)) and set(labels) == expected
+    assert sum(machine.local for machine in machines) == 1
+    assert all(machine.workers % config.TRACKS_PER_GEN == 0 for machine in machines)
+    assert all(fake.fleet.external_inputs(machine) == [] for machine in machines)
 
 def test_an_invalid_plan_exits_with_code_2(fake, capsys):
     assert fake.fleet.main(["status"], plan=write_plan(fake.tmp, "[machines.a]\nhost = 'x'\n")) == 2
@@ -209,7 +214,7 @@ def test_a_script_for_a_server_travels_in_the_command_line(fake):
 
 def test_the_largest_scripts_fit_in_a_command_line(fake):
     server = fake.machines()[1]
-    every_run = [(a, s) for a in config.EVOLUTION_APPROACHES for s in config.RUN_SEEDS]
+    every_run = [jobs.parse_job(f"{a}:{s}") for a in config.APPROACHES for s in config.RUN_SEEDS]
     members = [m for run in every_run for m in fake.fleet.run_members(run)]
     for script in (fake.fleet.setup_script(server), fake.fleet.pack_script(server, members),
                    fake.fleet.collect_script(fake.fleet.Machine("s", every_run, host="h", ssh="ssh.exe")),
@@ -245,9 +250,10 @@ def test_setup_checks_out_this_commit_and_brings_the_baselines(fake, monkeypatch
     subprocess.run(git + ["commit", "-q", "-m", "code"], check=True)
     monkeypatch.setattr(fake.fleet, "local_commit", lambda: fake.fleet.git("rev-parse", "HEAD").strip())
     monkeypatch.setattr(fake.fleet, "environment_lines", lambda: "echo environment ready\n")   # no installs here
-    refined = fake.desktop / "results" / "runs" / "baseline" / "seed0" / "dagger.keras"
-    refined.parent.mkdir(parents=True)
-    refined.write_bytes(b"refined baseline 0")
+    refined = fake.desktop / "results" / "runs" / "baseline" / "seed0"
+    refined.mkdir(parents=True)
+    (refined / "dagger.keras").write_bytes(b"refined baseline 0")
+    checkpoint.write_json(refined / "dagger.json", {"settings": checkpoint.settings_record()})
     kept = fake.server_project() / "results" / "kept.txt"
     kept.parent.mkdir(parents=True)
     kept.write_text("a result")
@@ -264,7 +270,7 @@ def test_setup_checks_out_this_commit_and_brings_the_baselines(fake, monkeypatch
 def test_setup_needs_the_baselines_here(fake, monkeypatch):
     monkeypatch.setattr(fake.fleet, "git", lambda *args: Path(args[-2]).write_bytes(b"bundle") if "bundle" in args
                         else "")
-    with pytest.raises(fake.fleet.FleetError, match="notebook 03 makes it"):
+    with pytest.raises(fake.fleet.FleetError, match="is missing here; baseline:0 makes it"):
         fake.fleet.setup(fake.machines(), out=io.StringIO())
 
 
@@ -406,9 +412,10 @@ def test_stop_without_sessions_does_nothing(fake):
 
 def finished_run(results, approach, seed, settings=None, champion=b"weights"):
     run = results / "runs" / approach / f"seed{seed}"
-    run.mkdir(parents=True, exist_ok=True)
-    checkpoint.write_json(run / "summary.json", {"approach": approach, "seed": seed,
-                                                 "settings": settings or checkpoint.settings_record()})
+    record = paths.final_record(approach, seed, results / "runs")
+    record.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_json(record, {"approach": approach, "seed": seed,
+                                   "settings": settings or checkpoint.settings_record()})
     (run / "log.csv").write_text("generation\n0\n")
     champions = results / "champions" / approach
     champions.mkdir(parents=True, exist_ok=True)
@@ -478,15 +485,20 @@ def test_finish_waits_for_every_run(fake):
     assert fake.session("desktop") is None
 
 
-def test_finish_runs_the_notebooks_from_04_once_every_run_is_here(fake):
+def test_finish_needs_all_24_runs_and_runs_the_notebooks_from_03(fake):
     fake.ready_server()
-    for approach in config.EVOLUTION_APPROACHES:
+    on_server = {job.label for job in fake.machines()[1].runs}
+    for approach in config.APPROACHES:
         for seed in config.RUN_SEEDS:
-            target = fake.server_project() if (approach, seed) in fake.machines()[1].runs else fake.desktop
-            finished_run(target / "results", approach, seed)
+            target = fake.server_project() if f"{approach}:{seed}" in on_server else fake.desktop
+            if (approach, seed) != ("kt_bayesian", 2):
+                finished_run(target / "results", approach, seed)
+    with pytest.raises(fake.fleet.FleetError, match="kt_bayesian:2"):
+        fake.fleet.finish(fake.machines(), out=io.StringIO())
+    finished_run(fake.desktop / "results", "kt_bayesian", 2)
     out = io.StringIO()
     assert fake.fleet.finish(fake.machines(), out=out) == 0
-    assert f"{sys.executable} scripts/run_notebooks.py --from 04" in fake.session("desktop")
+    assert f"{sys.executable} scripts/run_notebooks.py --from 03" in fake.session("desktop")
     assert fake.session("server") is None
     assert (fake.desktop / "results" / "runs" / "es_seeded" / "seed0" / "summary.json").exists()
 
@@ -501,3 +513,23 @@ def test_runs_record_the_machine_they_finished_on():
     record = checkpoint.machine_record()
     assert set(record) == {"host", "processor", "logical_processors", "n_jobs"}
     assert record["n_jobs"] == config.N_JOBS and json.dumps(record)
+
+
+def test_jobs_whose_inputs_the_machine_makes_itself_need_nothing_sent(fake):
+    desktop = fake.fleet.Machine("desktop", jobs.parse_jobs("nb:01,nb:02,baseline:0,es_seeded:0"), at_once=4)
+    assert fake.fleet.external_inputs(desktop) == []
+    server = fake.fleet.Machine("server", jobs.parse_jobs("es_seeded:1,ga:0"), host="me@h")
+    assert [target for _, target in fake.fleet.external_inputs(server)] == [
+        "results/runs/baseline/seed1/dagger.json", "results/runs/baseline/seed1/dagger.keras"]
+
+
+def test_a_dagger_run_on_a_server_counts_as_finished_only_after_its_speed_push(fake):
+    script = fake.fleet.collect_script(fake.fleet.Machine("s", jobs.parse_jobs("baseline:1,nb:01"), host="h"))
+    assert "results/runs/baseline/seed1/speed/summary.json" in script and "nb" not in script.split("done=()")[1]
+
+
+def test_the_plan_reads_jobs(fake):
+    plan = write_plan(fake.tmp, '[machines.here]\nruns = ["nb:01", "nb:02", "baseline:0", "es_seeded:0"]\n')
+    (here,) = fake.fleet.load_plan(plan)
+    assert [job.label for job in here.runs] == ["nb:01", "nb:02", "baseline:0", "es_seeded:0"]
+    assert fake.fleet.train_command(here).endswith("--runs nb:01,nb:02,baseline:0,es_seeded:0 --at-once 1")

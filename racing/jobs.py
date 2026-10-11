@@ -50,29 +50,38 @@ def _folders(results_dir):
     return results, results / "runs"
 
 
+def _dataset(results):
+    return [results / config.DATASET_INFO_PATH.name, results / config.DATASET_PATH.name]
+
+
 def needs(job, results_dir=None):
-    """The records that must exist before `job` starts (revision 3.2 §6.3, Table 3)."""
+    """The files that must exist before `job` starts (revision 3.2 §6.3, Table 3): the record of the step that makes
+    its input first, then the data files that step writes before its record, so a server can be given them all."""
     results, runs = _folders(results_dir)
     if job.notebook == NOTEBOOK_JOBS["02"]:
-        return [results / config.DATASET_INFO_PATH.name]
-    if job.approach in config.IMITATION_APPROACHES:
-        return [paths.run_dir(job.approach, job.seed, runs) / "summary.json"]          # its imitation network
-    if job.approach == "es_seeded":
-        return [paths.run_dir("baseline", job.seed, runs) / "dagger.json"]             # its refined baseline
+        return _dataset(results)
+    if job.approach in config.IMITATION_APPROACHES:                                    # its imitation network
+        return [paths.run_dir(job.approach, job.seed, runs) / "summary.json",
+                paths.stage_path(job.approach, job.seed, "imitation", runs)] + _dataset(results)
+    if job.approach == "es_seeded":                                                     # its refined baseline
+        return [paths.run_dir("baseline", job.seed, runs) / "dagger.json",
+                paths.stage_path("baseline", job.seed, "dagger", runs)]
     return []
 
 
 def makes(job, results_dir=None):
-    """The records `job` writes when it succeeds."""
+    """The files `job` writes when it succeeds."""
     results, runs = _folders(results_dir)
     if job.notebook == NOTEBOOK_JOBS["01"]:
-        return [results / config.DATASET_INFO_PATH.name]
+        return _dataset(results)
     if job.notebook == NOTEBOOK_JOBS["02"]:
-        return [paths.run_dir(approach, seed, runs) / "summary.json"
-                for approach in config.IMITATION_APPROACHES for seed in config.RUN_SEEDS]
+        return [path for approach in config.IMITATION_APPROACHES for seed in config.RUN_SEEDS
+                for path in (paths.run_dir(approach, seed, runs) / "summary.json",
+                             paths.stage_path(approach, seed, "imitation", runs))]
     made = [paths.final_record(job.approach, job.seed, runs)]
     if job.approach in config.IMITATION_APPROACHES:
-        made.insert(0, paths.run_dir(job.approach, job.seed, runs) / "dagger.json")
+        made[:0] = [paths.run_dir(job.approach, job.seed, runs) / "dagger.json",
+                    paths.stage_path(job.approach, job.seed, "dagger", runs)]
     return made
 
 

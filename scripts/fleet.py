@@ -4,14 +4,14 @@ Run it on the desktop, in its Ubuntu shell with the ec-racing environment active
 with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through the school VPN):
 
   python scripts/fleet.py setup     a server gets this commit's code, Python 3.13 with the pinned packages, and the
-                                    refined baselines its seeded ES runs start from; again after every code change
+                                    inputs its jobs need that it does not make itself; again after every code change
   python scripts/fleet.py start     every machine starts its runs in a detached tmux session named "fleet"
   python scripts/fleet.py status    one line per run in training on every machine, and the latest milestones
   python scripts/fleet.py stop      Ctrl+C in every session: the runs stop and continue where they stopped at the
                                     next start
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
-  python scripts/fleet.py finish    once every run has finished: collect, then the notebooks from 04 and the
-                                    evaluation, in the "fleet" session here
+  python scripts/fleet.py finish    once all 24 runs have finished: collect, then notebooks 03 to 08 (they find
+                                    the runs complete and report them) and the evaluation, in the "fleet" session here
 
 Which machine trains which runs: scripts/fleet.toml. Watch a session with  tmux attach -t fleet  (detach with
 Ctrl+B, then D); on a server, log in first with  ssh.exe <host>.
@@ -45,7 +45,7 @@ if sys.version_info < (3, 11):
 
 import tomllib  # noqa: E402
 
-from racing import checkpoint, config, progress, train  # noqa: E402
+from racing import checkpoint, config, jobs, paths, progress  # noqa: E402
 
 PLAN = Path(__file__).resolve().with_name("fleet.toml")
 SESSION = "fleet"
@@ -123,7 +123,7 @@ def load_plan(path=PLAN):
         if unknown:
             raise PlanError(f"machine {name}: unknown keys {', '.join(unknown)}")
         try:
-            runs = [train.parse_run(run) for run in entry.get("runs", [])]
+            runs = [jobs.parse_job(run) for run in entry.get("runs", [])]
         except ValueError as error:
             raise PlanError(f"machine {name}: {error}") from error
         for run in runs:
@@ -139,7 +139,8 @@ def load_plan(path=PLAN):
 
 
 def train_label(run):
-    return f"{run[0]}:{run[1]}"
+    """A job's label, or approach:seed of a run given as a tuple."""
+    return run.label if isinstance(run, jobs.Job) else f"{run[0]}:{run[1]}"
 
 
 # ----- shell on a machine -----
@@ -470,27 +471,38 @@ def setup_script(machine):
     return f"set -e\ncd {machine.root}\n" + code_lines() + environment_lines()
 
 
-def baseline_inputs(machine):
-    """(local file, target) of the refined baselines the machine's seeded ES runs start from (notebook 03)."""
-    inputs = []
-    for approach, seed in machine.runs:
-        if approach == "es_seeded":
-            relative = f"results/runs/baseline/seed{seed}/dagger.keras"
-            inputs.append((PROJECT / relative, relative))
-    return inputs
+def external_inputs(machine):
+    """(local file, path relative to the project) of every input the machine's jobs need that none of its own jobs
+    make (revision 3.2 §6.3): a server must be given them before its jobs can start."""
+    results = PROJECT / "results"
+    made = {path for job in machine.runs for path in jobs.makes(job, results)}
+    found = []
+    for job in machine.runs:
+        for path in jobs.needs(job, results):
+            item = (path, path.relative_to(PROJECT).as_posix())
+            if path not in made and item not in found:
+                found.append(item)
+    return found
+
+
+def maker_of(path):
+    """Labels of the experiment's jobs that make `path`."""
+    every = [*(f"nb:{n}" for n in jobs.NOTEBOOK_JOBS),
+             *(f"{a}:{s}" for a in config.APPROACHES for s in config.RUN_SEEDS)]
+    return [label for label in every if path in jobs.makes(jobs.parse_job(label), PROJECT / "results")]
 
 
 def setup_archive(machine, folder):
-    """A tar archive of this commit as a git bundle and of the refined baselines the machine's seeded ES runs start
-    from, written in `folder`; returns its path."""
+    """A tar archive of this commit as a git bundle and of the inputs the machine's jobs need from elsewhere,
+    written in `folder`; returns its path."""
     bundle = Path(folder) / "code.bundle"
     git("bundle", "create", "-q", str(bundle), "HEAD")
     archive = Path(folder) / "setup.tar"
     with tarfile.open(archive, "w") as tar:
         tar.add(bundle, arcname=BUNDLE)
-        for local, target in baseline_inputs(machine):
+        for local, target in external_inputs(machine):
             if not local.exists():
-                raise FleetError(f"{local} is missing here; notebook 03 makes it")
+                raise FleetError(f"{local} is missing here; {' or '.join(maker_of(local)) or 'no job'} makes it")
             tar.add(local, arcname=target)
     return archive
 
@@ -505,7 +517,7 @@ def setup(machines, out=sys.stdout):
         print(f"== {machine.where}", file=out, flush=True)
         with tempfile.TemporaryDirectory() as folder:
             archive = setup_archive(machine, folder)
-            print(f"sending the code (commit {commit[:7]}) and {len(baseline_inputs(machine))} refined baselines, "
+            print(f"sending the code (commit {commit[:7]}) and {len(external_inputs(machine))} input files, "
                   f"{archive.stat().st_size / 1e6:.1f} MB ...", file=out, flush=True)
             upload(machine, archive.read_bytes(), SETUP_ARCHIVE)
         answer = shell(machine, setup_script(machine), stream=True)
@@ -526,7 +538,7 @@ def probe_script(machine):
              'else echo "lock held $(head -c 20 results/.runner.lock 2>/dev/null)"; fi',
              f"tmux has-session -t {SESSION} 2>/dev/null && echo 'session yes' || echo 'session no'",
              f"[ -x {machine.python} ] || echo 'python missing'"]
-    for local, target in baseline_inputs(machine):
+    for local, target in external_inputs(machine):
         lines.append(f"[ -f {shlex.quote(target)} ] || echo 'missing {target}'")
     return "\n".join(lines) + "\n"
 
@@ -685,15 +697,18 @@ def stop(machines, out=sys.stdout, wait=STOP_WAIT):
 def collect_script(machine):
     """Name the machine's finished runs and pack them, with the run log and record, into OUTGOING."""
     lines = [f"cd {machine.root} 2>/dev/null || exit 0", "done=()"]
-    for approach, seed in machine.runs:
-        lines.append(f"[ -f results/runs/{approach}/seed{seed}/summary.json ] && "
-                     f"{{ echo 'done {approach} {seed}'; done+=(results/runs/{approach}/seed{seed} "
-                     f"results/champions/{approach}/seed{seed}.*); }}")
+    for job in machine.runs:
+        if job.is_notebook:
+            continue
+        final = paths.final_record(job.approach, job.seed, Path("results") / "runs").as_posix()
+        lines.append(f"[ -f {final} ] && "
+                     f"{{ echo 'done {job.approach} {job.seed}'; done+=(results/runs/{job.approach}/seed{job.seed} "
+                     f"results/champions/{job.approach}/seed{job.seed}.*); }}")
     return "\n".join(lines) + "\n" + pack_lines(['"${done[@]}"', "results/run_log.txt", "results/run_info.json"])
 
 
 def run_members(run):
-    approach, seed = run
+    approach, seed = (run.approach, run.seed) if isinstance(run, jobs.Job) else run
     return [f"results/runs/{approach}/seed{seed}", f"results/champions/{approach}/seed{seed}.*"]
 
 
@@ -708,7 +723,7 @@ def place_run(staging, results, run, source):
     approach, seed = run
     name = train_label(run)
     incoming = staging / "runs" / approach / f"seed{seed}"
-    record = incoming / "summary.json"
+    record = paths.final_record(approach, seed, staging / "runs")
     try:
         summary = checkpoint.read_record(record)
     except (OSError, checkpoint.UnreadableRecord) as error:
@@ -719,8 +734,9 @@ def place_run(staging, results, run, source):
         raise FleetError(f"{name} from {source}: {error}") from error
     target = results / "runs" / approach / f"seed{seed}"
     champions = sorted((staging / "champions" / approach).glob(f"seed{seed}.*"))
-    if (target / "summary.json").exists():
-        if same_file(target / "summary.json", record):
+    here = paths.final_record(approach, seed, results / "runs")
+    if here.exists():
+        if same_file(here, record):
             return "already here"
         raise FleetError(f"{name}: a different finished run is already in {target}; nothing was copied")
     if target.exists():
@@ -778,7 +794,7 @@ def collect(machines, out=sys.stdout, results=None):
                 except FleetError as error:
                     print(f"{machine.where}: {error}", file=out)
                     problems += 1
-            waiting = [train_label(run) for run in machine.runs if run not in done]
+            waiting = [job.label for job in machine.runs if not job.is_notebook and (job.approach, job.seed) not in done]
             if waiting:
                 print(f"{machine.where}: not finished yet: {', '.join(waiting)}", file=out)
         finally:
@@ -787,15 +803,15 @@ def collect(machines, out=sys.stdout, results=None):
 
 
 def unfinished(results=None):
-    """The experiment's evolutionary runs without a summary here."""
+    """The experiment's runs (all 24) without their final record here."""
     results = Path(config.RESULTS_DIR if results is None else results)
-    return [(approach, seed) for approach in config.EVOLUTION_APPROACHES for seed in config.RUN_SEEDS
-            if not (results / "runs" / approach / f"seed{seed}" / "summary.json").exists()]
+    return [(approach, seed) for approach in config.APPROACHES for seed in config.RUN_SEEDS
+            if not paths.final_record(approach, seed, results / "runs").exists()]
 
 
 def finish(machines, out=sys.stdout):
-    """Collect, then, once every evolutionary run is here, run the notebooks from 04 (they find the runs complete
-    and report them) and the evaluation in this machine's fleet session."""
+    """Collect, then, once all 24 runs are here, run notebooks 03 to 08 (they find the runs complete and report them,
+    revision 3.2 §6.3) and the evaluation in this machine's fleet session."""
     if collect(machines, out):
         raise FleetError("some runs could not be collected; see above")
     missing = unfinished()
@@ -805,10 +821,10 @@ def finish(machines, out=sys.stdout):
     readiness_problems = readiness(here, probe(here), local_commit())
     if readiness_problems:
         raise FleetError("\n".join(readiness_problems))
-    command = f"{here.python} scripts/run_notebooks.py --from 04"
+    command = f"{here.python} scripts/run_notebooks.py --from 03"
     if "started" not in shell(here, session_script(here, command)):
         raise FleetError(f"{here.where}: the tmux session did not start")
-    print(f"{here.where}: notebooks 04 to 08 run in tmux session '{SESSION}' (tmux attach -t {SESSION})", file=out)
+    print(f"{here.where}: notebooks 03 to 08 run in tmux session '{SESSION}' (tmux attach -t {SESSION})", file=out)
     return 0
 
 
