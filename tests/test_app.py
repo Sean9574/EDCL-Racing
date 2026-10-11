@@ -1229,7 +1229,8 @@ def test_map_text_names_the_track(window, circle_track):
     assert window.map_text() == "Map: shown with the first generation"      # GA before training
     window.receive(ga_report())
     window.update(1 / 60)
-    assert window.map_text() == f"Map: seed {circle_track.seed}, level {circle_track.level}"
+    assert window.map_text() == (f"Map: seed {circle_track.seed}, level {circle_track.level}, "
+                                 f"road {circle_track.width:.1f} m")
 
 
 def test_imitation_preview_uses_the_difficulty(monkeypatch, window, circle_track):
@@ -2060,3 +2061,18 @@ def test_the_notebook_panel_fits_the_window(window, tmp_path):
     assert window.latest is not None
     assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
     assert window.slider.bottom <= window.panel.bottom - 30
+
+
+def test_a_controller_of_another_input_count_is_left_out_of_the_race(window, tmp_path, monkeypatch):
+    race_window(window, tmp_path)
+
+    class EarlierModel:
+        input_shape = (None, 10)
+
+    real = viewer.nets.load_champion
+    monkeypatch.setattr(viewer.nets, "load_champion",
+                        lambda a, s, d=None: (EarlierModel(), real(a, s, d)[1]) if a == "ga" else real(a, s, d))
+    window.update(1 / 60)
+    window.prepare_race()
+    assert window.race_cars() and all(car[0] != "ga" for car in window.race_cars())
+    assert "10 inputs" in window.status and window.race is not None

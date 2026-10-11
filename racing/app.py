@@ -967,7 +967,7 @@ class App:
     def map_text(self):
         track = self.shown_track()
         if track is not None:
-            return f"Map: seed {track.seed}, level {track.level}"
+            return f"Map: seed {track.seed}, level {track.level}, road {track.width:.1f} m"
         if self.source == "notebook" and self.latest is None:
             return "Map: shown with the run's latest generation"
         if self.approach in config.EVOLUTION_APPROACHES and self.latest is None:
@@ -1100,7 +1100,11 @@ class App:
         key = (approach, seed) if source == "final" else (approach, seed, source)
         if key not in self.drivers:
             directory = self.champions_dir if source == "final" else self.app_champions_dir
-            self.drivers[key] = nets.load_champion(approach, seed, directory)[1]
+            model, driver = nets.load_champion(approach, seed, directory)
+            inputs = model.input_shape[-1]
+            if inputs != config.N_INPUTS:                    # a controller of an earlier revision (revision 3.2 §7)
+                raise ValueError(f"made for {inputs} inputs, this revision has {config.N_INPUTS}")
+            self.drivers[key] = driver
         return self.drivers[key]
 
     def race_track(self):
@@ -1115,9 +1119,9 @@ class App:
                 for car in list(self.race_cars()):
                     try:
                         drivers.append(self.driver(*car))
-                    except Exception:
+                    except Exception as error:
                         self.drop_car(car)
-                        self.status = f"Controller {car_method(car)} seed {car[1]} could not be loaded; skipped."
+                        self.status = f"{car_method(car)} seed {car[1]} left out: {error}."
                 if drivers:
                     self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS,
                                          setup=nets.drivers_setup(drivers), grip=self.grip)
