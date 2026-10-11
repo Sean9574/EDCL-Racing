@@ -955,6 +955,10 @@ Training is observed live rather than recorded.
   - Worst shows the N least fit.
 
   The fittest displayed individual is outlined, and its sensor rays can be shown, each drawn to the car's own sensor length.
+- **Camera and window:** the camera shows the whole map or follows a car at 2×, 4× or 8× (the outlined car in
+  the training view, the race leader in the race view; button, mouse wheel or C key); a zoomed view draws only
+  the part of the track on screen. The window can be resized, or switched to full screen with F11 or the Full
+  screen button (Esc leaves it); the map and panel follow its size.
 - **Side panel:**
   - approach, level and generation
   - the success share of each of the generation's maps against the 90% requirement, and the streak

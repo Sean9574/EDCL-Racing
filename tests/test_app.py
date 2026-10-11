@@ -275,6 +275,167 @@ def test_rays_follow_each_cars_sensor_length(window, monkeypatch, tmp_path):
     assert len(seen) == 1 and np.array_equal(seen[0], window.race.cars.ray_length[live])
 
 
+def test_the_camera_cycles_from_the_whole_map_through_follow_zooms(window):
+    labels = []
+    for _ in config.CAMERA_ZOOMS:
+        labels.append(window.camera_label())
+        window.cycle_camera()
+    assert labels == ["Camera: Whole map ▸", "Camera: Follow 2× ▸", "Camera: Follow 4× ▸", "Camera: Follow 8× ▸"]
+    assert window.camera_zoom() == 1
+    window.zoom_by(5)
+    assert window.camera_zoom() == config.CAMERA_ZOOMS[-1]               # the wheel stops at the ends
+    window.zoom_by(-1)
+    assert window.camera_zoom() == config.CAMERA_ZOOMS[-2]
+    window.zoom_by(-9)
+    assert window.camera_zoom() == 1
+
+
+def test_the_c_key_and_the_wheel_over_the_map_change_the_camera(window, monkeypatch):
+    window.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c))
+    assert window.camera_zoom() == 2
+    monkeypatch.setattr(viewer.pygame.mouse, "get_pos", lambda: window.view.center)
+    window.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1))
+    assert window.camera_zoom() == 4
+    monkeypatch.setattr(viewer.pygame.mouse, "get_pos", lambda: window.panel.center)
+    window.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1))       # over the panel: no zoom
+    assert window.camera_zoom() == 4
+
+
+def test_the_camera_button_sits_next_to_the_network_window_button(window):
+    window.draw()
+    (rect, _), = [(r, a) for r, a in window.buttons if a == window.cycle_camera]
+    (network, _), = [(r, a) for r, a in window.buttons if a == window.toggle_network_window]
+    assert rect.top == network.top and rect.left > network.right
+    window.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=rect.center))
+    assert window.camera_zoom() == 2
+
+
+def test_a_follow_camera_centres_on_the_best_car_in_training(window):
+    window.receive(ga_report())
+    window.update(1 / 60)
+    for _ in range(30):
+        window.update(1 / 60)
+    cars, best = window.playback.cars, window.best_slot
+    window.cycle_camera()
+    camera = window.view_camera(window.playback.track, window.playback)
+    assert camera.center == pytest.approx([cars.x[best], cars.y[best]])
+    sx, sy = camera.to_screen(cars.x[best], cars.y[best])
+    assert (sx, sy) == pytest.approx(window.view.center)
+    whole = viewer.Camera(window.playback.track, window.view)
+    assert camera.scale == pytest.approx(2 * whole.scale)
+
+
+def test_a_follow_camera_centres_on_the_race_leader(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    for _ in range(60):
+        window.update(1 / 60)
+    cars = window.race.cars
+    window.zoom_by(2)
+    leader = window.follow_point(window.race, window.race.track)
+    racing = np.flatnonzero(~cars.done)
+    best = racing[np.argmax(cars.progress[racing])]
+    assert leader == pytest.approx([cars.x[best], cars.y[best]])
+    cars.done[best] = True                                               # the leader crashed or finished
+    following = window.follow_point(window.race, window.race.track)
+    still = np.flatnonzero(~cars.done)
+    if still.size:
+        assert following == pytest.approx([cars.x[still[np.argmax(cars.progress[still])]],
+                                           cars.y[still[np.argmax(cars.progress[still])]]])
+
+
+def test_without_cars_a_follow_camera_looks_at_the_start_line(window, circle_track):
+    window.cycle_camera()
+    start = (circle_track.left[0] + circle_track.right[0]) / 2
+    assert window.follow_point(None, circle_track) == pytest.approx(start)
+
+
+def test_zoomed_views_draw_only_the_visible_track(window, circle_track):
+    whole = viewer.Camera(circle_track, window.view)
+    assert len(viewer.visible_segments(circle_track, whole)) == len(circle_track.left)
+    start = (circle_track.left[0] + circle_track.right[0]) / 2
+    close = viewer.Camera(circle_track, window.view, 8, start)
+    part = viewer.visible_segments(circle_track, close)
+    assert 0 in part and 0 < len(part) < len(circle_track.left) / 2
+
+
+@pytest.mark.parametrize("zoom_steps", [1, 2, 3])
+def test_every_zoom_draws_in_both_views(window, tmp_path, zoom_steps):
+    window.zoom_by(zoom_steps)
+    window.draw()                                                        # no cars yet: the start line
+    window.receive(ga_report())
+    for _ in range(5):
+        window.update(1 / 60)
+        window.draw()
+    window.rays = True
+    window.draw()
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.draw()
+    window.start_race()
+    for _ in range(5):
+        window.update(1 / 60)
+        window.draw()
+    assert window.screen.get_clip() == window.screen.get_rect()          # the view's clip is lifted again
+
+
+def fake_display(monkeypatch, fullscreen_size=(1920, 1080)):
+    """pygame.display.set_mode answering with surfaces of the requested size, or `fullscreen_size` for (0, 0)."""
+    calls = []
+
+    def set_mode(size, flags=0):
+        calls.append((tuple(size), flags))
+        return pygame.Surface(fullscreen_size if tuple(size) == (0, 0) else size)
+
+    monkeypatch.setattr(viewer.pygame.display, "set_mode", set_mode)
+    return calls
+
+
+def test_full_screen_fills_the_display_and_windowed_mode_returns(window, monkeypatch):
+    calls = fake_display(monkeypatch)
+    window.toggle_fullscreen()
+    assert window.fullscreen and calls[-1] == ((0, 0), pygame.FULLSCREEN)
+    assert window.view.size == (1920 - config.PANEL_WIDTH, 1080) and window.panel.right == 1920
+    window.draw()
+    assert any(a == window.toggle_fullscreen for _, a in window.buttons)
+    window.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+    assert not window.fullscreen and calls[-1] == (config.WINDOW_SIZE, pygame.RESIZABLE)
+    assert window.view.size == (config.WINDOW_SIZE[0] - config.PANEL_WIDTH, config.WINDOW_SIZE[1])
+    window.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F11))
+    assert window.fullscreen
+
+
+def test_track_pictures_are_redrawn_for_the_new_size(window, monkeypatch, circle_track):
+    fake_display(monkeypatch)
+    small = window.track_surface(circle_track)[1].get_size()
+    window.toggle_fullscreen()
+    big = window.track_surface(circle_track)[1].get_size()
+    assert small == (config.WINDOW_SIZE[0] - config.PANEL_WIDTH, config.WINDOW_SIZE[1])
+    assert big == (1920 - config.PANEL_WIDTH, 1080)
+
+
+def test_without_a_usable_display_full_screen_says_so(window, monkeypatch):
+    fake_display(monkeypatch, fullscreen_size=(0, 0))
+    window.toggle_fullscreen()
+    assert not window.fullscreen and "not available" in window.status
+    assert window.view.size == (config.WINDOW_SIZE[0] - config.PANEL_WIDTH, config.WINDOW_SIZE[1])
+
+    def failing(size, flags=0):
+        raise pygame.error("no display mode")
+
+    monkeypatch.setattr(viewer.pygame.display, "set_mode", failing)
+    window.toggle_fullscreen()
+    assert not window.fullscreen and "no display mode" in window.status
+
+
+def test_a_resized_window_lays_out_the_view_and_panel_again(window, monkeypatch):
+    monkeypatch.setattr(viewer.pygame.display, "get_surface", lambda: pygame.Surface((1600, 900)))
+    window.handle(pygame.event.Event(pygame.VIDEORESIZE, size=(1600, 900), w=1600, h=900))
+    assert window.view.size == (1600 - config.PANEL_WIDTH, 900) and window.panel.left == 1600 - config.PANEL_WIDTH
+    window.draw()
+
+
 def test_app_plays_a_report(window):
     window.receive(ga_report())
     for _ in range(120):

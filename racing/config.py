@@ -190,6 +190,7 @@ DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curricul
 APP_GRIPS = {"Normal": GRIP, "Unlimited": 10.0 * GRIP}   # m/s², display grip of the viewer's own simulations only
                                                          # (revision 3.1 §6); never a recorded setting
 REPLAY_POLL_SECONDS = 1.0    # the notebook-run view looks for a newer generation at most this often
+CAMERA_ZOOMS = (1, 2, 4, 8)  # the camera button's steps; above 1 the camera follows the best car or the race leader
 
 # --- Paths ---
 PROJECT_DIR = Path(__file__).resolve().parent.parent

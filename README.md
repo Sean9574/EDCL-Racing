@@ -302,6 +302,11 @@ On Windows 11 the window opens through WSLg.
 - **Grip:** *Normal* (12 m/s², the training grip) or *Unlimited* (120 m/s²) sets the grip of the cars you watch in
   both views. It never affects training or results.
 - **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.
+- **Camera:** *Whole map*, or *Follow 2×*, *4×* or *8×*: zoomed in and following the best car (the outlined one) in
+  the training view, or the race leader (the car furthest along that is still racing) in the race view. The mouse
+  wheel over the map zooms in and out, and the C key cycles the camera as the button does.
+- **Full screen:** the Full screen button or F11 fills the display; Windowed, F11 or Esc returns to a window, which can
+  also be resized by dragging its border. The map and panel follow the window's size.
 - **Network window:** the Network window button opens a separate window (movable to another monitor, resizable,
   closed with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
   generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in

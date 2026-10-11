@@ -91,13 +91,14 @@ def select_indices(fitness, mode, count, sample_seed=0):
 
 
 class Camera:
-    """Maps world coordinates (m) to pixels so that a track fills the view rectangle."""
+    """Maps world coordinates (m) to pixels so that a track fills the view rectangle; with `zoom` above 1 the scale
+    is that many times larger and the view is centred on `center` (a point in m, such as a followed car)."""
 
-    def __init__(self, track, rect):
+    def __init__(self, track, rect, zoom=1, center=None):
         edges = np.vstack([track.left, track.right])
         lo, hi = edges.min(axis=0), edges.max(axis=0)
-        self.scale = 0.94 * min(rect.width / (hi[0] - lo[0]), rect.height / (hi[1] - lo[1]))
-        self.center = (lo + hi) / 2
+        self.scale = 0.94 * min(rect.width / (hi[0] - lo[0]), rect.height / (hi[1] - lo[1])) * zoom
+        self.center = (lo + hi) / 2 if center is None else np.asarray(center, dtype=float)
         self.rect = rect
 
     def to_screen(self, x, y):
@@ -120,6 +121,37 @@ def render_track(track, camera, size):
     pygame.draw.lines(surface, EDGE, True, list(zip(rx, ry)), 2)
     pygame.draw.line(surface, INK, (lx[0], ly[0]), (rx[0], ry[0]), 3)
     return surface
+
+
+def visible_segments(track, camera):
+    """Indices i of the road segments from centerline point i to i + 1 that reach into the camera's view."""
+    lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
+    rx, ry = camera.to_screen(track.right[:, 0], track.right[:, 1])
+    nxt = np.roll(np.arange(len(lx)), -1)
+    xs = np.stack([lx, lx[nxt], rx[nxt], rx])
+    ys = np.stack([ly, ly[nxt], ry[nxt], ry])
+    rect = camera.rect
+    inside = ((xs.max(axis=0) >= rect.left) & (xs.min(axis=0) <= rect.right)
+              & (ys.max(axis=0) >= rect.top) & (ys.min(axis=0) <= rect.bottom))
+    return np.flatnonzero(inside)
+
+
+def draw_track_part(surface, track, camera):
+    """Road, edges and start line of the part of the track in the camera's view, drawn directly: a zoomed view draws
+    this every frame instead of keeping a picture of the whole track at its scale."""
+    lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
+    rx, ry = camera.to_screen(track.right[:, 0], track.right[:, 1])
+    m = len(lx)
+    segments = visible_segments(track, camera)
+    for i in segments:
+        j = (i + 1) % m
+        pygame.draw.polygon(surface, ROAD, [(lx[i], ly[i]), (lx[j], ly[j]), (rx[j], ry[j]), (rx[i], ry[i])])
+    for i in segments:
+        j = (i + 1) % m
+        pygame.draw.line(surface, EDGE, (lx[i], ly[i]), (lx[j], ly[j]), 2)
+        pygame.draw.line(surface, EDGE, (rx[i], ry[i]), (rx[j], ry[j]), 2)
+    if 0 in segments:
+        pygame.draw.line(surface, INK, (lx[0], ly[0]), (rx[0], ry[0]), 3)
 
 
 def car_polygon(sx, sy, heading, size):
@@ -387,15 +419,13 @@ class App:
         self.screen = screen
         self.font = pygame.font.SysFont("dejavusans", 15)
         self.small = pygame.font.SysFont("dejavusans", 13)
-        width, height = screen.get_size()
-        self.view = pygame.Rect(0, 0, width - config.PANEL_WIDTH, height)
-        self.panel = pygame.Rect(self.view.right, 0, config.PANEL_WIDTH, height)
+        self.fullscreen = False
+        self.layout()
         self.alive = True
         self.mode = "train"
         self.buttons = []
         self.slider = None
         self.dragging = False
-        self.surfaces = {}
         self.background_tracks = background_tracks
         self.tracks = {}
         self.building = set()
@@ -414,6 +444,7 @@ class App:
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
+        self.zoom_index = 0                 # into config.CAMERA_ZOOMS; above 1× the camera follows a car
         self.grip_name = "Normal"           # display grip of the viewer's own simulations (revision 3.1 §6)
         self.process = None
         self.reports = None
@@ -812,6 +843,76 @@ class App:
     def set_speed(self, speed):
         self.speed = speed
 
+    # ----- window -----
+    def layout(self):
+        """The map view and the panel for the window's current size; the pictures of whole tracks are redrawn at
+        the new size."""
+        width, height = self.screen.get_size()
+        self.view = pygame.Rect(0, 0, max(width - config.PANEL_WIDTH, 1), height)
+        self.panel = pygame.Rect(self.view.right, 0, config.PANEL_WIDTH, height)
+        self.surfaces = {}
+
+    def toggle_fullscreen(self):
+        """Full screen at the display's resolution, or back to a resizable window of config.WINDOW_SIZE."""
+        if self.fullscreen:
+            self.screen = pygame.display.set_mode(config.WINDOW_SIZE, pygame.RESIZABLE)
+            self.fullscreen = False
+        else:
+            try:
+                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            except pygame.error as error:
+                self.status = f"Full screen is not available here ({error})."
+                return
+            if screen.get_width() <= config.PANEL_WIDTH:                    # no usable display size reported
+                self.screen = pygame.display.set_mode(config.WINDOW_SIZE, pygame.RESIZABLE)
+                self.status = "Full screen is not available here."
+                self.layout()
+                return
+            self.screen = screen
+            self.fullscreen = True
+        self.layout()
+
+    def resized(self):
+        """The window was resized by dragging its border."""
+        if not self.fullscreen:
+            self.screen = pygame.display.get_surface() or self.screen
+            self.layout()
+
+    def camera_zoom(self):
+        return config.CAMERA_ZOOMS[self.zoom_index]
+
+    def camera_label(self):
+        zoom = self.camera_zoom()
+        return f"Camera: {'Whole map' if zoom == 1 else f'Follow {zoom}×'} ▸"
+
+    def cycle_camera(self):
+        self.zoom_index = (self.zoom_index + 1) % len(config.CAMERA_ZOOMS)
+
+    def zoom_by(self, steps):
+        """Zoom in (steps > 0) or out by whole steps of config.CAMERA_ZOOMS, without wrapping (the mouse wheel)."""
+        self.zoom_index = min(max(self.zoom_index + int(steps), 0), len(config.CAMERA_ZOOMS) - 1)
+
+    def follow_point(self, playback, track):
+        """Where the zoomed camera looks (m): the best car of the shown generation in training, the race leader (the
+        car furthest along that is still racing, else furthest along) in a race; the start line without cars."""
+        if playback is None or len(playback.cars.x) == 0:
+            return (track.left[0] + track.right[0]) / 2
+        cars = playback.cars
+        if self.mode == "train":
+            i = self.best_slot if self.best_slot < len(cars.x) else 0
+        else:
+            racing = np.flatnonzero(~cars.done)
+            pool = racing if racing.size else np.arange(len(cars.x))
+            i = int(pool[np.argmax(cars.progress[pool])])
+        return np.array([cars.x[i], cars.y[i]])
+
+    def view_camera(self, track, playback):
+        """The camera of this frame: the whole map, or zoomed onto the followed car."""
+        zoom = self.camera_zoom()
+        if zoom == 1:
+            return self.track_surface(track)[0]
+        return Camera(track, self.view, zoom, self.follow_point(playback, track))
+
     def toggle_rays(self):
         self.rays = not self.rays
 
@@ -1090,8 +1191,17 @@ class App:
             self.dragging = False
         elif event.type == pygame.MOUSEMOTION and self.dragging:
             self.set_shown_from(event.pos[0])
+        elif event.type in (pygame.VIDEORESIZE, pygame.WINDOWSIZECHANGED):
+            self.resized()
+        elif event.type == pygame.MOUSEWHEEL:
+            if self.view.collidepoint(pygame.mouse.get_pos()):
+                self.zoom_by(event.y)
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE and self.mode == "train":
+            if event.key == pygame.K_c:
+                self.cycle_camera()
+            elif event.key == pygame.K_F11 or (event.key == pygame.K_ESCAPE and self.fullscreen):
+                self.toggle_fullscreen()
+            elif event.key == pygame.K_SPACE and self.mode == "train":
                 self.toggle_play()
             elif event.key == pygame.K_LEFT and self.mode == "race":
                 self.change_race_track(-1)
@@ -1117,12 +1227,17 @@ class App:
             available = self.race_available or self.app_available
             track = playback.track if playback is not None else (self.race_track() if available else None)
         if track is not None:
-            camera, surface = self.track_surface(track)
-            self.screen.blit(surface, self.view.topleft)
+            camera = self.view_camera(track, playback)
+            self.screen.set_clip(self.view)                 # a zoomed track and its cars stay out of the panel
+            if self.camera_zoom() == 1:
+                self.screen.blit(self.track_surface(track)[1], self.view.topleft)
+            else:
+                draw_track_part(self.screen, track, camera)
             if playback is not None and self.mode == "train":
                 self.draw_population(playback, camera)
             elif playback is not None:
                 self.draw_racers(playback, camera)
+            self.screen.set_clip(None)
         self.draw_panel()
 
     def draw_population(self, playback, camera):
@@ -1206,9 +1321,12 @@ class App:
     def draw_panel(self):
         pygame.draw.rect(self.screen, PANEL_BG, self.panel)
         x, y, w = self.panel.left + 16, 14, self.panel.width - 32
-        half = (w - 8) // 2
-        self.button(pygame.Rect(x, y, half, 30), "Training", lambda: self.set_mode("train"), self.mode == "train")
-        self.button(pygame.Rect(x + half + 8, y, half, 30), "Race", lambda: self.set_mode("race"), self.mode == "race")
+        third = (w - 16) // 3
+        self.button(pygame.Rect(x, y, third, 30), "Training", lambda: self.set_mode("train"), self.mode == "train")
+        self.button(pygame.Rect(x + third + 8, y, third, 30), "Race", lambda: self.set_mode("race"),
+                    self.mode == "race")
+        self.button(pygame.Rect(x + 2 * (third + 8), y, third, 30), "Windowed" if self.fullscreen else "Full screen",
+                    self.toggle_fullscreen, self.fullscreen)
         y += 44
         if self.mode == "train":
             self.draw_train_panel(x, y, w)
@@ -1290,8 +1408,12 @@ class App:
         return y + 34
 
     def draw_network_button(self, x, y, w):
-        self.button(pygame.Rect(x, y, w, 26), "Network window", self.toggle_network_window,
+        """The network window button and the camera button side by side. Returns the next free y."""
+        half = (w - 8) // 2
+        self.button(pygame.Rect(x, y, half, 26), "Network window", self.toggle_network_window,
                     self.net_process is not None)
+        self.button(pygame.Rect(x + half + 8, y, half, 26), self.camera_label(), self.cycle_camera,
+                    self.camera_zoom() != 1)
         return y + 34
 
     def draw_stats(self, x, y):
@@ -1402,7 +1524,7 @@ class App:
 def main():
     pygame.init()
     pygame.display.set_caption("EC Racing")
-    screen = pygame.display.set_mode(config.WINDOW_SIZE)
+    screen = pygame.display.set_mode(config.WINDOW_SIZE, pygame.RESIZABLE)
     viewer = App(screen)
     clock = pygame.time.Clock()
     try:
