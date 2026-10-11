@@ -45,7 +45,7 @@ def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
 
 
 def test_revision_3_1_pilots_have_their_own_folder(pilots):
-    assert pilots.OUT == config.PILOTS_DIR / "revision3.1"
+    assert pilots.OUT == config.PILOTS_DIR / "revision3.2"
 
 
 def test_a_pilot_always_starts_over(pilots, tmp_path):

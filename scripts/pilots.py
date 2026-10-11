@@ -1,13 +1,14 @@
-"""Pilot runs of revision 3.1 (§7; revision 3 §10.2): short runs of each evolutionary method from Easy with seed 0,
-which show whether the 90% requirement can be reached with the reported settings, now including the evolved car
-setup, before the reported run starts. Each pilot starts over in results/pilots/revision3.1/<name>/ and adds a row to
-results/pilots/revision3.1/summary.md, with the population's mean sensor length and steering sensitivity at the end.
-Pilots are not part of the reported results.
+"""Pilot runs of revision 3.2 (§10; revision 3 §10.2): short runs of each evolutionary method from Easy with seed 0,
+which show whether the 90% requirement can be reached with the reported settings, now with a road width of 10 to
+16 m per map and the position and width inputs, before the reported run starts. Each pilot starts over in
+results/pilots/revision3.2/<name>/ and adds a row to results/pilots/revision3.2/summary.md, with the population's mean
+sensor length and steering sensitivity at the end. Pilots are not part of the reported results.
 
 Run with:  python scripts/pilots.py                       (ga, es, neat and seeded; 300 generations each)
            python scripts/pilots.py ga neat               (selected pilots)
            python scripts/pilots.py --generations 500 es
-The seeded pilot needs the DAgger-refined baseline of seed 0 (notebook 03) and is skipped without it.
+The seeded pilot needs the DAgger-refined baseline of seed 0 (notebook 03) and is skipped without it; a baseline
+of an earlier revision has another number of inputs, so run `python scripts/pilots.py ga es neat` before notebook 03.
 """
 import argparse
 import sys
@@ -22,7 +23,7 @@ from racing import config, es, ga, neat, paths  # noqa: E402
 
 PILOTS = ("ga", "es", "neat", "seeded")
 NAMES = {"ga": "GA", "es": "ES", "neat": "NEAT", "seeded": "Seeded ES"}
-OUT = config.PILOTS_DIR / "revision3.1"
+OUT = config.PILOTS_DIR / "revision3.2"
 
 
 def level_ups(log):

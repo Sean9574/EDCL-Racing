@@ -1,7 +1,7 @@
 # EC Racing: Design Specification
 
 **Evolutionary and Gradient-Based Search for Neural Network Driving Controllers**\
-ECDL Term Project · Fall 2026 · Version 3.1 · 7 October 2026
+ECDL Term Project · Fall 2026 · Version 3.2 · 11 October 2026
 
 ## Summary
 
@@ -21,14 +21,18 @@ generated circuits whose harder levels borrow features of Formula 1 circuits.
 
 Every method trains until it masters the curriculum: on each freshly generated map of a generation, at
 least 90% of its population must complete three laps within a target time, in three consecutive
-generations, on each of four levels. The target time is then shortened in steps of 5% until the
-population can no longer meet it. Every method is run with three random seeds, and results are reported
+generations, on each of four levels. In the speed push that follows, the target time is shortened in steps of 2%
+whenever 75% of the population meets it, until the population can no longer keep up. Every map has its own road width,
+10 to 16 m, and the networks see their position across the road and the road's width, so that they drive any width. Every method is run with three random seeds, and results are reported
 as the mean and standard deviation across seeds. All final controllers are evaluated on held-out maps for
 completion, lap time, classification accuracy, network size, inference time and training cost. A
 visualization application shows training in progress and races between the final controllers. A single
 command executes the complete experiment; it saves checkpoints, resumes after an interruption and reports
 its progress live.
 
+Version 3.2 incorporates revision 3.2 (`docs/2026-10-11-ec-racing-robustness-design.md`): a road width of 10 to 16 m
+per map, two inputs for the position across the road and the road width, a stronger speed push, a robustness table at
+fixed widths, and jobs that run side by side on several machines as soon as their inputs exist.
 Version 3.1 incorporates revision 3.1 (`docs/2026-10-07-ec-racing-setup-design.md`): every evolved car also evolves its sensor length and steering sensitivity, the application can display races under a much higher grip, and training started in the application is kept. Version 3.0 incorporates revision 3 (`docs/2026-10-07-ec-racing-mastery-design.md`): freshly generated
 circuits, time trials, the mastery criterion and speed push in place of a fixed evaluation budget, NEAT,
 DAgger and the execution of multi-day runs. Version 2.0 corrected the measurement of training epochs and
@@ -167,19 +171,22 @@ record of the reported run.
   05 ES → 06 seeded ES → 07 NEAT → 08 evaluation. The seeded ES depends on the DAgger-refined baseline
   from notebook 03. Notebooks run one at a time, so no two methods compete for the processor while
   their training time is measured.
-- **Runs side by side and on several machines.** One run gains little beyond 6 to 8 worker processes
-  (`racing/bench.py`), so the evolutionary runs of notebooks 04 to 07 may instead be trained side by side,
-  `scripts/run_notebooks.py --runs ga:1,neat:0 --at-once 2`, and on several machines with
-  `scripts/fleet.py` (plan in `scripts/fleet.toml`). Each run is then trained directly by
-  `racing/train.py`, which makes exactly the call of its notebook (checked by a test), with its own status file
-  and output log; the notebooks later find the runs complete and only report them. A run's results depend only
-  on its seed and the settings, so where it trains changes only its training time. Each run's summary records
-  the machine it finished on (host, processor, worker count), and the training cost is compared by evaluations,
-  which are exact on any machine; training times are reported as context, with the machines named.
-  `fleet.py setup` gives a server the desktop's commit (as a git bundle), the pinned environment and the
-  refined baselines the seeded ES starts from; `start` starts every machine's runs in a detached tmux session
-  only when every machine is ready; `collect` copies a server's finished runs to the desktop after checking their
-  settings and never replaces a different copy; `finish` then runs notebooks 04 to 08.
+- **Jobs side by side and on several machines.** One run gains little beyond 6 to 8 worker processes
+  (`racing/bench.py`), so the experiment may instead run as jobs side by side,
+  `scripts/run_notebooks.py --runs nb:01,nb:02,baseline:0,ga:1 --at-once 4`, and on several machines with
+  `scripts/fleet.py` (plan in `scripts/fleet.toml`). A job is a run of any method, trained directly by
+  `racing/train.py`, which makes exactly the call of its notebook (checked by a test), or notebook 01 or 02. Each
+  job has its own status file and output log, and starts as soon as a slot is free and its inputs exist: notebook 02
+  waits for the dataset, a DAgger run for its imitation network, a seeded ES run for its refined baseline; a waiting
+  job holds no slot (`racing/jobs.py`, version 3.2). The notebooks later find the runs complete and only report
+  them. A run's results depend only on its seed and the settings, so where it trains changes only its training time.
+  Each run's summary records the machine it finished on (host, processor, worker count), and the training cost is
+  compared by evaluations, which are exact on any machine; training times are reported as context, with the
+  machines named. `fleet.py setup` gives a server the desktop's commit (as a git bundle), the pinned environment and
+  any inputs its jobs need from the desktop; `start` starts every machine's jobs in a detached tmux session only when
+  every machine is ready; `collect` copies a server's finished runs to the desktop after checking their settings and
+  never replaces a different copy; `finish` then runs notebooks 03 to 08. `run_notebooks.py --archive NAME` moves the
+  earlier results to `results/archive/NAME/` and exits, so the next start begins afresh.
 - **Kernel:** each notebook runs in a kernel started with the same Python interpreter as the runner,
   with `notebooks/` as the working directory.
 - **Checkpoints.** Every evolutionary run saves a checkpoint after each generation. It contains the
@@ -266,10 +273,15 @@ Every map is generated from a seed. The four difficulty levels use two generator
 
 | Level | Generator | Control points | Point radius | Corner radii | Features | Tightest corner | Road width |
 |---|---|---|---|---|---|---|---|
-| 1 Easy | Loop | 4–6 | 60–110 | Spline | None | 45 | 16 |
-| 2 Medium | Circuit | 6–8 | 60–170 | Slow 25–45, fast 50–80 | None | 24 | 14 |
-| 3 Hard | Circuit | 9–12 | 70–220 | Slow 16–35, fast 45–90 | Main straight ≥ 170 into a hairpin; 0–1 chicane; 0–1 run of esses | 14 | 12 |
-| 4 Extra hard | Circuit | 13–17 | 80–260 | Slow 10–30, fast 45–100 | Main straight ≥ 210 into a hairpin; a second hairpin; 1–2 chicanes; 1–2 runs of esses | 9 | 10 |
+| 1 Easy | Loop | 4–6 | 60–110 | Spline | None | 45 | 10–16 per map |
+| 2 Medium | Circuit | 6–8 | 60–170 | Slow 25–45, fast 50–80 | None | 24 | 10–16 per map |
+| 3 Hard | Circuit | 9–12 | 70–220 | Slow 16–35, fast 45–90 | Main straight ≥ 170 into a hairpin; 0–1 chicane; 0–1 run of esses | 14 | 10–16 per map |
+| 4 Extra hard | Circuit | 13–17 | 80–260 | Slow 10–30, fast 45–100 | Main straight ≥ 210 into a hairpin; a second hairpin; 1–2 chicanes; 1–2 runs of esses | 9 | 10–16 per map |
+
+**Road width (version 3.2).** Every map has its own road width, drawn uniformly from 10 to 16 m by
+`default_rng([seed, level, 13])`. It depends only on the map's seed and level, so a map keeps it on every generation
+attempt; the generator sizes chicanes and esses and the spacing between separate parts of the road by it. Up to
+version 3.1 the widths were 16, 14, 12 and 10 m by level, and the controllers trained on them failed on wider roads.
 
 The values in Table 1 are those of the prototype that produced the approved sample maps. They may be
 adjusted during implementation so that the expert completes every level and the generator accepts a
@@ -374,9 +386,13 @@ are cast by sphere tracing on the distance-to-boundary map, with a minimum step 
 most ⌈48 × L / 50⌉ iterations, so a 50 m ray keeps its cap of 48 iterations. Each ray stops as soon as it reaches the
 boundary or its length.
 
-The input vector has 10 elements: the nine distances divided by 50 m, plus the speed divided by a reference speed of
-40 m/s. The ray scale is fixed, so a ray of a car with L = 150 m can report values up to 3, and a car with L = 50 m
-sees exactly the inputs of version 3.0. The reference speed only scales the input and does not limit the vehicle.
+The input vector has 12 elements: the nine distances divided by 50 m, the speed divided by a reference speed of
+40 m/s, the position across the road and the road width divided by 20 m. The ray scale is fixed, so a ray of a car with
+L = 150 m can report values up to 3, and a car with L = 50 m sees exactly the ray inputs of version 3.0. The reference
+speed only scales the input and does not limit the vehicle. The position across the road is the car's signed distance
+from its matched centerline point along the road's normal, divided by half the width: −1 at the left edge, 0 on the
+centerline, +1 at the right edge, relative to the driving direction. It and the width mean the same on a road of any
+width, so a network can tell where it is on the road without relying on one width (version 3.2).
 
 ### 5.3 Collisions
 
@@ -425,7 +441,7 @@ in training. Among completions, the faster run ranks higher.
 All controllers share the same input and output definition. This lets any controller be used in the
 simulator, the training view and the race view without changes.
 
-- **Input:** the 10-element vector defined in §5.2.
+- **Input:** the 12-element vector defined in §5.2.
 - **Output:** a 15-way softmax. Each class is one combination of a steering level and a throttle level:
   - steering fraction `u_s` ∈ {−1, −0.5, 0, +0.5, +1}
   - throttle fraction `u_t` ∈ {−1 (brake), 0 (coast), +1 (gas)}
@@ -485,7 +501,7 @@ from the section before the first crash.
 
 ### 7.3 Dataset composition
 
-Each row consists of the 10 inputs and one class label.
+Each row consists of the 12 inputs and one class label.
 
 - **Training:** 121 freshly generated maps: one at Easy, 20 at Medium, 20 at Hard and 80 at Extra hard
   (§4.6).
@@ -687,11 +703,13 @@ succeeded on that map. A generation passes when the lowest success share among i
 hard that passes three consecutive generations has reached the mastery goal. Each generation drives
 three maps, so the three passing generations cover nine different maps.
 
-**Speed push.** After the mastery goal, the target factor is multiplied by 0.95, which shortens the target time by 5%.
-Each further run of three consecutive passing generations shortens it by another 5%. The run ends
-when 500 generations pass without mastering the current target. The tightest target mastered is
-recorded as the run's speed result, expressed as the reduction from the starting target. For example,
-f = 1.3 × 0.95⁴ is reported as a target 18.5% shorter than the starting target.
+**Speed push.** After the mastery goal, the target factor is multiplied by 0.98, which shortens the target time by 2%.
+In the speed push a generation passes when the lowest map success share is at least 75%; each further run of three
+consecutive passing generations shortens the target by another 2%. The run ends when 300 generations pass without
+mastering the current target. The tightest target mastered is recorded as the run's speed result, expressed as the
+reduction from the starting target. For example, f = 1.3 × 0.98⁴ is reported as a target 7.8% shorter than the
+starting target. Up to version 3.1 the step was 5%, a speed-push generation needed 90% and the patience was 500
+generations; every run then ended at a target that 90% of the population could not reach (version 3.2).
 
 **Safety stop.** On any level before the mastery goal, a run ends if 2,000 generations pass without a new best value of
 the lowest map success share, averaged over three consecutive generations. Such a run is reported as
@@ -1053,7 +1071,12 @@ Each final controller (eight methods, three seeds) drives the 20 test maps as a 
 Two outcomes are recorded per map: whether the car **finished** within the simulator's time limit of
 twice the reference lap time per lap, and whether it **succeeded** within the starting target (f = 1.3).
 The validation maps select each run's final controller (§9.5) and each method's best seed for the
-application.
+application. Every map is driven at its own road width (§4.2).
+
+**Robustness (version 3.2).** Each test map is also rebuilt with the same centerline at the fixed widths 8, 10, 14 and
+18 m, the first and last outside the trained range of 10–16 m. Each build is driven exactly as a test map, with the
+expert's lap time on that build; a build whose road would reach another part of the map, or that the expert cannot
+drive, is left out of its width.
 
 ### 11.2 Measurements of the course comparison
 
@@ -1094,6 +1117,8 @@ speed.
    epoch limit and the search time (§8.2). *Dataset:* the rows of each split and the collection time (§7.3).
    *Driving-selected controllers:* per Keras Tuner method, the configuration chosen by validation driving
    (§8.3), its parameters, validation accuracy, test maps completed (of 20), mean lap time and crashes.
+7. **Robustness.** Per method and width of §11.1: the maps finished and succeeded (all seeds) and the mean lap time on
+   finished maps; each width states how many maps it covers.
 
 ### 11.4 Figures
 
@@ -1182,6 +1207,8 @@ the pilots, the survival and step-size settings are reviewed before the reported
 | Grip limit μg (friction circle) | 12 m/s² |
 | Speed input scaling | 40 m/s (normalization only) |
 | Sensors | 9 rays from −90° to +90°; length 50 m, or 10–150 m when evolved; inputs scaled by 50 m |
+| Network inputs | 12: rays, speed, position across the road (−1 left edge, +1 right edge), road width / 20 m |
+| Road width | 10–16 m per map, `default_rng([seed, level, 13])` |
 | Sphere tracing | Minimum step 0.5 m; at most ⌈48 × L / 50⌉ iterations for a ray of length L |
 | Steering sensitivity | 1, or ⅓–3 when evolved |
 | Car setup evolution | Log-uniform initial setups for random-start populations; 50 m and 1 for trained-start populations; per value mutation probability 0.2, Gaussian with standard deviation 0.1 on the natural-log scale, clipped |
@@ -1194,7 +1221,8 @@ the pilots, the survival and step-size settings are reviewed before the reported
 | Success | All three laps within the target time |
 | Survival | Successes kept; others kept with probability equal to their share of laps in time; at most 90% of the population; at least the 50 fittest |
 | Level advancement and mastery goal | Lowest map success share ≥ 90% in three consecutive generations |
-| Speed push | Target reduced by 5% per mastered target; ends after 500 generations without mastering the current target |
+| Speed push | Target reduced by 2% per mastered target; a generation passes at a lowest map success share ≥ 75%; ends after 300 generations without mastering the current target |
+| Robustness table | Test maps rebuilt with the same centerline at 8, 10, 14 and 18 m |
 | Safety stop | 2,000 generations without a new best three-generation mean of the lowest map success share |
 | GA | N = 1,000; tournament 5; crossover p = 0.5; mutation p = 0.1; s_max = 0.1; s_min = s_max / 100 |
 | ES, seeded ES and speed push | N = 550; children from the 50 fittest; σ₀ = 0.1; factor 0.82; σ in [1e-4, 1.0]; reliability phase at 90% |

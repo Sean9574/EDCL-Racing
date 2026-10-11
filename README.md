@@ -12,11 +12,17 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
 
 Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
 its population must complete three laps within the target time, three generations in a row, on each level from Easy
-to Extra hard. The target time is then shortened by 5% at a time until the population can no longer keep up. Every
-method runs with three seeds; results are reported as mean ± standard deviation. Every evolved car also evolves its
-own setup next to its network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3),
-judged only by success and lap time. The design specification is `docs/2026-10-05-ec-racing-design.md` (version 3.1);
-the revision 3 and 3.1 specifications and plans are in `docs/`.
+to Extra hard. In the speed push that follows, the target time is shortened by 2% at a time whenever 75% of the
+population beats it three generations in a row, until 300 generations pass without that. Every method runs with three
+seeds; results are reported as mean ± standard deviation. Every evolved car also evolves its own setup next to its
+network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and
+lap time.
+
+Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
+road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
+they trained on. The evaluation adds a robustness table: the test maps rebuilt at 8, 10, 14 and 18 m, two of which no
+controller trained on. The design specification is `docs/2026-10-05-ec-racing-design.md` (version 3.2); the
+specifications and plans of revisions 3, 3.1 and 3.2 are in `docs/`.
 
 ## Setup on a Windows desktop (WSL 2)
 
@@ -161,8 +167,12 @@ python -m racing.progress                            # live status; Ctrl+C stops
 - **From a notebook:** `python scripts/run_notebooks.py --from 04` starts at notebook 04.
 - **Starting over:** `python scripts/run_notebooks.py --fresh` removes the earlier results (runs, controllers,
   dataset, tables, figures and run record; pilots, viewer runs and the archive are kept) and starts from notebook 01.
+- **Keeping the earlier results:** `python scripts/run_notebooks.py --archive NAME` moves what `--fresh` would delete
+  to `results/archive/NAME/` and exits without running anything; the next start begins afresh. It never overwrites an
+  archive. The revision 3.1 results are archived as `revision3.1`.
 - **Changed settings:** if the settings in `racing/config.py` differ from those recorded by earlier runs, the runner
-  stops before running anything, names the differing settings and exits with code 3. Run again with `--fresh`.
+  stops before running anything, names the differing settings and exits with code 3. Run again with `--fresh`, or
+  archive the earlier results first with `--archive`.
 
 | Notebook | Purpose |
 |---|---|
@@ -195,7 +205,7 @@ Results are written to `results/`, which is not under version control:
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
-| `results/pilots/revision3/`, `results/pilots/revision3.1/` | Pilot runs of revision 3 and of revision 3.1 (with setup evolution) |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/` | Pilot runs of revisions 3, 3.1 (with setup evolution) and 3.2 (with road widths) |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
 
@@ -204,18 +214,31 @@ To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\resu
 ### Several machines
 
 One run cannot use more than about 6 to 8 worker processes (`python -m racing.bench generation`), so a machine with
-more processors trains several runs side by side, and several machines can share the evolutionary runs of notebooks
-04 to 07. The runs are independent and fixed by their seeds and settings, so where they train changes only their
-training times.
+more processors runs several jobs side by side, and several machines can share the experiment. The runs are independent
+and fixed by their seeds and settings, so where they train changes only their training times.
 
-**Side by side on one machine:** `python scripts/run_notebooks.py --runs ga:1,neat:0,neat:1,neat:2 --at-once 4`
-trains these runs directly (`python -m racing.train <approach> <seed>`, the same call as the notebook), each in its own
-process with its own status line and output log in `results/train_logs/`. Ctrl+C stops them all; the same command
-continues them. Afterwards, `python scripts/run_notebooks.py --from 04` finds the runs complete and only reports them.
+**Side by side on one machine:** `python scripts/run_notebooks.py --runs nb:01,nb:02,baseline:0,ga:1 --at-once 4`
+runs these jobs: runs of any method, trained directly (`python -m racing.train <approach> <seed>`, the same call as
+their notebook), and the notebooks 01 (`nb:01`) and 02 (`nb:02`), executed with their outputs saved. Each job has its
+own status line and output log in `results/train_logs/`, and starts, in the order listed, as soon as a slot is free and
+its inputs exist:
+
+| Job | Waits for |
+|---|---|
+| `nb:01` (dataset), `ga:k`, `es:k`, `neat:k` | nothing |
+| `nb:02` (imitation, searches) | the dataset (notebook 01) |
+| `baseline:k`, `kt_random:k`, `kt_hyperband:k`, `kt_bayesian:k` (DAgger, speed push) | the run's imitation network (notebook 02) |
+| `es_seeded:k` | the refined Baseline of seed k (its DAgger run) |
+
+A waiting job holds no slot. A job whose input nothing in the list makes is refused before anything starts; if a job
+fails, the jobs waiting for it are reported and the others go on. Ctrl+C stops the running jobs and lists the ones not
+started; the same command continues them. Afterwards, `python scripts/run_notebooks.py --from 03` finds the runs
+complete and only reports them.
 
 **On several machines:** `scripts/fleet.py` starts, watches, stops and collects runs on the desktop and on servers
-reached from it, following `scripts/fleet.toml` (which machine trains which runs, how many at a time, with how many
-workers each). It runs on the desktop, in its Ubuntu shell with the `ec-racing` environment active. A server is reached
+reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
+workers each). The plan of revision 3.2 runs everything at once: the desktop the notebooks 01 and 02, the 12 DAgger
+runs, the seeded ES runs and two NEAT runs; the server one NEAT run, GA and ES. It runs on the desktop, in its Ubuntu shell with the `ec-racing` environment active. A server is reached
 with Windows' `ssh.exe`, which goes through the school VPN (GlobalProtect); WSL's own `ssh` does not.
 
 Once, connect GlobalProtect and give the server Windows' SSH key, so that fleet.py can log in without a password:
@@ -230,12 +253,12 @@ Then, with GlobalProtect connected:
 
 ```bash
 python scripts/fleet.py setup      # the server gets this commit's code, Python 3.13 with the pinned packages, and the
-                                   # refined baselines its seeded ES runs start from (again after every code change)
+                                   # inputs its jobs need from the desktop, if any (again after every code change)
 python scripts/fleet.py start      # every machine starts its runs in a detached tmux session named "fleet"
 python scripts/fleet.py status     # one line per run in training on every machine, and the latest milestones
 python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
 python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
-python scripts/fleet.py finish     # once every run has finished: collect, then notebooks 04 to 08 here
+python scripts/fleet.py finish     # once all 24 runs have finished: collect, then notebooks 03 to 08 here
 ```
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
@@ -264,8 +287,9 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.1/` and are not part of the reported results;
-their summary includes the populations' final mean sensor length and steering sensitivity.
+The pilots write to `results/pilots/revision3.2/` and are not part of the reported results; their summary includes
+the populations' final mean sensor length and steering sensitivity. Before notebook 03 has run, leave out the seeded
+pilot: it needs a refined baseline of this revision.
 
 ## Viewer
 
@@ -311,9 +335,10 @@ On Windows 11 the window opens through WSLg.
   closed with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
   generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in
   the race view the Network of button cycles through the cars in the race.
-- **Difficulty:** Easy (gentle loops on a wide road), Medium (circuits), Hard (circuits with a main straight into a
-  hairpin, sometimes a chicane or esses), Extra hard (narrow circuits with two hairpins, chicanes, esses and fast
-  sweepers). Maps run clockwise or counter-clockwise.
+- **Difficulty:** Easy (gentle loops), Medium (circuits), Hard (circuits with a main straight into a hairpin,
+  sometimes a chicane or esses), Extra hard (circuits with two hairpins, chicanes, esses and fast sweepers). Maps run
+  clockwise or counter-clockwise, and every map has its own road width, 10 to 16 m, named in the panel's map line.
+- **Controllers of earlier revisions** have 10 inputs instead of 12; the race view leaves them out and says so.
 - **Playback speed:** 1× is twice real time.
 
 ## Tests
