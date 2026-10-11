@@ -129,24 +129,36 @@ stay where they are.
 `racing/train.py` also trains the runs of notebook 03: for Baseline and the three Keras Tuner methods it makes notebook
 03's call, DAgger refinement and speed push with the expert dataset, and a test checks that the calls match
 the notebook's, as for notebooks 04 to 07. `run_notebooks.py --runs` therefore accepts every method; a DAgger run needs
-the dataset and its imitation network (notebooks 01 and 02), a seeded ES run its refined baseline (notebook 03), and the
-runner names a missing input before it starts anything.
+the dataset and its imitation network (notebooks 01 and 02) and a seeded ES run its refined baseline (notebook 03); §6.3
+says how the runner waits for them.
 
-### 6.3 Machines and phases
+### 6.3 Everything at once, waiting only for inputs
 
-The fleet (`scripts/fleet.py`) takes its plan file as an option, `--plan FILE`, so the experiment can run in phases, each
-with its own plan:
+Both machines work from the start. The side-by-side runner (`run_notebooks.py --runs`) takes a list of jobs: training
+runs (`approach:seed`) and the notebooks 01 and 02 (`nb:01`, `nb:02`, executed as the runner executes any notebook, with
+their outputs saved). A job starts as soon as a slot is free and its inputs exist; a job waiting for an input occupies no
+slot. The inputs are the records of the steps that produce them:
 
-1. **Phase A.** The server trains the runs that need no earlier notebook, longest first: NEAT, then GA and ES. The
-   desktop runs notebooks 01 and 02 with the normal runner (dataset, imitation, searches; about 1.5 hours).
-2. **Phase B.** The desktop trains the 12 DAgger runs and whatever GA and ES runs the plan gives it, side by side.
-3. **Phase C.** The seeded ES runs, on whichever machine is free, once their refined baselines exist; `fleet.py setup`
-   copies the baselines to a server.
-4. **Finish.** `fleet.py finish` collects the servers' runs, checks that all 24 runs are complete and runs notebooks 03
-   to 08 on the desktop, which find every run complete and only report it.
+*Table 3. Inputs of the jobs.*
 
-The phase plans are written in the implementation plan from the run lengths of revision 3.1. As a rough estimate, the
-experiment takes 20 to 30 hours instead of about 95; the NEAT runs set the pace.
+| Job | Waits for |
+|---|---|
+| `nb:01` (dataset) | nothing |
+| `nb:02` (imitation, searches) | the dataset record `results/dataset_info.json` |
+| `baseline:k`, `kt_*:k` (DAgger and speed push) | the run's imitation record, `runs/<method>/seed<k>/summary.json` |
+| `es_seeded:k` | the refinement record of Baseline seed k, `runs/baseline/seed<k>/dagger.json` |
+| `ga:k`, `es:k`, `neat:k` | nothing |
+
+Jobs are started in the order of the list, so the longest runs go first. Before anything starts, the runner refuses a job
+whose input neither exists nor is produced by a job in its list (for example a seeded ES run on a server, whose refined
+baseline only the desktop makes), naming the job and the input. If a producing job fails, the jobs waiting for it are
+reported and the others continue.
+
+The fleet plan (`scripts/fleet.toml`) gives the desktop the notebooks, the 12 DAgger runs, the seeded ES runs and two
+NEAT runs, four at a time, and the server the remaining NEAT run, GA and ES, three at a time. The split balances the
+expected work from the run lengths of revision 3.1: each machine needs about 20 hours. `fleet.py start` starts both;
+`fleet.py finish` collects the server's runs, checks that all 24 runs are complete and runs notebooks 03 to 08 on the
+desktop, which find every run complete and only report it.
 
 ## 7. Visualization Application
 
@@ -159,7 +171,7 @@ experiment takes 20 to 30 hours instead of about 95; the NEAT runs set the pace.
 
 ## 8. Settings
 
-*Table 3. New and changed settings in `racing/config.py`.*
+*Table 4. New and changed settings in `racing/config.py`.*
 
 | Setting | Value | Meaning |
 |---|---|---|
@@ -190,8 +202,10 @@ affects the evaluation.
   method and width.
 - **Viewer:** a controller with 10 inputs is left out of the race with a message; the map line names the width.
 - **Execution:** `--archive` moves exactly what `--fresh` would delete and refuses to overwrite an existing archive; the
-  DAgger calls of `racing/train.py` match notebook 03; the runner names missing inputs of DAgger and seeded ES runs;
-  `fleet.py --plan` reads the given plan; `finish` requires all 24 runs.
+  DAgger calls of `racing/train.py` match notebook 03; a job starts only when its inputs exist and then without delay,
+  waiting jobs hold no slot, a job whose input nothing will produce is refused before anything starts, and the
+  dependants of a failed job are reported; notebook jobs save their outputs; `finish` requires all 24 runs and runs
+  notebooks 03 to 08.
 
 ## 10. Risks
 
@@ -219,7 +233,7 @@ affects the evaluation.
 | `racing/checkpoint.py` | New settings recorded |
 | `racing/evaluate.py`, `notebooks/08_evaluate.ipynb` | Robustness table (§5.2) |
 | `racing/train.py` | DAgger runs (§6.2) |
-| `scripts/run_notebooks.py` | `--archive`; every method in `--runs`; inputs of DAgger runs (§6.1–6.2) |
-| `scripts/fleet.py`, phase plans | `--plan`; `finish` from notebook 03 with all 24 runs (§6.3) |
+| `scripts/run_notebooks.py` | `--archive`; every method and notebooks 01–02 in `--runs`, started when their inputs exist (§6.1–6.3) |
+| `scripts/fleet.py`, `scripts/fleet.toml` | Plan of §6.3; `finish` from notebook 03 with all 24 runs |
 | `racing/app.py` | Width in the map line; input count check of raced controllers (§7) |
 | `README.md`, `docs/2026-10-05-ec-racing-design.md` | Revision 3.2 |
