@@ -20,10 +20,13 @@ Exit codes: 0 done; 1 a check failed or nothing could be done (the message says 
 """
 import argparse
 import base64
+import collections
+import contextlib
 import hashlib
 import importlib.util
 import io
 import json
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -140,19 +143,167 @@ def train_label(run):
 
 
 # ----- shell on a machine -----
+#
+# A server is reached with its ssh command, and files travel with the matching scp. Windows' clients (ssh.exe, which
+# reaches the school network through GlobalProtect) are started through a batch file, with Windows' own redirection
+# from NUL and to files: started from WSL with their input or output passed through WSL, ssh.exe finishes the
+# command on the server but never exits, and it stalls on more than a few kilobytes of input even from a file. So no
+# script or data ever passes ssh's standard input: a script travels in the command line, base64-encoded, and files go
+# with scp.
+
+SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]
+MAX_COMMAND = 6000                      # characters of an encoded script; a line of a Windows batch file holds 8191
+WINDOWS_WORK = Path("/mnt/c/Users/Public/ec-racing-fleet")   # batch files and copies in transit; no spaces in it
+OUTGOING = ".fleet/outgoing.tar"        # under a server's project folder: the archive `download` copies here
+COMMAND_TIMEOUT = 300.0                 # s for a script on a server
+COPY_TIMEOUT = 1800.0                   # s for copying one file
+CONNECTION_WINDOW = 30.0                # s; a precaution against servers that block an address connecting more
+CONNECTIONS_PER_WINDOW = 4              # often than this many times per window
+recent_connections = collections.defaultdict(collections.deque)    # host -> times of the latest connections
+
+
+def remote_command(script):
+    """`script` as one command line for the server's shell."""
+    encoded = base64.b64encode(script.encode()).decode()
+    if len(encoded) > MAX_COMMAND:
+        raise FleetError(f"a script for a server is too long ({len(encoded)} characters encoded)")
+    return f"echo {encoded} | base64 -d | bash"
+
+
+def windows_client(machine):
+    return machine.ssh.lower().endswith(".exe")
+
+
+def scp_program(machine):
+    """The scp next to the machine's ssh: scp.exe for ssh.exe."""
+    folder, slash, name = machine.ssh.rpartition("/")
+    return folder + slash + name.replace("ssh", "scp", 1)
+
+
+def text_of(data):
+    return (data or b"").decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def windows_path(path):
+    """/mnt/c/Users/... as Windows writes it: C:\\Users\\..."""
+    parts = Path(path).parts
+    if len(parts) < 3 or parts[:2] != ("/", "mnt") or len(parts[2]) != 1:
+        raise FleetError(f"{path} is not on a Windows drive")
+    return parts[2].upper() + ":\\" + "\\".join(parts[3:])
+
+
+def batch_text(arguments, folder):
+    """A batch file that runs `arguments` with nothing on their input and their output in out.txt and err.txt of
+    the Windows folder `folder`, and exits with their exit code."""
+    words = " ".join(f'"{word}"' if any(c in word for c in ' |&<>^()') else word for word in arguments)
+    return f'@{words} < NUL > "{folder}\\out.txt" 2> "{folder}\\err.txt"\r\n@exit /b %ERRORLEVEL%\r\n'
+
+
+@contextlib.contextmanager
+def windows_folder():
+    """A fresh folder under WINDOWS_WORK, removed afterwards."""
+    WINDOWS_WORK.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix="call-", dir=WINDOWS_WORK))
+    try:
+        yield folder
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def run_windows(arguments, folder, stream=False, timeout=None):
+    """Run a Windows client's command line through a batch file in `folder`; (exit code, output, errors). With
+    `stream`, the output is printed while it grows. Raises subprocess.TimeoutExpired after `timeout` seconds."""
+    win = windows_path(folder)
+    (folder / "run.bat").write_bytes(batch_text(arguments, win).encode())
+    process = subprocess.Popen(["cmd.exe", "/c", f"{win}\\run.bat"], cwd="/mnt/c", stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    shown = 0
+    while True:
+        code = process.poll()
+        if stream:
+            shown = show_new(folder / "out.txt", shown)
+        if code is not None:
+            break
+        if deadline is not None and time.monotonic() > deadline:
+            process.kill()
+            raise subprocess.TimeoutExpired(arguments, timeout)
+        time.sleep(0.2)
+    read = lambda name: text_of((folder / name).read_bytes()) if (folder / name).exists() else ""
+    out, err = read("out.txt"), read("err.txt")
+    if stream and err:
+        print(err, end="", file=sys.stderr, flush=True)
+    return code, out, err
+
+
+def show_new(path, shown):
+    """Print what was added to `path` since `shown` bytes; returns the new count."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return shown
+    if len(data) > shown:
+        sys.stdout.write(text_of(data[shown:]))
+        sys.stdout.flush()
+    return len(data)
+
+
+def pace(machine, out=sys.stdout):
+    """Wait until one more connection to the machine's server keeps within CONNECTIONS_PER_WINDOW."""
+    times = recent_connections[machine.host]
+    while True:
+        now = time.monotonic()
+        while times and now - times[0] > CONNECTION_WINDOW:
+            times.popleft()
+        if len(times) < CONNECTIONS_PER_WINDOW:
+            times.append(now)
+            return
+        wait = CONNECTION_WINDOW - (now - times[0]) + 0.5
+        if wait > 3:
+            print(f"(waiting {wait:.0f} s before the next connection to the server)", file=out, flush=True)
+        time.sleep(wait)
+
+
+def run_client(machine, arguments, stream=False, timeout=None, folder=None):
+    """Run an ssh or scp command line of `machine` with nothing on its input; (exit code, output, errors). A Windows
+    client runs through a batch file in `folder`, or in a fresh folder under WINDOWS_WORK. Connections are paced."""
+    pace(machine)
+    try:
+        if windows_client(machine):
+            if folder is not None:
+                return run_windows(arguments, folder, stream, timeout)
+            with windows_folder() as fresh:
+                return run_windows(arguments, fresh, stream, timeout)
+        if stream:
+            return run_streamed(arguments, timeout)
+        result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+        return result.returncode, text_of(result.stdout), text_of(result.stderr)
+    except subprocess.TimeoutExpired:
+        raise FleetError(f"{machine.where}: no answer within {timeout:.0f} s. {CONNECT_HINT}") from None
+
+
+def run_streamed(arguments, timeout=None):
+    """Run `arguments`, printing their output as it arrives and keeping it; errors are part of the output."""
+    process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT)
+    kept = []
+    for line in process.stdout:
+        sys.stdout.write(text_of(line))
+        sys.stdout.flush()
+        kept.append(line)
+    return process.wait(timeout=timeout), text_of(b"".join(kept)), ""
+
 
 def run_shell(machine, script, stream=False, timeout=None):
-    """Run a bash script on `machine` and return (exit code, output, errors) as text; with `stream` the output goes
-    to this terminal instead. A server is reached with its ssh command, and the script goes over standard input, so
-    nothing in it is quoted for the Windows client."""
+    """Run a bash script on `machine` and return (exit code, output, errors) as text; with `stream` the output also
+    goes to this terminal as it arrives."""
     if machine.local:
-        command = ["bash", "-s"]
-    else:
-        command = [machine.ssh, "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", machine.host, "bash -s"]
-    pipe = None if stream else subprocess.PIPE
-    result = subprocess.run(command, input=script.encode(), stdout=pipe, stderr=pipe, timeout=timeout)
-    text = lambda data: (data or b"").decode("utf-8", errors="replace").replace("\r\n", "\n")
-    return result.returncode, text(result.stdout), text(result.stderr)
+        pipe = None if stream else subprocess.PIPE
+        result = subprocess.run(["bash", "-s"], input=script.encode(), stdout=pipe, stderr=pipe, timeout=timeout)
+        return result.returncode, text_of(result.stdout), text_of(result.stderr)
+    if timeout is None and not stream:
+        timeout = COMMAND_TIMEOUT
+    return run_client(machine, [machine.ssh, *SSH_OPTIONS, machine.host, remote_command(script)], stream, timeout)
 
 
 def shell(machine, script, stream=False, timeout=None):
@@ -165,48 +316,95 @@ def shell(machine, script, stream=False, timeout=None):
     return out
 
 
-def upload_script(machine, data, target):
-    """A script that writes `data` to `target` (relative to the project folder) and checks its SHA-256. The data
-    travels as base64 inside the script, so no binary stream passes the Windows client."""
-    digest = hashlib.sha256(data).hexdigest()
-    quoted = shlex.quote(target)
-    return (f"set -e\nmkdir -p {machine.root}\ncd {machine.root}\nmkdir -p \"$(dirname {quoted})\"\n"
-            f"base64 -d > {quoted}.part <<'EC_RACING_DATA'\n{base64.encodebytes(data).decode()}EC_RACING_DATA\n"
-            f"test \"$(sha256sum {quoted}.part | cut -d' ' -f1)\" = {digest}\n"
-            f"mv {quoted}.part {quoted}\necho uploaded\n")
+def scp_check(machine, code, err, what):
+    if code != 0:
+        reason = err.strip().splitlines()[-1:] or [f"exit code {code}"]
+        hint = f" {CONNECT_HINT}" if code == 255 else ""
+        raise FleetError(f"{machine.where}: copying {what} failed: {reason[0]}.{hint}")
+
+
+def copy_to(machine, local, target):
+    """Copy the file `local` here to `target`, relative to the server's home folder (its folder must exist)."""
+    destination = f"{machine.host}:{target}"
+    if windows_client(machine):
+        with windows_folder() as folder:
+            shutil.copyfile(local, folder / "file")
+            code, out, err = run_client(machine, [scp_program(machine), "-q", *SSH_OPTIONS,
+                                                  windows_path(folder / "file"), destination],
+                                        timeout=COPY_TIMEOUT, folder=folder)
+    else:
+        code, out, err = run_client(machine, [scp_program(machine), "-q", *SSH_OPTIONS, str(local), destination],
+                                    timeout=COPY_TIMEOUT)
+    scp_check(machine, code, err, target)
+
+
+def copy_from(machine, source, local):
+    """Copy `source`, relative to the server's home folder, to the file `local` here."""
+    origin = f"{machine.host}:{source}"
+    if windows_client(machine):
+        with windows_folder() as folder:
+            code, out, err = run_client(machine, [scp_program(machine), "-q", *SSH_OPTIONS, origin,
+                                                  windows_path(folder / "file")],
+                                        timeout=COPY_TIMEOUT, folder=folder)
+            scp_check(machine, code, err, source)
+            shutil.copyfile(folder / "file", local)
+    else:
+        code, out, err = run_client(machine, [scp_program(machine), "-q", *SSH_OPTIONS, origin, str(local)],
+                                    timeout=COPY_TIMEOUT)
+        scp_check(machine, code, err, source)
 
 
 def upload(machine, data, target):
-    if "uploaded" not in shell(machine, upload_script(machine, data, target)):
-        raise FleetError(f"{machine.where}: {target} was not written")
+    """Write `data` to `target` under the machine's project folder, checking its SHA-256 there. It is copied into
+    the home folder first, which always exists, then moved into place: two connections."""
+    staging = f".ec-racing-upload-{secrets.token_hex(4)}.part"
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "file"
+        path.write_bytes(data)
+        copy_to(machine, path, staging)
+    digest, quoted = hashlib.sha256(data).hexdigest(), shlex.quote(target)
+    answer = shell(machine, f"set -e\nmkdir -p {machine.root}\ncd {machine.root}\n"
+                            f"mkdir -p \"$(dirname {quoted})\"\n"
+                            f"if [ \"$(sha256sum \"$HOME\"/{staging} | cut -d' ' -f1)\" = {digest} ]; then "
+                            f"mv \"$HOME\"/{staging} {quoted}; echo uploaded; "
+                            f"else rm -f \"$HOME\"/{staging}; echo damaged; fi\n")
+    if "uploaded" not in answer:
+        raise FleetError(f"{machine.where}: {target} arrived damaged (checksum mismatch); try again")
 
 
-def download_script(machine, members):
-    """A script that prints the SHA-256 of a tar archive of `members` (paths or globs under the project folder, made
-    by this module from approach names and seeds; those that match nothing are left out), then the archive in
-    base64."""
-    return (f"set -e\ncd {machine.root}\nshopt -s nullglob\nfiles=()\n"
+def pack_lines(members):
+    """Script lines that pack `members` (paths or globs under the project folder, made by this module from approach
+    names and seeds; those that match nothing are left out) into OUTGOING and print its SHA-256."""
+    return (f"shopt -s nullglob\nfiles=()\n"
             f"for f in {' '.join(members)}; do [ -e \"$f\" ] && files+=(\"$f\"); done\n"
-            "archive=$(mktemp)\n"
-            "if [ ${#files[@]} -gt 0 ]; then tar -cf \"$archive\" \"${files[@]}\"; "
-            "else tar -cf \"$archive\" -T /dev/null; fi\n"
-            "echo \"SHA256 $(sha256sum \"$archive\" | cut -d' ' -f1)\"\n"
-            "base64 \"$archive\"\nrm -f \"$archive\"\n")
+            f"mkdir -p \"$(dirname {OUTGOING})\"\nrm -f {OUTGOING}\n"
+            f"if [ ${{#files[@]}} -gt 0 ]; then tar -cf {OUTGOING} \"${{files[@]}}\"; "
+            f"else tar -cf {OUTGOING} -T /dev/null; fi\n"
+            f"echo \"SHA256 $(sha256sum {OUTGOING} | cut -d' ' -f1)\"\n")
 
 
-def unpack_download(text):
-    """The archive bytes of download_script's output, after checking its SHA-256."""
-    first, _, rest = text.partition("\n")
-    if not first.startswith("SHA256 "):
-        raise FleetError("the download did not start with its checksum")
-    data = base64.b64decode("".join(rest.split()))
-    if hashlib.sha256(data).hexdigest() != first.split()[1]:
-        raise FleetError("the download arrived damaged (checksum mismatch); try again")
+def pack_script(machine, members):
+    return f"set -e\ncd {machine.root}\n" + pack_lines(members)
+
+
+def fetch_packed(machine, answer):
+    """The archive a pack script made, copied here and checked against the SHA-256 it printed in `answer`."""
+    lines = [line for line in answer.splitlines() if line.startswith("SHA256 ")]
+    if not lines:
+        raise FleetError(f"{machine.where}: the archive was not made")
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "archive.tar"
+        copy_from(machine, f"{machine.dir}/{OUTGOING}", path)
+        data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != lines[-1].split()[1]:
+        raise FleetError(f"{machine.where}: the download arrived damaged (checksum mismatch); try again")
     return data
 
 
 def download(machine, members):
-    return unpack_download(shell(machine, download_script(machine, members)))
+    """A tar archive of `members` under the machine's project folder: two connections. The archive stays on the
+    server until the next download replaces it."""
+    return fetch_packed(machine, shell(machine, pack_script(machine, members)))
 
 
 # ----- code version -----
@@ -236,23 +434,23 @@ def require_committed_code():
 
 # ----- setup -----
 
-def code_script(machine):
-    """Check out the uploaded commit in the server's project folder. Tracked files there are replaced; its results
-    are not tracked and stay."""
-    return f"""set -e
-cd {machine.root}
-git rev-parse --git-dir >/dev/null 2>&1 || git init -q
-git fetch -q {BUNDLE} HEAD
-git -c advice.detachedHead=false checkout -q --force --detach FETCH_HEAD
-echo "code: commit $(git rev-parse HEAD)"
-"""
+SETUP_ARCHIVE = ".fleet/setup.tar"     # under a server's project folder: the code bundle and the baselines
 
 
-def environment_script(machine):
-    """Install Miniforge and the environment if missing, then the pinned packages, and check the imports."""
-    return f"""set -e
-cd {machine.root}
-if [ ! -x "$HOME"/miniforge3/bin/conda ]; then
+def code_lines():
+    """Script lines that unpack the setup archive and check out its commit. Tracked files there are replaced; the
+    server's results are not tracked and stay."""
+    return (f"tar -xf {SETUP_ARCHIVE}\n"
+            "git rev-parse --git-dir >/dev/null 2>&1 || git init -q\n"
+            f"git fetch -q {BUNDLE} HEAD\n"
+            "git -c advice.detachedHead=false checkout -q --force --detach FETCH_HEAD\n"
+            'echo "code: commit $(git rev-parse HEAD)"\n')
+
+
+def environment_lines():
+    """Script lines that install Miniforge and the environment if missing, then the pinned packages, and check the
+    imports."""
+    return f"""if [ ! -x "$HOME"/miniforge3/bin/conda ]; then
   echo "installing Miniforge (conda with conda-forge) into ~/miniforge3 ..."
   curl -fsSL {MINIFORGE} -o "$HOME"/miniforge-installer.sh
   bash "$HOME"/miniforge-installer.sh -b -p "$HOME"/miniforge3
@@ -268,6 +466,10 @@ CUDA_VISIBLE_DEVICES=-1 TF_CPP_MIN_LOG_LEVEL=3 {REMOTE_PYTHON} -c "import numpy,
 """
 
 
+def setup_script(machine):
+    return f"set -e\ncd {machine.root}\n" + code_lines() + environment_lines()
+
+
 def baseline_inputs(machine):
     """(local file, target) of the refined baselines the machine's seeded ES runs start from (notebook 03)."""
     inputs = []
@@ -278,33 +480,37 @@ def baseline_inputs(machine):
     return inputs
 
 
-def send_code(machine, out=sys.stdout):
-    """The server's project folder gets this machine's last commit, as a git bundle."""
-    commit = local_commit()
-    with tempfile.TemporaryDirectory() as folder:
-        bundle = Path(folder) / "code.bundle"
-        git("bundle", "create", "-q", str(bundle), "HEAD")
-        print(f"sending the code (commit {commit[:7]}, {bundle.stat().st_size / 1e6:.1f} MB) ...", file=out,
-              flush=True)
-        upload(machine, bundle.read_bytes(), BUNDLE)
-    if f"commit {commit}" not in shell(machine, code_script(machine)):
-        raise FleetError(f"{machine.where}: the code was not checked out")
+def setup_archive(machine, folder):
+    """A tar archive of this commit as a git bundle and of the refined baselines the machine's seeded ES runs start
+    from, written in `folder`; returns its path."""
+    bundle = Path(folder) / "code.bundle"
+    git("bundle", "create", "-q", str(bundle), "HEAD")
+    archive = Path(folder) / "setup.tar"
+    with tarfile.open(archive, "w") as tar:
+        tar.add(bundle, arcname=BUNDLE)
+        for local, target in baseline_inputs(machine):
+            if not local.exists():
+                raise FleetError(f"{local} is missing here; notebook 03 makes it")
+            tar.add(local, arcname=target)
+    return archive
 
 
 def setup(machines, out=sys.stdout):
+    """Give every server this commit's code, its baselines and the environment: three connections each."""
     require_committed_code()
+    commit = local_commit()
     for machine in machines:
         if machine.local:
             continue
         print(f"== {machine.where}", file=out, flush=True)
-        shell(machine, "echo ok", timeout=120)
-        send_code(machine, out)
-        shell(machine, environment_script(machine), stream=True)
-        for local, target in baseline_inputs(machine):
-            if not local.exists():
-                raise FleetError(f"{local} is missing here; notebook 03 makes it")
-            print(f"sending {target} ...", file=out, flush=True)
-            upload(machine, local.read_bytes(), target)
+        with tempfile.TemporaryDirectory() as folder:
+            archive = setup_archive(machine, folder)
+            print(f"sending the code (commit {commit[:7]}) and {len(baseline_inputs(machine))} refined baselines, "
+                  f"{archive.stat().st_size / 1e6:.1f} MB ...", file=out, flush=True)
+            upload(machine, archive.read_bytes(), SETUP_ARCHIVE)
+        answer = shell(machine, setup_script(machine), stream=True)
+        if f"commit {commit}" not in answer:
+            raise FleetError(f"{machine.where}: the code was not checked out")
         print(f"{machine.name} is ready.", file=out, flush=True)
     return 0
 
@@ -463,7 +669,7 @@ def stop(machines, out=sys.stdout, wait=STOP_WAIT):
             asked.append(machine)
     deadline = time.time() + wait
     while asked and time.time() < deadline:
-        time.sleep(3)
+        time.sleep(10)
         for machine in list(asked):
             if parse_status(shell(machine, status_script(machine), timeout=120))[0] is False:
                 print(f"{machine.where}: stopped; the runs continue where they stopped at the next start", file=out)
@@ -476,9 +682,14 @@ def stop(machines, out=sys.stdout, wait=STOP_WAIT):
 
 # ----- collect and finish -----
 
-def finished_script(machine):
-    checks = [f"[ -f results/runs/{a}/seed{s}/summary.json ] && echo 'done {a} {s}'" for a, s in machine.runs]
-    return f"cd {machine.root} 2>/dev/null || exit 0\n" + "\n".join(checks) + "\ntrue\n"
+def collect_script(machine):
+    """Name the machine's finished runs and pack them, with the run log and record, into OUTGOING."""
+    lines = [f"cd {machine.root} 2>/dev/null || exit 0", "done=()"]
+    for approach, seed in machine.runs:
+        lines.append(f"[ -f results/runs/{approach}/seed{seed}/summary.json ] && "
+                     f"{{ echo 'done {approach} {seed}'; done+=(results/runs/{approach}/seed{seed} "
+                     f"results/champions/{approach}/seed{seed}.*); }}")
+    return "\n".join(lines) + "\n" + pack_lines(['"${done[@]}"', "results/run_log.txt", "results/run_info.json"])
 
 
 def run_members(run):
@@ -537,10 +748,13 @@ def collect(machines, out=sys.stdout, results=None):
         if machine.local or not machine.runs:
             continue
         try:
-            done = [(line.split()[1], int(line.split()[2])) for line in shell(machine, finished_script(machine))
-                    .splitlines() if line.startswith("done ")]
-            members = [member for run in done for member in run_members(run)]
-            archive = download(machine, members + ["results/run_log.txt", "results/run_info.json"])
+            answer = shell(machine, collect_script(machine))
+            if "SHA256 " not in answer:
+                print(f"{machine.where}: the project is not there yet", file=out)
+                continue
+            done = [(line.split()[1], int(line.split()[2])) for line in answer.splitlines()
+                    if line.startswith("done ")]
+            archive = fetch_packed(machine, answer)
         except FleetError as error:
             print(f"{machine.where}: {error}", file=out)
             problems += 1

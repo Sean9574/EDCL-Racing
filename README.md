@@ -243,6 +243,13 @@ python scripts/fleet.py finish     # once every run has finished: collect, then 
   on any machine. Stop a runner started by hand first (Ctrl+C in its tmux session).
 - The runs keep going when GlobalProtect or SSH disconnects; only fleet.py's commands need the connection. On the
   desktop, keep WSL running as for any run (see above).
+- fleet.py opens few SSH connections per command (`setup` three, `start` two, `status` one, `collect` two) and, as
+  a precaution against servers that block addresses connecting too often, at most four per 30 seconds.
+- If a command says the server did not answer, check that GlobalProtect is still connected: its tunnel can stop
+  passing traffic while the tray icon still shows it as connected; reconnect it and run the command again.
+- `ssh.exe` misbehaves when WSL passes it input or output (it does not exit, and it stalls on larger input), so
+  fleet.py runs it from a batch file in `C:\Users\Public\ec-racing-fleet` with Windows' own redirection, passes
+  scripts in the command line and copies files with `scp.exe`.
 - `collect` never replaces a run: a run that is already here in another version, an unfinished copy of it, or a run
   made with other settings is reported and left alone.
 - Watch a session directly with `tmux attach -t fleet` (on a server, after `ssh.exe <user>@<server>`); detach with

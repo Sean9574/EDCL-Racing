@@ -5,8 +5,11 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -57,7 +60,18 @@ class Fake:
             result = subprocess.run(["bash", "-s"], input=script.encode(), capture_output=True, env=env, timeout=60)
             return result.returncode, result.stdout.decode(), result.stderr.decode()
 
+        def copy_to(machine, local, target):                  # scp: paths relative to the home folder
+            destination = self.home(machine.name) / target
+            if not destination.parent.is_dir():
+                raise self.fleet.FleetError(f"scp: {destination.parent}: No such file or directory")
+            shutil.copyfile(local, destination)
+
+        def copy_from(machine, source, local):
+            shutil.copyfile(self.home(machine.name) / source, local)
+
         monkeypatch.setattr(self.fleet, "run_shell", run_shell)
+        monkeypatch.setattr(self.fleet, "copy_to", copy_to)
+        monkeypatch.setattr(self.fleet, "copy_from", copy_from)
 
     def home(self, name):
         home = self.tmp / "homes" / name
@@ -152,24 +166,69 @@ def test_files_travel_to_a_server_and_back_intact(fake):
     data = os.urandom(200_000)
     fake.fleet.upload(server, data, "results/in/data.bin")
     assert (fake.server_project() / "results" / "in" / "data.bin").read_bytes() == data
+    assert not list(fake.home("server").glob(".ec-racing-upload-*"))       # nothing is left in the home folder
     archive = fake.fleet.download(server, ["results/in/data.bin", "results/in/none.*", "results/missing.txt"])
-    import tarfile
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         assert tar.getnames() == ["results/in/data.bin"] and tar.extractfile("results/in/data.bin").read() == data
 
 
 def test_a_download_of_nothing_is_an_empty_archive(fake):
     fake.server_project().mkdir(parents=True)
-    import tarfile
     with tarfile.open(fileobj=io.BytesIO(fake.fleet.download(fake.machines()[1], ["results/none.*"]))) as tar:
         assert tar.getnames() == []
 
 
-def test_a_damaged_download_is_refused(fake):
+def test_a_damaged_download_is_refused(fake, monkeypatch):
+    fake.server_project().mkdir(parents=True)
+    monkeypatch.setattr(fake.fleet, "copy_from", lambda machine, source, local: Path(local).write_bytes(b"garbage"))
     with pytest.raises(fake.fleet.FleetError, match="damaged"):
-        fake.fleet.unpack_download("SHA256 " + "0" * 64 + "\naGVsbG8=\n")
-    with pytest.raises(fake.fleet.FleetError, match="checksum"):
-        fake.fleet.unpack_download("hello\n")
+        fake.fleet.download(fake.machines()[1], ["results/none.*"])
+
+
+def test_a_damaged_upload_is_refused_and_left_out(fake, monkeypatch):
+    def damage(machine, local, target):
+        (fake.home(machine.name) / target).write_bytes(Path(local).read_bytes()[:-1])
+    monkeypatch.setattr(fake.fleet, "copy_to", damage)
+    with pytest.raises(fake.fleet.FleetError, match="arrived damaged"):
+        fake.fleet.upload(fake.machines()[1], b"model weights", "results/runs/baseline/seed0/dagger.keras")
+    folder = fake.server_project() / "results" / "runs" / "baseline" / "seed0"
+    assert folder.is_dir() and list(folder.iterdir()) == []
+    assert not list(fake.home("server").glob(".ec-racing-upload-*"))
+
+
+def test_a_script_for_a_server_travels_in_the_command_line(fake):
+    script = "set -e\nx='it''s'\nprintf '%s|%s\\n' \"$x\" \"$HOME\"\n"
+    command = fake.fleet.remote_command(script)
+    assert "\n" not in command and "'" not in command and "%" not in command
+    result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                            env={**os.environ, "HOME": "/home/x"})
+    assert result.stdout == "its|/home/x\n"
+    with pytest.raises(fake.fleet.FleetError, match="too long"):
+        fake.fleet.remote_command("echo x\n" * 2000)
+
+
+def test_the_largest_scripts_fit_in_a_command_line(fake):
+    server = fake.machines()[1]
+    every_run = [(a, s) for a in config.EVOLUTION_APPROACHES for s in config.RUN_SEEDS]
+    members = [m for run in every_run for m in fake.fleet.run_members(run)]
+    for script in (fake.fleet.setup_script(server), fake.fleet.pack_script(server, members),
+                   fake.fleet.collect_script(fake.fleet.Machine("s", every_run, host="h", ssh="ssh.exe")),
+                   fake.fleet.probe_script(fake.fleet.Machine("s", every_run, host="h", ssh="ssh.exe")),
+                   fake.fleet.session_script(server, fake.fleet.train_command(
+                       fake.fleet.Machine("s", every_run, host="h", ssh="ssh.exe")))):
+        fake.fleet.remote_command(script)
+
+
+def test_windows_clients_run_from_a_batch_file_with_files_for_input_and_output(fake):
+    text = fake.fleet.batch_text(["ssh.exe", "-o", "BatchMode=yes", "me@h", "echo QQ== | base64 -d | bash"],
+                                 "C:\\Users\\Public\\f")
+    assert text == ('@ssh.exe -o BatchMode=yes me@h "echo QQ== | base64 -d | bash" < NUL '
+                    '> "C:\\Users\\Public\\f\\out.txt" 2> "C:\\Users\\Public\\f\\err.txt"\r\n@exit /b %ERRORLEVEL%\r\n')
+    assert fake.fleet.windows_path("/mnt/c/Users/Public/f/file") == "C:\\Users\\Public\\f\\file"
+    with pytest.raises(fake.fleet.FleetError):
+        fake.fleet.windows_path("/home/sean/file")
+    assert fake.fleet.scp_program(fake.fleet.Machine("s", [], host="h", ssh="ssh.exe")) == "scp.exe"
+    assert fake.fleet.scp_program(fake.fleet.Machine("s", [], host="h", ssh="/usr/bin/ssh")) == "/usr/bin/scp"
 
 
 def test_a_server_that_cannot_be_reached_says_what_to_check(fake, monkeypatch):
@@ -178,26 +237,51 @@ def test_a_server_that_cannot_be_reached_says_what_to_check(fake, monkeypatch):
         fake.fleet.shell(fake.machines()[1], "echo ok")
 
 
-def test_send_code_checks_out_this_commit_on_the_server(fake, monkeypatch):
+def test_setup_checks_out_this_commit_and_brings_the_baselines(fake, monkeypatch):
     git = ["git", "-C", str(fake.desktop), "-c", "user.name=test", "-c", "user.email=test@example.com"]
     subprocess.run(git + ["init", "-q"], check=True)
     (fake.desktop / "racing.py").write_text("print('code')\n")
     subprocess.run(git + ["add", "racing.py"], check=True)
     subprocess.run(git + ["commit", "-q", "-m", "code"], check=True)
     monkeypatch.setattr(fake.fleet, "local_commit", lambda: fake.fleet.git("rev-parse", "HEAD").strip())
-    results = fake.server_project() / "results" / "kept.txt"
-    results.parent.mkdir(parents=True)
-    results.write_text("a result")
-    fake.fleet.send_code(fake.machines()[1], out=io.StringIO())
+    monkeypatch.setattr(fake.fleet, "environment_lines", lambda: "echo environment ready\n")   # no installs here
+    refined = fake.desktop / "results" / "runs" / "baseline" / "seed0" / "dagger.keras"
+    refined.parent.mkdir(parents=True)
+    refined.write_bytes(b"refined baseline 0")
+    kept = fake.server_project() / "results" / "kept.txt"
+    kept.parent.mkdir(parents=True)
+    kept.write_text("a result")
+    assert fake.fleet.setup(fake.machines(), out=io.StringIO()) == 0
     assert (fake.server_project() / "racing.py").read_text() == "print('code')\n"
-    assert results.read_text() == "a result"                                # the server's results stay
+    assert (fake.server_project() / "results" / "runs" / "baseline" / "seed0" / "dagger.keras").read_bytes() == \
+        b"refined baseline 0"
+    assert kept.read_text() == "a result"                                   # the server's results stay
     commit = subprocess.run(["git", "-C", str(fake.server_project()), "rev-parse", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
     assert commit == fake.fleet.local_commit()
 
 
+def test_setup_needs_the_baselines_here(fake, monkeypatch):
+    monkeypatch.setattr(fake.fleet, "git", lambda *args: Path(args[-2]).write_bytes(b"bundle") if "bundle" in args
+                        else "")
+    with pytest.raises(fake.fleet.FleetError, match="notebook 03 makes it"):
+        fake.fleet.setup(fake.machines(), out=io.StringIO())
+
+
+def test_connections_to_a_server_are_paced(fake, monkeypatch):
+    monkeypatch.setattr(fake.fleet, "CONNECTIONS_PER_WINDOW", 2)
+    monkeypatch.setattr(fake.fleet, "CONNECTION_WINDOW", 0.4)
+    server = fake.machines()[1]
+    began = time.monotonic()
+    for _ in range(3):
+        fake.fleet.pace(server, out=io.StringIO())
+    assert time.monotonic() - began >= 0.4                                 # the third waited for the first to age
+    fake.fleet.pace(fake.fleet.Machine("other", [], host="other@h"), out=io.StringIO())
+    assert time.monotonic() - began < 1.5                                   # another server is not held up
+
+
 def test_the_environment_is_python_3_13_with_the_pinned_packages(fake):
-    script = fake.fleet.environment_script(fake.machines()[1])
+    script = fake.fleet.environment_lines()
     assert "python=3.13" in script and "-r requirements.txt" in script and "Miniforge3-Linux-x86_64.sh" in script
 
 
