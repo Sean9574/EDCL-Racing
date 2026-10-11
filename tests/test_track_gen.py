@@ -5,7 +5,7 @@ import pytest
 from scipy.spatial import cKDTree
 
 from racing import config, track_gen, tracks
-from racing.track_gen import candidate_track, circuit_points, fillet_path, make_track, runs_clockwise
+from racing.track_gen import candidate_track, circuit_points, fillet_path, make_track, map_width, runs_clockwise
 
 
 def slow_corners(track, radius=40.0):
@@ -27,7 +27,7 @@ def test_easy_maps_are_gentle_loops_that_differ_by_seed():
     maps = [make_track(seed, 1) for seed in range(4)]
     assert len({round(t.length, 3) for t in maps}) == 4                 # no longer one fixed circle
     for t in maps:
-        assert t.width == spec["width"] == 16.0
+        assert config.WIDTH_RANGE[0] <= t.width <= config.WIDTH_RANGE[1]
         assert np.max(np.abs(t.curvature)) <= 1 / spec["min_corner"] + 1e-9
 
 
@@ -52,7 +52,7 @@ def test_maps_respect_width_and_minimum_corner_radius(level):
     spec = config.LEVELS[level]
     for seed in range(8):
         t = make_track(seed, level)
-        assert t.width == spec["width"]
+        assert t.width == map_width(seed, level)
         assert np.max(np.abs(t.curvature)) <= 1 / spec["min_corner"] + 1e-9
 
 
@@ -98,8 +98,8 @@ def test_fillet_radius_shrinks_on_short_edges():
 
 def test_circuit_points_follow_the_spec_and_the_generator():
     spec = config.LEVELS[4]
-    a = circuit_points(np.random.default_rng([3, 4, 0]), spec)
-    b = circuit_points(np.random.default_rng([3, 4, 0]), spec)
+    a = circuit_points(np.random.default_rng([3, 4, 0]), spec, 12.0)
+    b = circuit_points(np.random.default_rng([3, 4, 0]), spec, 12.0)
     assert np.array_equal(a, b) and a.shape[1] == 2 and len(a) > 1000
 
 
@@ -142,3 +142,22 @@ def test_every_level_generates_drivable_maps():
             assert tracks.get_track(seed, level).expert_lap_time > 0
     for seed in list(config.VAL_SEEDS) + list(config.TEST_SEEDS):
         assert tracks.get_track(seed, 4).expert_lap_time > 0
+
+
+def test_each_map_has_its_own_width_in_the_range():
+    widths = [make_track(seed, level).width for level in (1, 4) for seed in range(8)]
+    low, high = config.WIDTH_RANGE
+    assert all(low <= w <= high for w in widths) and len(set(widths)) == len(widths)
+
+
+def test_a_maps_width_is_fixed_by_seed_and_level_for_every_attempt():
+    assert map_width(5, 3) == map_width(5, 3) != map_width(6, 3)
+    widths = {t.width for t in (candidate_track(5, 3, a) for a in range(30)) if t is not None}
+    assert widths == {map_width(5, 3)}
+
+
+def test_features_are_sized_by_the_given_width():
+    spec = config.LEVELS[4]
+    narrow = circuit_points(np.random.default_rng([3, 4, 0]), spec, 10.0)
+    wide = circuit_points(np.random.default_rng([3, 4, 0]), spec, 16.0)
+    assert not np.array_equal(narrow, wide)

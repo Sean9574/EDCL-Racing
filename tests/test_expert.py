@@ -116,6 +116,13 @@ def test_labels_are_the_expert_choice_during_kicks(monkeypatch, circle_track):
 
 
 @pytest.mark.slow
+def test_the_first_training_maps_of_every_level_build_at_their_widths():
+    for level in config.LEVELS:
+        for seed in range(config.TRAIN_SEED_START, config.TRAIN_SEED_START + 200):
+            tracks.get_track(seed, level)
+
+
+@pytest.mark.slow
 def test_expert_drives_every_dataset_and_held_out_map():
     for seed, level in expert.dataset_seeds():
         tracks.get_track(seed, level)

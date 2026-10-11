@@ -37,17 +37,19 @@ MAX_TRACK_ATTEMPTS = 200
 PROGRESS_BACK = 5.0          # m behind the last matched centerline point
 PROGRESS_AHEAD = 30.0        # m ahead of the last matched centerline point
 LEVELS = {                   # revision 3 Table 1: Easy loops, circuits with F1-style features above it
-    1: {"kind": "loop", "points": (4, 6), "radius": (60.0, 110.0), "min_corner": 45.0, "width": 16.0},
+    1: {"kind": "loop", "points": (4, 6), "radius": (60.0, 110.0), "min_corner": 45.0},
     2: {"kind": "circuit", "points": (6, 8), "radius": (60.0, 170.0), "slow": (25.0, 45.0), "fast": (50.0, 80.0),
-        "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 24.0, "width": 14.0},
+        "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 24.0},
     3: {"kind": "circuit", "points": (9, 12), "radius": (70.0, 220.0), "slow": (16.0, 35.0), "fast": (45.0, 90.0),
-        "main": 170.0, "hairpins": 1, "chicanes": (0, 1), "esses": (0, 1), "min_corner": 14.0, "width": 12.0},
+        "main": 170.0, "hairpins": 1, "chicanes": (0, 1), "esses": (0, 1), "min_corner": 14.0},
     4: {"kind": "circuit", "points": (13, 17), "radius": (80.0, 260.0), "slow": (10.0, 30.0), "fast": (45.0, 100.0),
-        "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0, "width": 10.0},
+        "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0},
 }
 MAX_LEVEL = 4
 CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (revision 3 §3.2)
 DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (revision 3 §3.3)
+WIDTH_RANGE = (10.0, 16.0)   # m: every map's road width is drawn from this range (revision 3.2 §2.1)
+WIDTH_SALT = 13              # a map's width: default_rng([seed, level, WIDTH_SALT]), the same for every attempt
 TRACK_CACHE_SIZE = 8         # built tracks kept per process (an Extra hard track holds 10-14 MB); training maps are
                              # fresh every generation, so a larger cache only costs memory in every worker
 

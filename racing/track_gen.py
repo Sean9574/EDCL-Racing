@@ -67,7 +67,7 @@ def insert_on_edge(poly, kinds, edge, along, side, kind):
             kinds[:edge + 1] + [kind] * len(new) + kinds[edge + 1:])
 
 
-def circuit_points(rng, spec, step=0.5):
+def circuit_points(rng, spec, width, step=0.5):
     """A circuit (revision 3 §3.2): a stretched star polygon with a main straight, hairpins, chicanes and esses, its
     corners rounded with slow, fast or tight arcs."""
     n = int(rng.integers(spec["points"][0], spec["points"][1] + 1))
@@ -86,7 +86,6 @@ def circuit_points(rng, spec, step=0.5):
     for j in pins[:spec["hairpins"]]:
         poly[j] *= rng.uniform(1.25, 1.5)                               # outwards: a sharper corner
         kinds[j] = "hairpin"
-    width = spec["width"]
     order = [int(e) for e in np.argsort(-edge_lengths(poly), kind="stable") if e != main]
     plan = (["chicane"] * int(rng.integers(spec["chicanes"][0], spec["chicanes"][1] + 1))
             + ["esses"] * int(rng.integers(spec["esses"][0], spec["esses"][1] + 1)))
@@ -133,18 +132,26 @@ def geometry_ok(track, min_corner):
     return not np.any(along > 3 * reach)
 
 
+def map_width(seed, level):
+    """Road width of map (seed, level) in m, drawn from WIDTH_RANGE by the seed and level alone, so a map keeps it on
+    every generation attempt (revision 3.2 §2.1)."""
+    low, high = config.WIDTH_RANGE
+    return float(np.random.default_rng([seed, level, config.WIDTH_SALT]).uniform(low, high))
+
+
 def candidate_track(seed, level, attempt=0):
     """One generation attempt for (seed, level). Returns None if the geometry is rejected."""
     spec = config.LEVELS[level]
+    width = map_width(seed, level)
     rng = np.random.default_rng([seed, level, attempt])
     if spec["kind"] == "loop":
         n_points = int(rng.integers(spec["points"][0], spec["points"][1] + 1))
         points = loop_points(rng, n_points, spec["radius"])
     else:
-        points = circuit_points(rng, spec)
+        points = circuit_points(rng, spec, width)
     if runs_clockwise(seed, level):
         points = points[::-1]
-    track = build_track(points, spec["width"], seed, level)
+    track = build_track(points, width, seed, level)
     if not geometry_ok(track, spec["min_corner"]):
         return None
     return track
