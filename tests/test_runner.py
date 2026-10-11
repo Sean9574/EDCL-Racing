@@ -12,6 +12,8 @@ from pathlib import Path
 import nbformat
 import pytest
 
+from racing import checkpoint, jobs
+
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run_notebooks.py"
 
 
@@ -501,40 +503,54 @@ def test_a_kernels_own_messages_stay_out_of_the_terminal(runner, tmp_path, capfd
     assert "native message from the kernel" in (tmp_path / "kernel_log.txt").read_text()
 
 
-# ----- runs trained side by side (--runs) -----
+# ----- jobs side by side (--runs, revision 3.2 §6.3) -----
 
-def fake_training(tmp_path, seconds=0.3, fail=()):
-    """A train_command stand-in: each 'run' writes its start and end times and a status, sleeps, and exits with code
-    3 (printing 'boom') if it is in `fail`, else 0."""
-    def command(approach, seed, status_file):
-        name = f"{approach}-{seed}"
-        code = 3 if (approach, seed) in fail else 0
-        script = (f"import json, sys, time\n"
+def fake_jobs(tmp_path, seconds=0.3, fail=()):
+    """A job_command stand-in: each job writes its start and end times and, for a run, a status; it makes the
+    records jobs.makes names under tmp_path/results unless it fails, and exits with 3 (printing 'boom') if its label
+    is in `fail`, else 0 (printing 'ok')."""
+    results = tmp_path / "results"
+
+    def command(job, status_file):
+        name = job.label.replace(":", "-")
+        made = [str(p) for p in jobs.makes(job, results)]
+        code = 3 if job.label in fail else 0
+        status = {"approach": job.approach, "seed": job.seed} if not job.is_notebook else {"stage": "search"}
+        script = (f"import json, pathlib, sys, time\n"
                   f"open({str(tmp_path / (name + '.start'))!r}, 'w').write(repr(time.time()))\n"
-                  f"json.dump({{'approach': {approach!r}, 'seed': {seed}}}, open({str(status_file)!r}, 'w'))\n"
+                  f"json.dump({status!r}, open({str(status_file)!r}, 'w'))\n"
                   f"time.sleep({seconds})\n"
-                  f"print({'boom' if code else 'ok'!r})\n"
+                  f"for p in ({made!r} if {code} == 0 else []):\n"
+                  f"    pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True)\n"
+                  f"    pathlib.Path(p).write_text('{{}}')\n"
                   f"open({str(tmp_path / (name + '.end'))!r}, 'w').write(repr(time.time()))\n"
-                  f"sys.exit({code})\n")
+                  f"print({'boom' if code else 'ok'!r})\nsys.exit({code})\n")
         return [sys.executable, "-c", script]
     return command
 
 
-def side_by_side(runner, tmp_path, runs, at_once, command, monitor=False, out=None):
-    return runner.run_side_by_side(runs, at_once, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
+def side_by_side(runner, tmp_path, job_list, at_once, command, monitor=False, out=None):
+    return runner.run_side_by_side(job_list, at_once, log_path=tmp_path / "log.txt", info_path=tmp_path / "info.json",
                                    status_dir=tmp_path / "status", logs_dir=tmp_path / "train_logs",
-                                   monitor=monitor, out=out, command=command)
+                                   monitor=monitor, out=out, command=command, results_dir=tmp_path / "results")
+
+
+def started(tmp_path, name):
+    return float((tmp_path / f"{name}.start").read_text())
+
+
+def ended(tmp_path, name):
+    return float((tmp_path / f"{name}.end").read_text())
 
 
 def most_at_once(tmp_path, names):
-    spans = [(float((tmp_path / f"{n}.start").read_text()), float((tmp_path / f"{n}.end").read_text())) for n in names]
+    spans = [(started(tmp_path, n), ended(tmp_path, n)) for n in names]
     return max(sum(start <= moment < end for start, end in spans) for moment, _ in spans)
 
 
-def test_runs_side_by_side_train_at_most_at_once_and_are_recorded(runner, tmp_path, monkeypatch):
+def test_jobs_side_by_side_train_at_most_at_once_and_are_recorded(runner, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
-    runs = [("ga", 0), ("ga", 1), ("es", 0)]
-    assert side_by_side(runner, tmp_path, runs, 2, fake_training(tmp_path)) == 0
+    assert side_by_side(runner, tmp_path, jobs.parse_jobs("ga:0,ga:1,es:0"), 2, fake_jobs(tmp_path)) == 0
     assert most_at_once(tmp_path, ["ga-0", "ga-1", "es-0"]) == 2
     log = (tmp_path / "log.txt").read_text()
     for name in ("ga:0", "ga:1", "es:0"):
@@ -544,26 +560,36 @@ def test_runs_side_by_side_train_at_most_at_once_and_are_recorded(runner, tmp_pa
     assert [e["run"] for e in info["trained"]] == ["ga:0", "ga:1", "es:0"]
     assert all("finished" in e for e in info["trained"])
     assert info["runs"][-1]["side_by_side"] == ["ga:0", "ga:1", "es:0"] and info["runs"][-1]["at_once"] == 2
-    assert list((tmp_path / "status").iterdir()) == []                  # each run's status goes when it ends
+    assert list((tmp_path / "status").iterdir()) == []                  # each job's status goes when it ends
     assert (tmp_path / "train_logs" / "ga-seed1.log").read_text().strip() == "ok"
 
 
-def test_a_failing_run_is_reported_and_the_others_go_on(runner, tmp_path, monkeypatch):
+def test_a_job_starts_only_when_its_input_exists_and_holds_no_slot_while_waiting(runner, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
-    runs = [("ga", 0), ("neat", 1), ("es", 2)]
-    assert side_by_side(runner, tmp_path, runs, 1, fake_training(tmp_path, 0.05, fail={("neat", 1)})) == 1
+    listed = jobs.parse_jobs("nb:01,nb:02,ga:0")
+    assert side_by_side(runner, tmp_path, listed, 2, fake_jobs(tmp_path)) == 0
+    assert started(tmp_path, "nb-02") >= ended(tmp_path, "nb-01")         # notebook 02 waited for the dataset
+    assert started(tmp_path, "ga-0") < ended(tmp_path, "nb-01")           # and ga:0 used the slot meanwhile
+    assert (tmp_path / "train_logs" / "nb-02.log").exists()
+
+
+def test_dependants_of_a_failed_job_are_reported_and_the_rest_go_on(runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
+    listed = jobs.parse_jobs("nb:01,nb:02,baseline:0,ga:0")
+    assert side_by_side(runner, tmp_path, listed, 3, fake_jobs(tmp_path, fail={"nb:01"})) == 1
     log = (tmp_path / "log.txt").read_text()
-    assert "FAILED neat:1: boom" in log and "done ga:0" in log and "done es:2" in log
-    assert "failed: neat:1" in log
+    assert "FAILED nb:01: boom" in log and "done ga:0" in log
+    assert "SKIPPED nb:02: waits for dataset_info.json, which nb:01 did not make" in log
+    assert "SKIPPED baseline:0" in log and not (tmp_path / "nb-02.start").exists()
     info = json.loads((tmp_path / "info.json").read_text())
-    assert {e["run"]: ("failed" in e) for e in info["trained"]} == {"ga:0": False, "neat:1": True, "es:2": False}
+    assert {e["run"] for e in info["trained"] if "skipped" in e} == {"nb:02", "baseline:0"}
 
 
 def test_the_monitor_shows_a_line_per_run_side_by_side(runner, tmp_path, monkeypatch, order):
     monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
     out = io.StringIO()
     monkeypatch.setattr(runner.progress.Monitor, "__init__", wrap_monitor(runner.progress.Monitor.__init__))
-    assert side_by_side(runner, tmp_path, [("ga", 0), ("es", 0)], 2, fake_training(tmp_path, 1.5),
+    assert side_by_side(runner, tmp_path, jobs.parse_jobs("ga:0,es:0"), 2, fake_jobs(tmp_path, 1.5),
                         monitor=True, out=out) == 0
     text = out.getvalue()
     assert "GA seed 0" in text and "ES seed 0" in text and "start ga:0" in text
@@ -594,35 +620,38 @@ def test_stop_processes_ends_a_training_and_its_workers(runner):
         os.killpg(process.pid, 0)                                         # nothing of the group is left
 
 
-@pytest.mark.parametrize("argv", [["--runs", "baseline:0"], ["--runs", "ga:3"], ["--runs", "ga:1,ga:1"],
+@pytest.mark.parametrize("argv", [["--runs", "nb:03"], ["--runs", "ga:3"], ["--runs", "ga:1,ga:1"],
                                   ["--runs", "ga:1", "--from", "01"], ["--runs", "ga:1", "--fresh"],
                                   ["--runs", "ga:1", "--at-once", "0"]])
-def test_invalid_runs_are_refused_before_anything_starts(runner, tmp_path, monkeypatch, capsys, argv):
+def test_invalid_jobs_are_refused_before_anything_starts(runner, tmp_path, monkeypatch, capsys, argv):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("runs were started"))
+    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("jobs were started"))
     assert run_main(runner, tmp_path, argv) == 2
     assert "error:" in capsys.readouterr().err
     assert not (tmp_path / "info.json").exists()
 
 
-def test_a_seeded_es_run_needs_its_refined_baseline(runner, tmp_path, monkeypatch, capsys):
+def test_a_job_whose_input_nobody_makes_is_refused_before_anything_starts(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("runs were started"))
+    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("jobs were started"))
     assert run_main(runner, tmp_path, ["--runs", "es_seeded:1,ga:0"]) == 2
     error = capsys.readouterr().err
-    assert "es_seeded:1" in error and "baseline/seed1/dagger.keras" in error and "ga:0" not in error
-    refined = tmp_path / "results" / "runs" / "baseline" / "seed1" / "dagger.keras"
+    assert "es_seeded:1" in error and "baseline/seed1/dagger.json" in error and "ga:0" not in error
+    refined = tmp_path / "results" / "runs" / "baseline" / "seed1" / "dagger.json"
     refined.parent.mkdir(parents=True)
-    refined.write_bytes(b"model")
-    started = []
-    monkeypatch.setattr(runner, "run_side_by_side", lambda runs, at_once, *a, **k: started.append((runs, at_once)) or 0)
+    checkpoint.write_json(refined, {"settings": checkpoint.settings_record()})     # a refinement of these settings
+    started_with = []
+    monkeypatch.setattr(runner, "run_side_by_side",
+                        lambda job_list, at_once, *a, **k: started_with.append(([j.label for j in job_list], at_once))
+                        or 0)
     assert run_main(runner, tmp_path, ["--runs", "es_seeded:1,ga:0", "--at-once", "2"]) == 0
-    assert started == [([("es_seeded", 1), ("ga", 0)], 2)]
+    assert started_with == [(["es_seeded:1", "ga:0"], 2)]
+    assert run_main(runner, tmp_path, ["--runs", "baseline:0,es_seeded:0,nb:01,nb:02"]) == 0   # made in the list
 
 
-def test_runs_side_by_side_take_the_results_lock(runner, tmp_path, monkeypatch, capsys):
+def test_jobs_side_by_side_take_the_results_lock(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
-    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("runs were started"))
+    monkeypatch.setattr(runner, "run_side_by_side", lambda *a, **k: pytest.fail("jobs were started"))
     with hold_lock(tmp_path / "results"):
         assert run_main(runner, tmp_path, ["--runs", "ga:0"]) == 4
 
@@ -631,22 +660,78 @@ def test_fresh_also_removes_the_side_by_side_files(runner):
     assert {"status", "train_logs", "machines"} <= set(runner.FRESH_REMOVE)
 
 
+def test_a_notebook_job_runs_this_script_and_writes_its_status_to_its_own_file(runner, tmp_path):
+    status = tmp_path / "status" / "nb-02.json"
+    command = runner.job_command(jobs.parse_job("nb:02"), status)
+    assert command[-2:] == ["--notebook-job", "02"] and command[1].endswith("run_notebooks.py")
+    env = runner.job_env(status)
+    assert env["EC_RACING_STATUS"] == str(status) and env["CUDA_VISIBLE_DEVICES"] == "-1"
+    seen = subprocess.run([sys.executable, "-c", "from racing import config; print(config.STATUS_PATH)"],
+                          env=env, capture_output=True, text=True, cwd=SCRIPT.parent.parent).stdout.strip()
+    assert seen == str(status)                                          # also inside the notebook's kernel
+    assert runner.job_command(jobs.parse_job("ga:1"), status)[1:4] == ["-m", "racing.train", "ga"]
+
+
+def test_a_notebook_job_executes_one_notebook_and_saves_it(runner, tmp_path, monkeypatch):
+    folder = three_notebooks(tmp_path)
+    ran = []
+    monkeypatch.setattr(runner, "execute", lambda path, kernel_dir, output=None: ran.append(path.name))
+    assert runner.main(["--notebook-job", "02"], notebook_dir=folder, log_path=tmp_path / "log.txt") == 0
+    assert ran == ["02_b.ipynb"]
+
+
+def test_archive_moves_what_fresh_would_delete(runner, tmp_path):
+    results = tmp_path / "results"
+    for name in ("runs/ga/seed0", "champions/ga", "pilots/x", "archive/older", "app_runs/ga"):
+        (results / name).mkdir(parents=True)
+    (results / "run_log.txt").write_text("old")
+    target = runner.archive_results(results, "revision3.1")
+    assert (target / "runs" / "ga" / "seed0").is_dir() and (target / "run_log.txt").read_text() == "old"
+    assert not (results / "runs").exists() and not (results / "run_log.txt").exists()
+    assert (results / "pilots" / "x").is_dir() and (results / "app_runs" / "ga").is_dir()
+    assert (results / "archive" / "older").is_dir()
+    with pytest.raises(FileExistsError):
+        runner.archive_results(results, "revision3.1")
+
+
+@pytest.mark.parametrize("extra", [["--fresh"], ["--from", "02"], ["--runs", "ga:0"]])
+def test_archive_runs_nothing_else(runner, tmp_path, capsys, extra):
+    three_notebooks(tmp_path)
+    assert run_main(runner, tmp_path, ["--archive", "x", *extra]) == 2
+
+
+def test_archive_alone_moves_the_results_and_exits(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    (tmp_path / "results" / "runs" / "ga").mkdir(parents=True)
+    monkeypatch.setattr(runner, "execute", lambda *a, **k: pytest.fail("a notebook was run"))
+    assert run_main(runner, tmp_path, ["--archive", "revision3.1"]) == 0
+    assert (tmp_path / "results" / "archive" / "revision3.1" / "runs" / "ga").is_dir()
+    assert not (tmp_path / "results" / "runs").exists()
+    assert "revision3.1" in capsys.readouterr().out
+    assert run_main(runner, tmp_path, ["--archive", "revision3.1"]) == 2   # never overwrites an archive
+
+
 def stopping_runner(tmp_path):
-    """The runner in its own process with two quiet runs side by side. Returns the process and the files the runs
-    write their process ids to."""
+    """The runner in its own process with two quiet runs side by side and a seeded ES run waiting for a baseline
+    that only the (never finishing) first run would make. Returns the process and the run processes' ids."""
     pids = [tmp_path / "a.pid", tmp_path / "b.pid"]
     script = (f"import importlib.util, signal, sys\n"
+              f"from racing import jobs\n"
               f"spec = importlib.util.spec_from_file_location('run_notebooks', {str(SCRIPT)!r})\n"
               f"runner = importlib.util.module_from_spec(spec)\n"
               f"spec.loader.exec_module(runner)\n"
               f"signal.signal(signal.SIGTERM, runner.stop_on_kill)\n"
               f"pids = {[str(p) for p in pids]!r}\n"
-              f"def command(approach, seed, status_file):\n"
-              f"    return [sys.executable, '-c', f'import os, time; open({{pids[seed]!r}}, \"w\").write(str(os.getpid())); "
+              f"def command(job, status_file):\n"
+              f"    return [sys.executable, '-c', f'import os, time; open({{pids[job.seed]!r}}, \"w\").write(str(os.getpid())); "
               f"time.sleep(600)']\n"
-              f"sys.exit(runner.run_side_by_side([('ga', 0), ('ga', 1)], 2, {str(tmp_path / 'log.txt')!r}, "
-              f"{str(tmp_path / 'info.json')!r}, {str(tmp_path / 'status')!r}, {str(tmp_path / 'logs')!r}, "
-              f"monitor=False, command=command))\n")
+              f"sys.exit(runner.run_side_by_side(jobs.parse_jobs('baseline:0,ga:1,es_seeded:0'), 2, "
+              f"{str(tmp_path / 'log.txt')!r}, {str(tmp_path / 'info.json')!r}, {str(tmp_path / 'status')!r}, "
+              f"{str(tmp_path / 'logs')!r}, monitor=False, command=command, results_dir={str(tmp_path / 'r')!r}))\n")
+    for name in ("runs/baseline/seed0/summary.json",):                  # baseline:0's own input exists
+        path = tmp_path / "r" / name
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
     process = subprocess.Popen([sys.executable, "-c", script], cwd=SCRIPT.parent.parent)
     deadline = time.time() + 60
     while not all(p.exists() and p.read_text() for p in pids):
@@ -657,7 +742,7 @@ def stopping_runner(tmp_path):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("stop", [signal.SIGINT, signal.SIGTERM])
-def test_ctrl_c_or_kill_stops_every_run_side_by_side(runner, tmp_path, stop):
+def test_ctrl_c_or_kill_stops_every_running_job_and_lists_the_waiting_ones(runner, tmp_path, stop):
     process, children = stopping_runner(tmp_path)
     try:
         process.send_signal(stop)
@@ -665,7 +750,7 @@ def test_ctrl_c_or_kill_stops_every_run_side_by_side(runner, tmp_path, stop):
         time.sleep(0.5)
         assert not any(Path(f"/proc/{pid}").exists() for pid in children)
         log = (tmp_path / "log.txt").read_text()
-        assert "STOPPED ga:0 ga:1" in log
+        assert "STOPPED baseline:0 ga:1" in log and "not started: es_seeded:0" in log
         info = json.loads((tmp_path / "info.json").read_text())
         assert all("stopped" in e for e in info["trained"])
     finally:

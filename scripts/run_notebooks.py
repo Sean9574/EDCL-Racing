@@ -3,9 +3,12 @@
 Run with:        python scripts/run_notebooks.py               (continues where an earlier run stopped)
 Start over:      python scripts/run_notebooks.py --fresh       (removes the earlier results first)
 From a notebook: python scripts/run_notebooks.py --from 04
-Side by side:    python scripts/run_notebooks.py --runs ga:1,neat:0,neat:1 --at-once 3
-                 (trains these evolutionary runs directly, three at a time, without their notebooks; the notebooks
-                 find them complete later. scripts/fleet.py starts this on several machines.)
+Side by side:    python scripts/run_notebooks.py --runs nb:01,nb:02,baseline:0,ga:1 --at-once 3
+                 (trains these jobs, three at a time: runs of any method without their notebooks, and notebooks 01
+                 and 02; each starts as soon as its inputs exist. The notebooks find the runs complete later.
+                 scripts/fleet.py starts this on several machines.)
+Archive:         python scripts/run_notebooks.py --archive revision3.1
+                 (moves the earlier results to results/archive/revision3.1/ and exits; the next start begins afresh)
 In background:   mkdir -p results
                  nohup python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
 Progress:        python -m racing.progress                     (from another terminal)
@@ -21,6 +24,7 @@ import argparse
 import fcntl
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -33,7 +37,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
-from racing import checkpoint, config, paths, progress, train  # noqa: E402
+from racing import checkpoint, config, jobs, paths, progress  # noqa: E402
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
@@ -316,13 +320,27 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
             watcher.stop()
 
 
-def run_label(approach, seed):
-    return f"{approach}:{seed}"
-
-
 def train_command(approach, seed, status_file):
     """The process that trains one run side by side: racing/train.py, with its own status file."""
     return [sys.executable, "-m", "racing.train", approach, str(seed), "--status", str(status_file)]
+
+
+def job_command(job, status_file):
+    """The process of one job: a notebook (this script with --notebook-job) or a training run (racing/train.py)."""
+    if job.is_notebook:
+        return [sys.executable, str(Path(__file__).resolve()), "--notebook-job", job.notebook[:2]]
+    return train_command(job.approach, job.seed, status_file)
+
+
+def job_env(status_file):
+    """A job's environment: the kernels' (CPU only, quiet TensorFlow) and its own status file, which a notebook's
+    kernel inherits (racing/config.py reads EC_RACING_STATUS)."""
+    return {**os.environ, **KERNEL_ENV, "PYTHONUNBUFFERED": "1", "EC_RACING_STATUS": str(status_file)}
+
+
+def job_stem(job):
+    """File name stem of a job's status file and output log: ga-seed1, nb-02."""
+    return f"nb-{job.notebook[:2]}" if job.is_notebook else f"{job.approach}-seed{job.seed}"
 
 
 def last_line(path):
@@ -336,7 +354,7 @@ def last_line(path):
 def stop_processes(processes, grace=STOP_GRACE):
     """End training processes and their worker processes: each runs in its own process group, which gets SIGTERM,
     then SIGKILL after `grace` seconds. A run saves its checkpoint after every generation, so it continues from the
-    last finished generation."""
+    last finished generation; a notebook job ends its kernel."""
     for process in processes:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -354,31 +372,60 @@ def stop_processes(processes, grace=STOP_GRACE):
             process.wait()
 
 
-def missing_inputs(runs, runs_dir):
-    """Messages for runs that cannot start here: a seeded ES starts from its seed's refined baseline (notebook 03)."""
-    missing = []
-    for approach, seed in runs:
-        path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"
-        if approach == "es_seeded" and not path.exists():
-            missing.append(f"{run_label(approach, seed)} starts from the refined baseline {path}, which is not here "
-                           f"(scripts/fleet.py setup copies it to a server)")
-    return missing
+def archive_results(results_dir, name):
+    """--archive NAME: move what --fresh would delete to results/archive/NAME/, so the next start begins afresh
+    (revision 3.2 §6.1). Pilots, viewer runs and earlier archives stay. Refuses an existing archive."""
+    target = Path(results_dir) / "archive" / name
+    if target.exists():
+        raise FileExistsError(f"{target} already exists; choose another archive name")
+    target.mkdir(parents=True)
+    for item in FRESH_REMOVE:
+        source = Path(results_dir) / item
+        if source.exists():
+            shutil.move(str(source), str(target / item))
+    return target
 
 
-def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
+def notebook_job(number, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH):
+    """--notebook-job NN: execute one notebook and save its outputs, for the side-by-side runner, which holds the
+    results lock and logs the job. kill ends the kernel too. Returns 0, 1 if a cell failed, or STOPPED."""
+    names = [name for name in notebook_names(notebook_dir) if name[:2] == number]
+    if not names:
+        print(f"error: no notebook {number} in {notebook_dir}", file=sys.stderr)
+        return 2
+    previous = signal.signal(signal.SIGTERM, stop_on_kill)
+    try:
+        with tempfile.TemporaryDirectory() as kernels, open(Path(log_path).with_name(KERNEL_LOG), "a") as output:
+            write_kernel(kernels)
+            execute(Path(notebook_dir) / names[0], kernels, output)
+    except KeyboardInterrupt:
+        return STOPPED
+    except Exception as error:                         # a failing cell; its output is saved in the notebook
+        text = str(error).strip()
+        print(text.splitlines()[-1] if text else type(error).__name__, file=sys.stderr)
+        return 1
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    return 0
+
+
+def run_side_by_side(job_list, at_once, log_path=config.RUN_LOG_PATH, info_path=config.RUN_INFO_PATH,
                      status_dir=config.STATUS_DIR, logs_dir=config.TRAIN_LOGS_DIR, monitor=True, out=None,
-                     command=train_command):
-    """Train the evolutionary runs `runs` [(approach, seed)] directly, `at_once` at a time, each in its own process
-    (racing/train.py) with its own status file and output log, while the monitor shows one line per run. A finished
-    run is never trained again; an interrupted one continues from its checkpoint. A run that fails is reported and
-    the others go on. Returns 0, 1 if a run failed, or STOPPED after Ctrl+C or kill, which stops every run."""
+                     command=job_command, results_dir=None):
+    """Run the jobs `job_list` (racing/jobs.py) side by side, at most `at_once` at a time, each in its own process
+    with its own status file and output log, while the monitor shows one line per job (revision 3.2 §6.3). A job
+    starts, in the order of the list, as soon as a slot is free and its inputs exist; a waiting job holds no slot. A
+    job that fails is reported, and so are the jobs left waiting for what it would have made; the others go on. A
+    finished run is never trained again; an interrupted one continues from its checkpoint. Returns 0, 1 if a job
+    failed or was skipped, or STOPPED after Ctrl+C or kill, which stops every running job."""
+    results_dir = Path(log_path).parent if results_dir is None else Path(results_dir)
     info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
     version = code_version()
     warning = code_change(info, version)
     info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
                  "power_profile": power_profile(), "versions": versions(),
                  "settings": checkpoint.settings_record(), **version})
-    names = [run_label(approach, seed) for approach, seed in runs]
+    names = [job.label for job in job_list]
     info.setdefault("runs", []).append({"started": now(), "side_by_side": names, "at_once": at_once,
                                         "host": platform.node(), **version})
     info.setdefault("trained", [])
@@ -386,11 +433,25 @@ def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=conf
         print(warning, file=sys.stderr)
         log(warning, log_path)
     status_dir, logs_dir = Path(status_dir), Path(logs_dir)
-    paths.remove(status_dir)                           # the monitor shows only this start's runs
+    paths.remove(status_dir)                           # the monitor shows only this start's jobs
     status_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, **KERNEL_ENV, "PYTHONUNBUFFERED": "1"}
-    pending, active, failed = list(runs), {}, []
+    pending, active, failed, ended = list(job_list), {}, [], set()
+
+    def record(entry):
+        info["trained"] = [e for e in info["trained"] if e["run"] != entry["run"]] + [entry]
+        write_info(info, info_path)
+
+    def blocked(job):
+        """Why `job` can never start (an input is missing and every listed job that makes it has ended), or None."""
+        for path in jobs.needs(job, results_dir):
+            if path.exists():
+                continue
+            makers = [other.label for other in job_list if path in jobs.makes(other, results_dir)]
+            if all(label in ended for label in makers):
+                return f"waits for {path.name}, which {' '.join(makers) or 'no listed job'} did not make"
+        return None
+
     watcher = progress.Monitor(None, log_path, out=out, status_dir=status_dir) if monitor else None
     if watcher is not None:
         watcher.start()
@@ -398,19 +459,30 @@ def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=conf
         log(f"run started: {' '.join(names)}, {at_once} at a time ({config.N_JOBS} workers each, "
             f"{platform.node()})", log_path)
         while pending or active:
-            while pending and len(active) < at_once:
-                approach, seed = pending.pop(0)
-                name = run_label(approach, seed)
-                status_file = status_dir / f"{approach}-seed{seed}.json"
-                output = open(logs_dir / f"{approach}-seed{seed}.log", "a")
-                process = subprocess.Popen(command(approach, seed, status_file), cwd=PROJECT, env=env, stdout=output,
-                                           stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            for job in list(pending):
+                reason = blocked(job)
+                if reason is not None:
+                    pending.remove(job)
+                    ended.add(job.label)
+                    failed.append(job.label)
+                    record({"run": job.label, "skipped": reason})
+                    log(f"SKIPPED {job.label}: {reason}", log_path)
+            for job in list(pending):
+                if len(active) >= at_once:
+                    break
+                if not jobs.ready(job, results_dir):
+                    continue
+                pending.remove(job)
+                stem = job_stem(job)
+                status_file = status_dir / f"{stem}.json"
+                output = open(logs_dir / f"{stem}.log", "a")
+                process = subprocess.Popen(command(job, status_file), cwd=PROJECT, env=job_env(status_file),
+                                           stdout=output, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                            start_new_session=True)   # Ctrl+C reaches the runner, which stops it
-                entry = {"run": name, "started": now()}
-                info["trained"] = [e for e in info["trained"] if e["run"] != name] + [entry]
-                write_info(info, info_path)
-                active[process] = (name, status_file, output, entry, time.time())
-                log(f"start {name}", log_path)
+                entry = {"run": job.label, "started": now()}
+                record(entry)
+                active[process] = (job.label, status_file, output, entry, time.time())
+                log(f"start {job.label}", log_path)
             for process in list(active):
                 code = process.poll()
                 if code is None:
@@ -418,6 +490,7 @@ def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=conf
                 name, status_file, output, entry, began = active.pop(process)
                 output.close()
                 paths.remove(status_file)
+                ended.add(name)
                 entry["seconds"] = round(time.time() - began, 1)
                 if code == 0:
                     entry["finished"] = now()
@@ -429,9 +502,9 @@ def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=conf
                 write_info(info, info_path)
             if pending or active:
                 time.sleep(POLL_SECONDS)
-        log("runs finished" if not failed else f"runs finished; failed: {' '.join(failed)}", log_path)
+        log("runs finished" if not failed else f"runs finished; failed or skipped: {' '.join(failed)}", log_path)
         return 1 if failed else 0
-    except KeyboardInterrupt:                          # Ctrl+C or kill: every run stops at its last checkpoint
+    except KeyboardInterrupt:                          # Ctrl+C or kill: every running job stops at its checkpoint
         stop_processes(list(active))
         for name, status_file, output, entry, began in active.values():
             output.close()
@@ -440,7 +513,8 @@ def run_side_by_side(runs, at_once, log_path=config.RUN_LOG_PATH, info_path=conf
             entry["seconds"] = round(time.time() - began, 1)
         write_info(info, info_path)
         stopped = [name for name, *_ in active.values()]
-        log(f"STOPPED {' '.join(stopped) or 'the runs'}: run again to continue where they stopped", log_path)
+        waiting = f"; not started: {' '.join(job.label for job in pending)}" if pending else ""
+        log(f"STOPPED {' '.join(stopped) or 'the jobs'}: run again to continue where they stopped{waiting}", log_path)
         return STOPPED
     finally:
         if watcher is not None:
@@ -459,13 +533,20 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
                                                  "run continues where it stopped.")
     parser.add_argument("--from", dest="start", help="number of the first notebook to run, for example 04")
     parser.add_argument("--fresh", action="store_true", help="remove the earlier results and start over")
-    parser.add_argument("--runs", help="train these evolutionary runs side by side instead of running notebooks, "
-                                       "for example ga:1,neat:0")
-    parser.add_argument("--at-once", type=int, default=1, help="with --runs: how many train at the same time")
+    parser.add_argument("--runs", help="run these jobs side by side instead of the notebooks in order: runs of any "
+                                       "method and notebooks 01 and 02, for example nb:01,nb:02,baseline:0,ga:1")
+    parser.add_argument("--at-once", type=int, default=1, help="with --runs: how many run at the same time")
+    parser.add_argument("--archive", metavar="NAME", help="move the earlier results to results/archive/NAME/ and exit")
+    parser.add_argument("--notebook-job", help=argparse.SUPPRESS)        # one notebook, for --runs
     args = parser.parse_args(argv)
+    if args.notebook_job is not None:
+        return notebook_job(args.notebook_job, notebook_dir, log_path)
+    if args.archive is not None and (args.fresh or args.start is not None or args.runs is not None):
+        print("error: --archive moves the earlier results and runs nothing; use it on its own", file=sys.stderr)
+        return 2
     if args.runs is not None:
         try:
-            args.runs = train.parse_runs(args.runs)
+            args.runs = jobs.parse_jobs(args.runs)
         except ValueError as error:
             print(f"error: --runs {error}", file=sys.stderr)
             return 2
@@ -474,6 +555,12 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
             return 2
         if args.at_once < 1:
             print("error: --at-once must be at least 1", file=sys.stderr)
+            return 2
+        unmet = jobs.unmet(args.runs, results_dir)
+        for job, path in unmet:
+            print(f"error: {job.label} needs {path}, which neither exists nor is made by a listed job",
+                  file=sys.stderr)
+        if unmet:
             return 2
     if args.start is not None:
         prefixes = sorted({name[:2] for name in notebook_names(notebook_dir)})
@@ -506,6 +593,14 @@ def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_pat
               file=sys.stderr)
         return 4
     try:
+        if getattr(args, "archive", None) is not None:
+            try:
+                target = archive_results(results_dir, args.archive)
+            except FileExistsError as error:
+                print(f"error: {error}", file=sys.stderr)
+                return 2
+            print(f"The earlier results are in {target}; the next start begins afresh.")
+            return 0
         if args.fresh:
             fresh_start(results_dir)
         problems, unreadable = check_results(Path(results_dir) / "runs")
@@ -523,14 +618,10 @@ def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_pat
             print("Run again with --fresh to remove them and start over.", file=sys.stderr)
         if problems or unreadable:
             return 3
-        runs = getattr(args, "runs", None)
-        if runs is not None:
-            missing = missing_inputs(runs, Path(results_dir) / "runs")
-            for message in missing:
-                print(f"error: {message}", file=sys.stderr)
-            if missing:
-                return 2
-            return run_side_by_side(runs, args.at_once, log_path, info_path, status_dir, logs_dir, monitor, out)
+        job_list = getattr(args, "runs", None)
+        if job_list is not None:
+            return run_side_by_side(job_list, args.at_once, log_path, info_path, status_dir, logs_dir, monitor, out,
+                                    results_dir=results_dir)
         return run(notebook_dir, args.start, log_path, info_path, status_path, monitor, out)
     finally:
         lock.close()                                   # releases the lock
