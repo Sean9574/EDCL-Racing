@@ -18,7 +18,7 @@ def loop_cell(name):
 @pytest.fixture
 def calls(monkeypatch):
     """Every training call, with its arguments, instead of the training."""
-    from racing import es, ga, neat
+    from racing import dagger, es, ga, imitation, neat
     made = []
 
     def record(name):
@@ -31,21 +31,28 @@ def calls(monkeypatch):
     monkeypatch.setattr(es, "run_es", record("run_es"))
     monkeypatch.setattr(neat, "run_neat", record("run_neat"))
     monkeypatch.setattr(es, "dagger_baseline", lambda seed: f"refined baseline {seed}")
+
+    def dagger_run(approach, seed, data, **kwargs):
+        made.append(("dagger.run", {"approach": approach, "seed": seed, "data": data, **kwargs}))
+        return {"approach": approach, "seed": seed}
+
+    monkeypatch.setattr(dagger, "run", dagger_run)
+    monkeypatch.setattr(imitation, "load_dataset", lambda: "the expert dataset")
     return made
 
 
 @pytest.mark.parametrize("approach", list(train.NOTEBOOKS))
 def test_a_run_trained_outside_its_notebook_makes_the_notebooks_call(approach, calls, capsys):
     exec(compile(loop_cell(train.NOTEBOOKS[approach]), train.NOTEBOOKS[approach], "exec"), {})
-    from_notebook = list(calls)
+    from_notebook = [call for call in calls if call[1].get("approach", approach) == approach]   # 03 trains four
     calls.clear()
     for seed in config.RUN_SEEDS:
         train.train(approach, seed)
     assert calls == from_notebook and len(calls) == len(config.RUN_SEEDS)
 
 
-def test_every_evolutionary_approach_has_its_notebook():
-    assert set(train.NOTEBOOKS) == set(config.EVOLUTION_APPROACHES)
+def test_every_approach_has_its_notebook():
+    assert set(train.NOTEBOOKS) == set(config.APPROACHES)
     assert all((NOTEBOOK_DIR / name).exists() for name in train.NOTEBOOKS.values())
 
 
@@ -54,7 +61,11 @@ def test_runs_are_read_as_approach_and_seed():
     assert train.parse_runs(" es_seeded:2 , es:0 ,") == [("es_seeded", 2), ("es", 0)]
 
 
-@pytest.mark.parametrize("text", ["baseline:0", "ga:3", "ga", "ga:x", "ga:1,ga:1", "", " , "])
+def test_imitation_runs_are_accepted():
+    assert train.parse_runs("baseline:0,kt_bayesian:2") == [("baseline", 0), ("kt_bayesian", 2)]
+
+
+@pytest.mark.parametrize("text", ["nb:01", "ga:3", "ga", "ga:x", "ga:1,ga:1", "", " , "])
 def test_runs_outside_the_experiment_are_refused(text):
     with pytest.raises(ValueError):
         train.parse_runs(text)

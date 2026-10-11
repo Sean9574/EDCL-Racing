@@ -30,6 +30,14 @@ def speed_dir(approach, seed, runs_dir=None):
     return run_dir(approach, seed, runs_dir) / "speed"
 
 
+def final_record(approach, seed, runs_dir=None):
+    """The record a run writes when it is complete: an evolutionary run's summary, an imitation method's speed-push
+    summary (revision 3.2 §6)."""
+    if approach in config.EVOLUTION_APPROACHES:
+        return run_dir(approach, seed, runs_dir) / "summary.json"
+    return speed_dir(approach, seed, runs_dir) / "summary.json"
+
+
 REPLAY_NAME = "replay.pkl"
 
 

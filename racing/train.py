@@ -1,8 +1,9 @@
-"""One evolutionary run of the experiment, trained outside its notebook: python -m racing.train ga 1
+"""One run of the experiment, trained outside its notebook: python -m racing.train ga 1
 
 scripts/run_notebooks.py --runs starts several of these at once, on one or more machines (scripts/fleet.py). Each
 makes exactly the call of its notebook's loop (tests/test_train.py checks this), so a run trained here is the run the
-notebook would train; the notebook then finds it complete and only reports it.
+notebook would train; the notebook then finds it complete and only reports it. An imitation method's run is notebook
+03's DAgger refinement and speed push (revision 3.2 §6.2), an evolutionary method's the run of notebooks 04 to 07.
 """
 import argparse
 import sys
@@ -10,11 +11,16 @@ from pathlib import Path
 
 from racing import config
 
-NOTEBOOKS = {"ga": "04_ga.ipynb", "es": "05_es.ipynb", "es_seeded": "06_es_seeded.ipynb", "neat": "07_neat.ipynb"}
+NOTEBOOKS = {**{approach: "03_dagger.ipynb" for approach in config.IMITATION_APPROACHES},
+             "ga": "04_ga.ipynb", "es": "05_es.ipynb", "es_seeded": "06_es_seeded.ipynb", "neat": "07_neat.ipynb"}
 
 
 def train(approach, seed):
     """Train run `seed` of `approach` as its notebook does; returns the run's summary."""
+    if approach in config.IMITATION_APPROACHES:
+        from racing import dagger, imitation
+        data = imitation.load_dataset()
+        return dagger.run(approach, seed, data, n_jobs=config.N_JOBS)
     if approach == "ga":
         from racing import ga
         return ga.run_ga(seed=seed, n_jobs=config.N_JOBS)
@@ -53,7 +59,7 @@ def parse_runs(text):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Train one evolutionary run of the experiment.")
+    parser = argparse.ArgumentParser(description="Train one run of the experiment.")
     parser.add_argument("approach", choices=list(NOTEBOOKS))
     parser.add_argument("seed", type=int, choices=list(config.RUN_SEEDS))
     parser.add_argument("--status", default=None, help="this run's status file (default: results/status.json)")

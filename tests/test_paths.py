@@ -62,3 +62,10 @@ def test_stage_paths_follow_config(monkeypatch, tmp_path):
 def test_unknown_stage_is_refused(tmp_path):
     with pytest.raises(ValueError, match="stage"):
         paths.stage_path("baseline", 0, "final", tmp_path)
+
+
+def test_the_final_record_of_a_run():
+    assert paths.final_record("ga", 1, "/r").as_posix() == "/r/ga/seed1/summary.json"
+    assert paths.final_record("neat", 0, "/r").as_posix() == "/r/neat/seed0/summary.json"
+    assert paths.final_record("baseline", 2, "/r").as_posix() == "/r/baseline/seed2/speed/summary.json"
+    assert paths.final_record("kt_hyperband", 0, "/r").as_posix() == "/r/kt_hyperband/seed0/speed/summary.json"
