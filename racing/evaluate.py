@@ -8,7 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from racing import config, netfig, nets, paths, sim
+from racing import config, expert, netfig, nets, paths, sim
+from racing.track import build_track
+from racing.track_gen import geometry_ok
 from racing.tracks import get_track
 
 DRIVE_COLUMNS = ["approach", "run_seed", "track", "finished", "success", "crashed", "race_time", "lap_time",
@@ -26,7 +28,11 @@ def _drive_track(drivers, track_seed, level, factor):
     """All config.LAPS laps for every controller on one track, simulated together (cars never interact). A car
     finishes within the simulator's limit of twice the reference lap time per lap, and succeeds if it finishes
     within the target time (revision 3 §7.1)."""
-    track = get_track(track_seed, level)
+    return _drive_on(drivers, get_track(track_seed, level), track_seed, factor)
+
+
+def _drive_on(drivers, track, track_seed, factor):
+    """_drive_track on a given track (revision 3.2 §5.2 drives rebuilt maps)."""
     keys = list(drivers)
     chosen = [drivers[k] for k in keys]
     result = sim.simulate(track, nets.mixed_policy(chosen), len(keys), laps=config.LAPS,
@@ -58,6 +64,58 @@ def driving_results(drivers, track_seeds, level=config.MAX_LEVEL, factor=config.
         parts = Parallel(n_jobs=n_jobs, backend=backend)(
             delayed(_drive_track)(drivers, seed, level, factor) for seed in track_seeds)
     return pd.DataFrame([row for part in parts for row in part], columns=DRIVE_COLUMNS)
+
+
+def widened_track(seed, width, level=config.MAX_LEVEL):
+    """Map `seed` rebuilt with the same centerline and a `width` m road, timed by the expert; None if the road would
+    reach another part of the map or the expert cannot drive it (revision 3.2 §5.2)."""
+    track = build_track(get_track(seed, level).centerline, width, seed, level)
+    if not geometry_ok(track, config.LEVELS[level]["min_corner"]):
+        return None
+    lap_time = expert.expert_lap_time(track)
+    if lap_time is None:
+        return None
+    track.expert_lap_time = lap_time
+    return track
+
+
+def _drive_widened(drivers, seed, width, level, factor):
+    track = widened_track(seed, width, level)
+    return [] if track is None else [{**row, "width": width} for row in _drive_on(drivers, track, seed, factor)]
+
+
+def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, level=config.MAX_LEVEL,
+                       factor=config.TARGET_FACTOR, n_jobs=1, backend="loky"):
+    """Every controller on every map rebuilt at every width (revision 3.2 §5.2), driven as a test map; maps left out
+    at a width have no rows there. The maps are distributed across worker processes."""
+    tasks = [(seed, width) for width in widths for seed in track_seeds]
+    if n_jobs == 1:
+        parts = [_drive_widened(drivers, seed, width, level, factor) for seed, width in tasks]
+    else:
+        from joblib import Parallel, delayed
+        parts = Parallel(n_jobs=n_jobs, backend=backend)(
+            delayed(_drive_widened)(drivers, seed, width, level, factor) for seed, width in tasks)
+    return pd.DataFrame([row for part in parts for row in part], columns=[*DRIVE_COLUMNS, "width"])
+
+
+def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
+    """Revision 3.2 §5.2: per method and width, the maps finished and succeeded (all seeds) and the mean lap time on
+    finished maps; each width's first column names how many maps it covers."""
+    rows = []
+    for approach in config.APPROACHES:
+        sub = frame[frame["approach"] == approach]
+        if sub.empty:
+            continue
+        row = {"Method": config.LABELS[approach]}
+        for width in widths:
+            cell = sub[sub["width"] == width]
+            maps = frame.loc[frame["width"] == width, "track"].nunique()
+            lap = cell.loc[cell["finished"].astype(bool), "lap_time"]
+            row[f"{width:g} m finished ({maps} maps)"] = f"{int(cell['finished'].sum())} / {len(cell)}"
+            row[f"{width:g} m succeeded"] = f"{int(cell['success'].sum())} / {len(cell)}"
+            row[f"{width:g} m mean lap (s)"] = "–" if lap.empty else f"{lap.mean():.2f}"
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def best_seeds(validation):
@@ -689,6 +747,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
             models[(approach, seed)], drivers[(approach, seed)] = nets.load_champion(approach, seed, champions_dir)
     per_track = driving_results(drivers, test_seeds, n_jobs=n_jobs)
     validation = driving_results(drivers, val_seeds, n_jobs=n_jobs)
+    robust = robustness_results(drivers, test_seeds, n_jobs=n_jobs)
     best = best_seeds(validation)
     paths.best_seeds_path(champions_dir).write_text(json.dumps(best, indent=2))
     stages = stage_results(runs_dir, per_track, test_seeds, n_jobs)
@@ -699,12 +758,14 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
     tables = {"results": results_table(per_track, runs_dir, drivers), "head_to_head": head_to_head_table(per_track),
               "training_cost": training_cost_table(runs_dir), "stages": stages_table(stages),
               "comparison": comparison_table(metrics), "search_cost": search_cost_table(runs_dir),
-              "driving_selected": selected, "dataset": dataset_table(data_path)}
+              "driving_selected": selected, "dataset": dataset_table(data_path),
+              "robustness": robustness_table(robust)}
     folder = out_dir / "tables"
     folder.mkdir(parents=True, exist_ok=True)
     per_track.to_csv(folder / "driving_per_track.csv", index=False)
     validation.to_csv(folder / "validation_per_track.csv", index=False)
     stages.to_csv(folder / "stages_per_track.csv", index=False)
+    robust.to_csv(folder / "robustness_per_track.csv", index=False)
     metrics.to_csv(folder / "metrics_per_seed.csv", index=False)
     for name, frame in tables.items():
         frame.to_csv(folder / f"{name}.csv", index=False)
@@ -714,4 +775,5 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
         drawn.append(netfig.draw_networks({approach: drivers[(approach, seed)] for approach, seed in best.items()},
                                           out_dir / "figures" / "networks.png"))
     return {**tables, "per_track": per_track, "validation": validation, "metrics": metrics, "best_seeds": best,
+            "robustness_per_track": robust,
             "figures": drawn}

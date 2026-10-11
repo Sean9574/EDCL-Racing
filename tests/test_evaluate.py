@@ -412,13 +412,56 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
                             out_dir=tmp_path / "out", test_seeds=[1000], val_seeds=[80], latency_calls=5)
     assert set(results) == {"results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
                             "driving_selected", "dataset", "per_track", "validation", "metrics", "best_seeds",
-                            "figures"}
+                            "figures", "robustness", "robustness_per_track"}
+    assert set(results["robustness_per_track"]["width"]) <= set(config.ROBUSTNESS_WIDTHS)
+    assert list(results["robustness"]["Method"]) == ["ES", "GA"]
     assert list(results["results"]["Method"]) == ["ES", "GA"] and list(results["comparison"]["Method"]) == ["ES", "GA"]
     cost = results["training_cost"].set_index("Seed")
     assert cost.loc[0, "Mastery goal"] == "not reached" and cost.loc[0, "Run end"] == "stalled on level 2 · gen 10"
     assert json.loads((champions / "best_seeds.json").read_text()).keys() == {"ga", "es"}
     for name in ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
-                 "driving_selected", "dataset"):
+                 "driving_selected", "dataset", "robustness"):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
+    assert (tmp_path / "out" / "tables" / "robustness_per_track.csv").exists()
     assert results["figures"][-1] == tmp_path / "out" / "figures" / "networks.png" and results["figures"][-1].exists()
     assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "50"
+
+
+# ----- revision 3.2 §5.2: robustness table -----
+
+def test_a_widened_map_keeps_the_centerline_and_is_timed_by_the_expert(monkeypatch, fake_tracks):
+    monkeypatch.setattr(evaluate.expert, "expert_lap_time", lambda track: 21.5)
+    wide = evaluate.widened_track(80, 18.0, level=1)
+    assert wide.width == 18.0 and wide.expert_lap_time == 21.5
+    assert np.allclose(wide.centerline, fake_tracks.centerline, atol=1e-6)
+
+
+def test_a_width_the_map_cannot_take_or_the_expert_cannot_drive_is_left_out(monkeypatch, fake_tracks):
+    monkeypatch.setattr(evaluate, "geometry_ok", lambda track, min_corner: False)
+    assert evaluate.widened_track(80, 18.0, level=1) is None
+    monkeypatch.setattr(evaluate, "geometry_ok", lambda track, min_corner: True)
+    monkeypatch.setattr(evaluate.expert, "expert_lap_time", lambda track: None)
+    assert evaluate.widened_track(80, 8.0, level=1) is None
+
+
+def test_robustness_results_drive_every_map_at_every_width_and_skip_left_out_maps(monkeypatch, fake_tracks):
+    monkeypatch.setattr(evaluate, "widened_track",
+                        lambda seed, width, level=config.MAX_LEVEL: None if (seed, width) == (1001, 18.0)
+                        else fake_tracks)
+    frame = evaluate.robustness_results(drivers(2), [1000, 1001], widths=(10.0, 18.0))
+    assert len(frame) == 2 * 3 and set(frame["width"]) == {10.0, 18.0}
+    assert frame[frame["width"] == 18.0]["track"].unique().tolist() == [1000]
+
+
+def test_the_robustness_table_counts_finishes_per_method_and_width():
+    narrow = drive_rows([("ga", 0, 1000, True, True, False, 20.0), ("ga", 0, 1001, False, False, True, np.nan),
+                         ("es", 0, 1000, True, False, False, 25.0)])
+    narrow["width"] = 10.0
+    wide = drive_rows([("ga", 0, 1000, True, True, False, 18.0), ("es", 0, 1000, False, False, True, np.nan)])
+    wide["width"] = 18.0
+    table = evaluate.robustness_table(pd.concat([narrow, wide]), (10.0, 18.0))
+    ga = table[table["Method"] == "GA"].iloc[0]
+    assert (ga["10 m finished (2 maps)"], ga["10 m succeeded"], ga["10 m mean lap (s)"]) == ("1 / 2", "1 / 2", "20.00")
+    assert ga["18 m finished (1 maps)"] == "1 / 1"
+    es = table[table["Method"] == "ES"].iloc[0]
+    assert es["18 m finished (1 maps)"] == "0 / 1" and es["18 m mean lap (s)"] == "–"
