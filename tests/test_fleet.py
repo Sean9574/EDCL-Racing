@@ -576,3 +576,59 @@ def test_a_dagger_run_from_a_server_joins_its_imitation_files_here(fake):
     (server / "runs" / "kt_random" / "seed1" / "imitation.keras").write_bytes(b"another network")
     shutil.rmtree(here / "speed")
     assert fake.fleet.collect(machines, out=io.StringIO()) == 1          # a differing file is never replaced
+
+
+# ----- the environment installs detached on the server -----
+
+def ga_server(fake):
+    return fake.fleet.Machine("server", jobs.parse_jobs("ga:2"), host="me@server", ssh="ssh")
+
+
+def git_repo(fake, monkeypatch):
+    git = ["git", "-C", str(fake.desktop), "-c", "user.name=test", "-c", "user.email=test@example.com"]
+    subprocess.run(git + ["init", "-q"], check=True)
+    (fake.desktop / "racing.py").write_text("print('code')\n")
+    subprocess.run(git + ["add", "racing.py"], check=True)
+    subprocess.run(git + ["commit", "-q", "-m", "code"], check=True)
+    monkeypatch.setattr(fake.fleet, "local_commit", lambda: fake.fleet.git("rev-parse", "HEAD").strip())
+    monkeypatch.setattr(fake.fleet, "SETUP_POLL", 0.2)
+
+
+def test_the_environment_installs_detached_and_setup_follows_its_log(fake, monkeypatch):
+    git_repo(fake, monkeypatch)
+    monkeypatch.setattr(fake.fleet, "environment_lines",
+                        lambda: "echo installing; sleep 1; echo environment ready: Python 3.13\n")
+    out = io.StringIO()
+    assert fake.fleet.setup([ga_server(fake)], out=out) == 0
+    text = out.getvalue()
+    assert "installing" in text and "environment ready" in text and "server is ready" in text
+    log = fake.server_project() / ".fleet" / "setup.log"
+    assert "environment ready" in log.read_text()
+    assert (fake.server_project() / ".fleet" / "setup.status").read_text().strip() == "0"
+
+
+def test_a_failed_install_is_reported_with_its_log(fake, monkeypatch):
+    git_repo(fake, monkeypatch)
+    monkeypatch.setattr(fake.fleet, "environment_lines", lambda: "echo 'ERROR: no matching distribution'; exit 1\n")
+    with pytest.raises(fake.fleet.FleetError, match="installing the environment failed"):
+        fake.fleet.setup([ga_server(fake)], out=io.StringIO())
+
+
+def test_an_install_still_running_is_followed_not_started_again(fake, monkeypatch):
+    git_repo(fake, monkeypatch)
+    monkeypatch.setattr(fake.fleet, "environment_lines", lambda: "sleep 2; echo done once\n")
+    server = ga_server(fake)
+    fake.fleet.send_setup(server, out=io.StringIO())
+    assert "started" in fake.fleet.shell(server, fake.fleet.start_environment_script(server))
+    assert "already running" in fake.fleet.shell(server, fake.fleet.start_environment_script(server))
+    fake.fleet.wait_for_environment(server, out=io.StringIO())
+    assert (fake.server_project() / ".fleet" / "setup.log").read_text().count("done once") == 1
+
+
+def test_ssh_detects_a_dead_connection():
+    from racing import config  # noqa: F401  (keeps the import pattern of this module)
+    spec = importlib.util.spec_from_file_location("fleet_options", SCRIPT)
+    fleet = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fleet)
+    options = " ".join(fleet.SSH_OPTIONS)
+    assert "ServerAliveInterval=" in options and "ServerAliveCountMax=" in options

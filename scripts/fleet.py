@@ -153,7 +153,8 @@ def train_label(run):
 # script or data ever passes ssh's standard input: a script travels in the command line, base64-encoded, and files go
 # with scp.
 
-SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]
+SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
+               "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]   # a dead connection fails in ~1 min
 MAX_COMMAND = 6000                      # characters of an encoded script; a line of a Windows batch file holds 8191
 WINDOWS_WORK = Path("/mnt/c/Users/Public/ec-racing-fleet")   # batch files and copies in transit; no spaces in it
 OUTGOING = ".fleet/outgoing.tar"        # under a server's project folder: the archive `download` copies here
@@ -468,8 +469,65 @@ CUDA_VISIBLE_DEVICES=-1 TF_CPP_MIN_LOG_LEVEL=3 {REMOTE_PYTHON} -c "import numpy,
 """
 
 
+SETUP_POLL = 20.0                       # s between looks at a server's environment install
+
+
 def setup_script(machine):
-    return f"set -e\ncd {machine.root}\n" + code_lines() + environment_lines()
+    """Check out the uploaded code (short; the environment installs on its own, start_environment_script)."""
+    return f"set -e\ncd {machine.root}\n" + code_lines()
+
+
+def start_environment_script(machine):
+    """Start the environment install detached on the server, in its own session with its log in .fleet/setup.log
+    and its exit code in .fleet/setup.status, so neither a dropped connection nor the end of the session that
+    started it can stop it; an install still running is left alone."""
+    return (f"cd {machine.root}\nmkdir -p .fleet\n"
+            "if [ -f .fleet/setup.pid ] && kill -0 \"$(cat .fleet/setup.pid)\" 2>/dev/null; then\n"
+            "  echo 'already running'; exit 0\nfi\n"
+            "cat > .fleet/setup-env.sh <<'EC_RACING_ENV'\n"
+            f"cd {machine.root}\n"
+            "trap 'echo $? > .fleet/setup.status.part; mv .fleet/setup.status.part .fleet/setup.status' EXIT\n"
+            "set -e\n"
+            f"{environment_lines()}EC_RACING_ENV\n"
+            "rm -f .fleet/setup.status\n"
+            "setsid nohup bash .fleet/setup-env.sh > .fleet/setup.log 2>&1 < /dev/null &\n"
+            "echo $! > .fleet/setup.pid\necho started\n")
+
+
+def environment_progress_script(machine, shown):
+    """Report the install's log lines after the first `shown`, its exit code once it ended, and whether it runs."""
+    return (f"cd {machine.root}\nn=$(wc -l < .fleet/setup.log 2>/dev/null || echo 0)\necho \"@@lines $n\"\n"
+            f"[ \"$n\" -gt {shown} ] && sed -n \"{shown + 1},${{n}}p\" .fleet/setup.log\n"
+            "[ -f .fleet/setup.status ] && echo \"@@status $(cat .fleet/setup.status)\"\n"
+            "[ -f .fleet/setup.pid ] && kill -0 \"$(cat .fleet/setup.pid)\" 2>/dev/null && echo '@@running'\ntrue\n")
+
+
+def wait_for_environment(machine, out=sys.stdout):
+    """Follow the install's log until it ends; raise FleetError if it failed or stopped without finishing."""
+    shown, tail = 0, []
+    while True:
+        answer = shell(machine, environment_progress_script(machine, shown))
+        status, running = None, False
+        for line in answer.splitlines():
+            if line.startswith("@@lines "):
+                total = int(line.split()[1])
+            elif line.startswith("@@status ") and len(line.split()) == 2:        # written whole (renamed)
+                status = line.split()[1]
+            elif line == "@@running":
+                running = True
+            else:
+                print(f"  {line}", file=out, flush=True)
+                tail = (tail + [line])[-5:]
+        shown = max(shown, total)
+        if status is not None:
+            if status == "0":
+                return
+            raise FleetError(f"{machine.where}: installing the environment failed (exit code {status}): "
+                             f"{' / '.join(tail) or 'see .fleet/setup.log there'}")
+        if not running:
+            raise FleetError(f"{machine.where}: the environment install stopped without finishing; "
+                             "run python scripts/fleet.py setup again")
+        time.sleep(SETUP_POLL)
 
 
 def external_inputs(machine):
@@ -508,22 +566,30 @@ def setup_archive(machine, folder):
     return archive
 
 
-def setup(machines, out=sys.stdout):
-    """Give every server this commit's code, its baselines and the environment: three connections each."""
-    require_committed_code()
+def send_setup(machine, out=sys.stdout):
+    """Send this commit and the inputs the machine's jobs need from here, and check the code out there."""
     commit = local_commit()
+    with tempfile.TemporaryDirectory() as folder:
+        archive = setup_archive(machine, folder)
+        print(f"sending the code (commit {commit[:7]}) and {len(external_inputs(machine))} input files, "
+              f"{archive.stat().st_size / 1e6:.1f} MB ...", file=out, flush=True)
+        upload(machine, archive.read_bytes(), SETUP_ARCHIVE)
+    if f"commit {commit}" not in shell(machine, setup_script(machine)):
+        raise FleetError(f"{machine.where}: the code was not checked out")
+
+
+def setup(machines, out=sys.stdout):
+    """Give every server this commit's code, the inputs its jobs need from here and the environment. The install runs
+    detached on the server; setup follows its log every SETUP_POLL seconds."""
+    require_committed_code()
     for machine in machines:
         if machine.local:
             continue
         print(f"== {machine.where}", file=out, flush=True)
-        with tempfile.TemporaryDirectory() as folder:
-            archive = setup_archive(machine, folder)
-            print(f"sending the code (commit {commit[:7]}) and {len(external_inputs(machine))} input files, "
-                  f"{archive.stat().st_size / 1e6:.1f} MB ...", file=out, flush=True)
-            upload(machine, archive.read_bytes(), SETUP_ARCHIVE)
-        answer = shell(machine, setup_script(machine), stream=True)
-        if f"commit {commit}" not in answer:
-            raise FleetError(f"{machine.where}: the code was not checked out")
+        send_setup(machine, out)
+        print(f"environment: {shell(machine, start_environment_script(machine)).strip()} "
+              "(the install runs on the server; its log is ~/ec-racing/.fleet/setup.log there)", file=out, flush=True)
+        wait_for_environment(machine, out)
         print(f"{machine.name} is ready.", file=out, flush=True)
     return 0
 
