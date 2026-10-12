@@ -192,6 +192,19 @@ def report_policy(report, indices):
     return nets.mixed_policy([report["nets"][i] for i in indices])
 
 
+def report_inputs(report):
+    """Inputs the networks of a training report take; None for NEAT genomes, whose inputs are implicit. A report of
+    an earlier revision may take fewer than config.N_INPUTS (revision 3.2 §7)."""
+    if "population" not in report:
+        return int(report["nets"][0].layers[0][0].shape[0])
+    population = report["population"]
+    if not isinstance(population, nets.DensePopulation):
+        return None
+    first = (population.hidden or (config.N_ACTIONS,))[0]              # units of the first layer
+    rest = nets.n_params(population.hidden) - (config.N_INPUTS + 1) * first
+    return (population.weights.shape[1] - rest) // first - 1
+
+
 def report_setup(report, indices):
     """Setups of the chosen members of a training report: the population's rows, or each imitation network's own
     (revision 3.1 §2)."""
@@ -642,12 +655,16 @@ class App:
         try:
             report = checkpoint.load(path)
             readable = isinstance(report, dict) and REPLAY_KEYS <= report.keys()
+            inputs = report_inputs(report) if readable else None
         except REPLAY_ERRORS:
             readable = False
         if not readable:
             self.status = "Replay file unreadable; retrying."
             return
         self.replay_mtime = stamp
+        if inputs is not None and inputs != config.N_INPUTS:            # read again only when the file changes
+            self.status = f"{name}: older revision, {inputs} inputs."
+            return
         self.receive(report)
         self.history = log_history(path.parent / "log.csv")
         self.status = f"Replaying the notebook run {name}."

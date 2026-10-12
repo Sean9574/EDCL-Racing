@@ -1961,6 +1961,20 @@ def test_the_notebook_view_names_what_it_cannot_replay(window, tmp_path):
     assert all(len(message) <= 56 for message in messages)
 
 
+def test_the_notebook_view_names_a_run_of_an_earlier_revision(window, tmp_path):
+    """A replay saved by revision 3.1 holds networks of 10 inputs: it is named, never driven (revision 3.2 §7)."""
+    notebook_view(window, tmp_path)
+    for approach, hidden in (("ga", config.BASELINE_HIDDEN), ("kt_random", (16, 8))):
+        window.select_approach(approach)
+        weights = np.zeros((30, nets.n_params(hidden) - 2 * hidden[0]))       # two inputs fewer
+        save_replay(window, ga_report(5, approach=approach, population_=nets.DensePopulation(weights, hidden)),
+                    approach=approach)
+        window.update(1 / 60)
+        window.draw()
+        assert "older revision, 10 inputs" in window.status and len(window.status) <= 56
+        assert window.latest is None and window.playback is None
+
+
 def test_notebook_play_and_pause_move_only_the_replay(window, tmp_path, monkeypatch):
     notebook_view(window, tmp_path)
     monkeypatch.setattr(window, "start_training", lambda: pytest.fail("the notebook view never trains"))
