@@ -110,7 +110,8 @@ def test_some_candidates_are_valid():
 def test_track_cache_is_bounded(monkeypatch):
     """Review focus 1: fresh maps every generation must not accumulate in the cache."""
     monkeypatch.setattr(track_gen, "candidate_track",
-                        lambda seed, level, attempt=0: types.SimpleNamespace(seed=seed, expert_lap_time=float("nan")))
+                        lambda seed, level, attempt=0, width=None: types.SimpleNamespace(seed=seed,
+                                                                                         expert_lap_time=float("nan")))
     from racing import expert
     monkeypatch.setattr(expert, "expert_lap_time", lambda track: 10.0)
     tracks.get_track.cache_clear()
@@ -161,3 +162,13 @@ def test_features_are_sized_by_the_given_width():
     narrow = circuit_points(np.random.default_rng([3, 4, 0]), spec, 10.0)
     wide = circuit_points(np.random.default_rng([3, 4, 0]), spec, 16.0)
     assert not np.array_equal(narrow, wide)
+
+
+def test_a_map_can_be_built_with_another_road_width():
+    """The viewer rebuilds an earlier revision's maps: the same generator with that revision's road width."""
+    seed, level = 3, 4
+    attempt = next(a for a in range(30) if candidate_track(seed, level, a) is not None)
+    same = candidate_track(seed, level, attempt, width=map_width(seed, level))
+    np.testing.assert_array_equal(same.centerline, candidate_track(seed, level, attempt).centerline)
+    other = next(t for t in (candidate_track(seed, level, a, width=10.0) for a in range(30)) if t is not None)
+    assert other.width == 10.0

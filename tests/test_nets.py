@@ -129,3 +129,27 @@ def test_dense_population_subset_policy_and_driver_agree():
 def test_dense_spec_reads_hidden_sizes_and_activation():
     model = nets.to_keras(nets.init_population(np.random.default_rng(9), 1, (8, 4))[0], (8, 4), "tanh")
     assert nets.dense_spec(model) == ((8, 4), "tanh")
+
+
+def test_a_network_of_an_earlier_revision_reads_only_its_inputs():
+    """Revision 3.1's networks took the first 10 inputs, the rays and the speed, which this revision computes the
+    same way: they drive on the first columns of this revision's observations (revision 3.2 §7)."""
+    rng = np.random.default_rng(0)
+    hidden = (16, 8)
+    old = nets.init_population(rng, 3, hidden, n_inputs=10)
+    assert old.shape[1] == nets.n_params(hidden, n_inputs=10)
+    assert nets.inputs_of(old.shape[1], hidden) == 10 and nets.inputs_of(nets.n_params(hidden), hidden) == 12
+    obs = rng.normal(size=(3, config.N_INPUTS))
+    changed = obs.copy()
+    changed[:, 10:] += 5.0                                       # the inputs revision 3.1 did not have
+    np.testing.assert_array_equal(nets.forward(old, obs, hidden), nets.forward(old, changed, hidden))
+    net = nets.from_flat(old[0], hidden)
+    assert net.n_inputs == 10 and nets.DensePopulation(old, hidden).n_inputs == 10
+    np.testing.assert_array_equal(net.act(obs), net.act(changed))
+    assert nets.to_keras(old[0], hidden).input_shape[-1] == 10
+
+
+def test_a_weight_count_that_fits_no_network_is_refused():
+    import pytest
+    with pytest.raises(ValueError):
+        nets.inputs_of(nets.n_params() + 1)

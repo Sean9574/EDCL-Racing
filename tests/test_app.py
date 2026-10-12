@@ -1126,7 +1126,7 @@ def test_settings_are_locked_while_training(window):
 
 
 def test_seeded_es_without_the_dagger_baseline_shows_a_message(window, tmp_path):
-    window.runs_dir = tmp_path
+    window.train_runs_dir = tmp_path
     window.champions_dir = tmp_path                      # the old check never finds a controller: no real process
     window.select_approach("es_seeded")
     window.start_training()
@@ -1160,7 +1160,7 @@ def test_seeded_es_starts_with_the_dagger_baseline(window, tmp_path, monkeypatch
     stage = paths.stage_path("baseline", config.RUN_SEEDS[0], "dagger", tmp_path)
     stage.parent.mkdir(parents=True)
     stage.write_bytes(b"")
-    window.runs_dir = tmp_path
+    window.train_runs_dir = tmp_path
     window.select_approach("es_seeded")
     window.start_training()
     assert created["args"][:2] == ("es_seeded", config.ES_POP)
@@ -1973,6 +1973,92 @@ def test_the_notebook_view_names_a_run_of_an_earlier_revision(window, tmp_path):
         window.draw()
         assert "older revision, 10 inputs" in window.status and len(window.status) <= 56
         assert window.latest is None and window.playback is None
+
+
+# ----- archived runs of an earlier revision (results/archive/<name>) -----
+def archive_folder(results, name="revision3.1", inputs=10, widths=(16.0, 14.0, 12.0, 10.0)):
+    """An archive folder as the runner leaves it: runs, controllers and the settings record of its revision."""
+    folder = results / "archive" / name
+    (folder / "runs").mkdir(parents=True)
+    (folder / "champions").mkdir()
+    levels = {str(level): {**spec, "width": width} for (level, spec), width in zip(config.LEVELS.items(), widths)}
+    (folder / "run_info.json").write_text(json.dumps({"settings": {"N_INPUTS": inputs, "LEVELS": levels}}))
+    return folder
+
+
+def old_population(n=30, hidden=config.BASELINE_HIDDEN):
+    return nets.DensePopulation(nets.init_population(np.random.default_rng(1), n, hidden, n_inputs=10), hidden)
+
+
+def test_the_run_folders_are_the_current_results_and_each_archive_with_runs(tmp_path):
+    folder = archive_folder(tmp_path)
+    (tmp_path / "archive" / "revision2-notebooks").mkdir()                  # notebooks only: nothing to show
+    assert viewer.run_folders(tmp_path) == [("current", tmp_path), ("revision3.1", folder)]
+
+
+def test_an_archive_names_its_inputs_and_road_widths(tmp_path):
+    folder = archive_folder(tmp_path)
+    assert viewer.folder_profile("revision3.1", folder) == (10, {1: 16.0, 2: 14.0, 3: 12.0, 4: 10.0})
+    assert viewer.folder_profile("current", tmp_path) == (config.N_INPUTS, None)
+    (folder / "run_info.json").write_text("cut short")
+    assert viewer.folder_profile("revision3.1", folder) == (config.N_INPUTS, None)
+
+
+def test_the_notebook_view_replays_an_archived_run_on_its_revisions_maps(window, tmp_path, monkeypatch,
+                                                                          circle_track):
+    built = []
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level, width=None: built.append(width) or circle_track)
+    folder = archive_folder(tmp_path)
+    window.results_dir = tmp_path
+    notebook_view(window, tmp_path)
+    window.cycle_folder()
+    assert window.runs_dir == folder / "runs" and window.folder_label() == "Runs: revision3.1 ▸"
+    save_replay(window, ga_report(5, level=4, population_=old_population()))
+    for _ in range(10):
+        window.update(1 / 60)
+        window.draw()
+    assert window.latest["generation"] == 5 and built == [10.0] and window.playback.cars.time > 0
+    window.cycle_folder()                                                   # back to the current results
+    assert window.runs_dir == tmp_path / "runs" and window.latest is None
+
+
+def test_an_archived_neat_run_of_other_inputs_is_named(window, tmp_path):
+    archive_folder(tmp_path)
+    window.results_dir = tmp_path
+    notebook_view(window, tmp_path)
+    window.cycle_folder()
+    window.select_approach("neat")
+    save_replay(window, neat_report(3), approach="neat")
+    window.update(1 / 60)
+    assert "older revision, 10 inputs" in window.status and window.latest is None
+
+
+def test_the_race_view_races_an_archives_controllers_on_its_maps(window, tmp_path, monkeypatch, circle_track):
+    built = []
+    monkeypatch.setattr(viewer, "get_track",
+                        lambda seed, level, width=None: built.append((level, width)) or circle_track)
+    folder = archive_folder(tmp_path)
+    population.save_dense_champion("ga", 0, old_population(1), 0, folder / "champions")
+    save_race_champions(folder / "champions", approaches=[("neat", 0)])     # NEAT of other inputs: left out
+    window.results_dir = tmp_path
+    window.set_mode("race")
+    window.cycle_folder()
+    assert window.champions_dir == folder / "champions" and window.race_available == {"ga": [0], "neat": [0]}
+    window.start_race()
+    for _ in range(10):
+        window.update(1 / 60)
+        window.draw()
+    assert window.race_cars() == [("ga", 0)] and window.race.cars.time > 0
+    assert (config.MAX_LEVEL, 10.0) in built
+
+
+def test_app_training_ignores_the_shown_folder(window, tmp_path):
+    archive_folder(tmp_path)
+    window.results_dir = tmp_path
+    window.set_mode("race")
+    window.cycle_folder()
+    window.set_mode("train")
+    assert window.source == "app" and window.train_runs_dir == config.RUNS_DIR
 
 
 def test_notebook_play_and_pause_move_only_the_replay(window, tmp_path, monkeypatch):

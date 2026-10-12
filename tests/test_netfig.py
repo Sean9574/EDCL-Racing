@@ -82,3 +82,9 @@ def test_titles_name_the_method_parameters_and_setup():
     assert netfig.setup_text(driver) == " · 123 m · ×0.46"
     assert netfig.panel_title("ga", driver) == f"GA · {driver.n_params:,} parameters · 123 m · ×0.46"
     assert netfig.panel_title("neat", neat_driver()).endswith(" parameters · 50 m · ×1.00")
+
+
+def test_a_network_of_an_earlier_revision_shows_only_its_inputs():
+    driver = nets.from_flat(nets.init_population(np.random.default_rng(0), 1, n_inputs=10)[0])
+    graph = netfig.network_graph(driver)
+    assert graph["columns"][0] == netfig.input_labels()[:10] and graph["columns"][0][-1] == "speed"

@@ -11,19 +11,30 @@ from racing import setup as car_setup
 from racing.backend import keras_cpu
 
 
-def layer_sizes(hidden=config.BASELINE_HIDDEN):
-    return [config.N_INPUTS, *hidden, config.N_ACTIONS]
+def layer_sizes(hidden=config.BASELINE_HIDDEN, n_inputs=config.N_INPUTS):
+    return [n_inputs, *hidden, config.N_ACTIONS]
 
 
-def n_params(hidden=config.BASELINE_HIDDEN):
-    sizes = layer_sizes(hidden)
+def n_params(hidden=config.BASELINE_HIDDEN, n_inputs=config.N_INPUTS):
+    sizes = layer_sizes(hidden, n_inputs)
     return sum(a * b + b for a, b in zip(sizes[:-1], sizes[1:]))
 
 
-def init_population(rng, n, hidden=config.BASELINE_HIDDEN):
+def inputs_of(n_weights, hidden=config.BASELINE_HIDDEN):
+    """Inputs of a dense network with `n_weights` weights and biases: config.N_INPUTS for this revision's networks,
+    fewer for an earlier revision's, which read only the first inputs (revision 3.2 §7)."""
+    first = (*hidden, config.N_ACTIONS)[0]                         # units of the first layer
+    rest = n_params(hidden) - (config.N_INPUTS + 1) * first
+    inputs, extra = divmod(int(n_weights) - rest, first)
+    if extra or inputs < 2:
+        raise ValueError(f"{n_weights} weights fit no network with hidden layers {tuple(hidden)}")
+    return inputs - 1
+
+
+def init_population(rng, n, hidden=config.BASELINE_HIDDEN, n_inputs=config.N_INPUTS):
     """Glorot-uniform weights and zero biases for n networks, flattened to shape (n, n_params)."""
     parts = []
-    sizes = layer_sizes(hidden)
+    sizes = layer_sizes(hidden, n_inputs)
     for a, b in zip(sizes[:-1], sizes[1:]):
         limit = np.sqrt(6.0 / (a + b))
         parts.append(rng.uniform(-limit, limit, (n, a * b)))
@@ -32,10 +43,10 @@ def init_population(rng, n, hidden=config.BASELINE_HIDDEN):
 
 
 def unflatten(flat, hidden=config.BASELINE_HIDDEN):
-    """Split (n, P) flat weights into [(W (n, a, b), bias (n, b))] per layer."""
+    """Split (n, P) flat weights into [(W (n, a, b), bias (n, b))] per layer; P gives the number of inputs."""
     n = flat.shape[0]
     layers, pos = [], 0
-    sizes = layer_sizes(hidden)
+    sizes = layer_sizes(hidden, inputs_of(flat.shape[1], hidden))
     for a, b in zip(sizes[:-1], sizes[1:]):
         weights = flat[:, pos:pos + a * b].reshape(n, a, b)
         pos += a * b
@@ -58,9 +69,10 @@ def activate(h, name):
 
 
 def forward(flat, obs, hidden=config.BASELINE_HIDDEN, activation="relu"):
-    """Logits (n, N_ACTIONS) for n cars, each with its own weights: flat (n, P), obs (n, N_INPUTS)."""
+    """Logits (n, N_ACTIONS) for n cars, each with its own weights: flat (n, P), obs (n, N_INPUTS). A network of an
+    earlier revision reads only its first inputs."""
     layers = unflatten(flat, hidden)
-    h = obs
+    h = obs[:, :layers[0][0].shape[1]]
     for i, (weights, bias) in enumerate(layers):
         h = np.einsum("ni,nij->nj", h, weights) + bias
         if i < len(layers) - 1:
@@ -92,6 +104,10 @@ class DensePopulation:
     def __len__(self):
         return len(self.weights)
 
+    @property
+    def n_inputs(self):
+        return inputs_of(self.weights.shape[1], self.hidden)
+
     def subset(self, indices):
         indices = np.asarray(indices, dtype=np.int64)
         return DensePopulation(self.weights[indices], self.hidden, self.activation, self.setup[indices])
@@ -116,8 +132,12 @@ class DenseNet:
     def n_params(self):
         return int(sum(w.size + b.size for w, b in self.layers))
 
+    @property
+    def n_inputs(self):
+        return int(self.layers[0][0].shape[0])
+
     def act(self, obs):
-        h = np.asarray(obs, dtype=float)
+        h = np.asarray(obs, dtype=float)[:, :self.n_inputs]      # an earlier revision's network: its first inputs
         for i, (w, b) in enumerate(self.layers):
             h = h @ w + b
             if i < len(self.layers) - 1:
@@ -157,7 +177,7 @@ def dense_spec(model):
 def to_keras(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
     """Keras model with the same architecture and weights as one flat weight vector."""
     keras = keras_cpu()
-    model = keras.Sequential([keras.Input((config.N_INPUTS,)),
+    model = keras.Sequential([keras.Input((inputs_of(np.size(flat), hidden),)),
                               *[keras.layers.Dense(units, activation=activation) for units in hidden],
                               keras.layers.Dense(config.N_ACTIONS, activation="softmax")])
     weights = []

@@ -208,6 +208,7 @@ Results are written to `results/`, which is not under version control:
 | `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/` | Pilot runs of revisions 3, 3.1 (with setup evolution) and 3.2 (with road widths) |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
+| `results/archive/revision3.1/` | The revision 3.1 results (runs, controllers, dataset, run record), shown by the viewer's **Runs** button |
 
 To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\results` in File Explorer.
 
@@ -324,6 +325,12 @@ On Windows 11 the window opens through WSLg.
   run in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline
   and Keras Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars
   instead.
+- **Earlier revisions' runs:** the **Runs** button (beside Source, and in the race view beside Controllers) switches
+  between the current results and each archive in `results/archive/` (for example `revision3.1`). An archived run is
+  replayed, and its controllers race, on its own revision's maps (revision 3.1: one road width per level, 16, 14, 12
+  and 10 m, read from the archive's `run_info.json`), and its networks read only the inputs they were trained with
+  (revision 3.1: the nine rays and the speed). A run whose networks do not match the selected folder is named in the
+  status line instead. Training started in the viewer always uses the current results.
 - **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
   line. For each method, choose its best seed, a specific seed, or off, then press Start race; Stop returns to the
   start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training

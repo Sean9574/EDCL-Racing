@@ -58,7 +58,8 @@ def network_graph(driver):
     from racing import neat
     if isinstance(driver, neat.NeatNet):
         return _neat_graph(driver.genome)
-    columns = [input_labels()] + [[""] * w.shape[1] for w, _ in driver.layers[:-1]] + [output_labels()]
+    columns = ([input_labels()[:driver.layers[0][0].shape[0]]]          # an earlier revision's: fewer inputs
+               + [[""] * w.shape[1] for w, _ in driver.layers[:-1]] + [output_labels()])
     edges = []
     for k, (weights, _) in enumerate(driver.layers):
         for i in range(weights.shape[0]):

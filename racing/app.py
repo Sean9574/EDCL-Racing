@@ -196,13 +196,38 @@ def report_inputs(report):
     """Inputs the networks of a training report take; None for NEAT genomes, whose inputs are implicit. A report of
     an earlier revision may take fewer than config.N_INPUTS (revision 3.2 §7)."""
     if "population" not in report:
-        return int(report["nets"][0].layers[0][0].shape[0])
+        return report["nets"][0].n_inputs
     population = report["population"]
-    if not isinstance(population, nets.DensePopulation):
-        return None
-    first = (population.hidden or (config.N_ACTIONS,))[0]              # units of the first layer
-    rest = nets.n_params(population.hidden) - (config.N_INPUTS + 1) * first
-    return (population.weights.shape[1] - rest) // first - 1
+    return population.n_inputs if isinstance(population, nets.DensePopulation) else None
+
+
+def run_folders(results_dir=config.RESULTS_DIR):
+    """The results folders the viewer shows runs of: ("current", the results folder), then each archive in
+    results/archive that holds runs or controllers, by name."""
+    results_dir = Path(results_dir)
+    archive = results_dir / "archive"
+    folders = [("current", results_dir)]
+    if archive.is_dir():
+        folders += [(folder.name, folder) for folder in sorted(archive.iterdir())
+                    if (folder / "runs").is_dir() or (folder / "champions").is_dir()]
+    return folders
+
+
+def folder_profile(name, folder):
+    """(inputs, road widths) of a results folder's networks and maps: this revision's (config.N_INPUTS, None: each
+    map draws its own width) for the current results; an archive's from its run_info.json settings, where an earlier
+    revision names one road width per level (revision 3.1). An archive without a readable record is taken as current."""
+    if name == "current":
+        return config.N_INPUTS, None
+    try:
+        settings = json.loads((Path(folder) / config.RUN_INFO_PATH.name).read_text())["settings"]
+        inputs = int(settings["N_INPUTS"])
+        levels = settings["LEVELS"]
+        widths = ({int(level): float(spec["width"]) for level, spec in levels.items()}
+                  if all("width" in spec for spec in levels.values()) else None)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return config.N_INPUTS, None
+    return inputs, widths
 
 
 def report_setup(report, indices):
@@ -452,7 +477,11 @@ class App:
         self.difficulty = 1
         self.population = {"ga": config.GA_POP, "es": config.ES_POP, "es_seeded": config.ES_POP,
                            "neat": config.NEAT_POP}
-        self.runs_dir = config.RUNS_DIR     # where the seeded ES finds the DAgger-refined baseline
+        self.results_dir = config.RESULTS_DIR           # the current results; archives are in its archive folder
+        self.folder_name = "current"                    # the results folder whose runs and controllers are shown
+        self.folder_inputs, self.folder_widths = config.N_INPUTS, None      # folder_profile of that folder
+        self.runs_dir = config.RUNS_DIR                 # the shown folder's notebook runs
+        self.train_runs_dir = config.RUNS_DIR           # where the seeded ES trained here finds the DAgger baseline
         self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (revision 3.1 §6.1)
         self.app_champions_dir = config.APP_CHAMPIONS_DIR   # their best cars, raceable in the race view
         self.show = "best"
@@ -504,7 +533,7 @@ class App:
     def request_track(self, seed, level):
         """The track if it is built; otherwise start building it and return None (spec §10.2). Without background
         building, the track is built at once."""
-        key = (int(seed), int(level))
+        key = (int(seed), int(level), self.map_width(level))
         if key in self.tracks:
             return self.tracks[key]
         if not self.background_tracks:
@@ -515,10 +544,18 @@ class App:
             threading.Thread(target=self.build_track, args=(key,), daemon=True).start()
         return None
 
+    def map_width(self, level):
+        """Road width of the maps shown for the selected results folder: an earlier revision's width for the level, or
+        None, each map's own; training started here always uses this revision's maps."""
+        if self.folder_widths is None or (self.mode == "train" and self.source == "app"):
+            return None
+        return self.folder_widths.get(int(level))
+
     def build_track(self, key):
         """Build one track; a failure is shown in the status line and the next request tries again."""
+        seed, level, width = key
         try:
-            self.tracks[key] = get_track(*key)
+            self.tracks[key] = get_track(seed, level) if width is None else get_track(seed, level, width)
         except Exception as error:
             self.status = f"Track seed {key[0]}, level {key[1]} could not be built: {error}"
         finally:
@@ -527,7 +564,7 @@ class App:
     # ----- training process -----
     def start_training(self):
         if self.approach == "es_seeded" and not paths.stage_path("baseline", self.run_seed, "dagger",
-                                                                 self.runs_dir).exists():
+                                                                 self.train_runs_dir).exists():
             self.status = "Seeded ES needs the DAgger baseline: run notebook 03."
             return
         context = mp.get_context("spawn")
@@ -630,6 +667,27 @@ class App:
         self.replay_mtime, self.replay_polled, self.replay_paused = None, None, False
         self.net_sent = None
 
+    def folder_label(self):
+        return f"Runs: {self.folder_name} ▸"
+
+    def cycle_folder(self):
+        """Show the next results folder's notebook runs and controllers: the current results, then each archive of an
+        earlier revision, whose runs drive on that revision's maps (revision 3.2 §7). Training started here keeps
+        this revision's folders. Not during a race."""
+        if self.racing:
+            return
+        folders = run_folders(self.results_dir)
+        names = [name for name, _ in folders]
+        k = (names.index(self.folder_name) + 1) % len(folders) if self.folder_name in names else 0
+        self.folder_name, folder = folders[k]
+        self.folder_inputs, self.folder_widths = folder_profile(self.folder_name, folder)
+        self.runs_dir, self.champions_dir = folder / "runs", folder / "champions"
+        if self.mode == "race":
+            self.load_race()
+        elif self.source == "notebook":
+            self.clear_view()
+            self.status = f"Showing the {self.folder_name} runs."
+
     def replay_file(self):
         return paths.replay_path(self.approach, self.run_seed, self.runs_dir)
 
@@ -662,9 +720,9 @@ class App:
             self.status = "Replay file unreadable; retrying."
             return
         self.replay_mtime = stamp
-        if inputs is not None and inputs != config.N_INPUTS:            # read again only when the file changes
-            self.status = f"{name}: older revision, {inputs} inputs."
-            return
+        if (inputs or config.N_INPUTS) != self.folder_inputs:          # NEAT genomes read this revision's inputs
+            self.status = f"{name}: older revision, {inputs or self.folder_inputs} inputs."
+            return                                                      # read again only when the file changes
         self.receive(report)
         self.history = log_history(path.parent / "log.csv")
         self.status = f"Replaying the notebook run {name}."
@@ -1119,8 +1177,11 @@ class App:
             directory = self.champions_dir if source == "final" else self.app_champions_dir
             model, driver = nets.load_champion(approach, seed, directory)
             inputs = model.input_shape[-1]
-            if inputs != config.N_INPUTS:                    # a controller of an earlier revision (revision 3.2 §7)
-                raise ValueError(f"made for {inputs} inputs, this revision has {config.N_INPUTS}")
+            expected = self.folder_inputs if source == "final" else config.N_INPUTS     # app cars are this revision's
+            if inputs != expected:                           # a controller of another revision (revision 3.2 §7)
+                raise ValueError(f"made for {inputs} inputs, these runs have {expected}")
+            if not isinstance(driver, nets.DenseNet) and inputs != config.N_INPUTS:
+                raise ValueError("an earlier revision's NEAT controllers cannot be shown")
             self.drivers[key] = driver
         return self.drivers[key]
 
@@ -1232,7 +1293,7 @@ class App:
 
     # ----- drawing -----
     def track_surface(self, track):
-        key = (track.seed, track.level)
+        key = (track.seed, track.level, track.width)
         if key not in self.surfaces:
             camera = Camera(track, self.view)
             self.surfaces[key] = (camera, render_track(track, camera, self.view.size))
@@ -1375,8 +1436,11 @@ class App:
                         approach == self.approach, enabled=idle, color=config.COLORS[approach])
         y += 3 * 34 + 4
         notebook = self.source == "notebook"
-        self.button(pygame.Rect(x, y, w, 26), f"Source: {'Notebook run' if notebook else 'App training'} ▸",
+        half = (w - 8) // 2
+        self.button(pygame.Rect(x, y, half, 26), f"Source: {'Notebook run' if notebook else 'App training'} ▸",
                     self.toggle_source, notebook, enabled=idle)
+        self.button(pygame.Rect(x + half + 8, y, half, 26), self.folder_label(), self.cycle_folder,
+                    self.folder_name != "current", enabled=idle and notebook)
         y += 34
         self.text("Run seed", x, y + 5, self.small, MUTED)
         self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_run_seed(-1), enabled=idle)
@@ -1488,10 +1552,13 @@ class App:
         pygame.draw.lines(self.screen, color, False, points, 2)
 
     def draw_race_panel(self, x, y, w):
-        if not self.race_available and not self.app_available:
-            self.text("No trained controllers found.", x, y, self.small, MUTED)
-            return
         idle = not self.racing
+        half = (w - 8) // 2
+        if not self.race_available and not self.app_available:     # another folder may have some
+            self.button(pygame.Rect(x, y, half, 22), self.folder_label(), self.cycle_folder,
+                        self.folder_name != "current", enabled=idle)
+            self.text("No trained controllers found.", x, y + 30, self.small, MUTED)
+            return
         self.text("Test track", x, y + 5, self.small, MUTED)
         self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_race_track(-1), enabled=idle)
         self.text(f"seed {config.TEST_SEEDS[self.race_index]}", x + 150, y + 5)
@@ -1509,10 +1576,13 @@ class App:
                     enabled=bool(self.race_cars()))
         y += 28
         if self.app_available:
-            self.button(pygame.Rect(x, y, w, 22), self.race_group_label(), self.cycle_race_group)
-            y += 24
+            self.button(pygame.Rect(x, y, half, 22), self.race_group_label(), self.cycle_race_group)
+            below = y + 24
         else:
-            y = self.text("Controllers", x, y, self.small, MUTED)
+            below = self.text("Controllers", x, y, self.small, MUTED)
+        self.button(pygame.Rect(x + half + 8, y, half, below - y - 2), self.folder_label(), self.cycle_folder,
+                    self.folder_name != "current", enabled=idle)       # in the row's height: the leaderboard fits
+        y = below
         if self.race_group == "app" and self.app_available:
             for approach in self.app_available:
                 self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))

@@ -139,10 +139,11 @@ def map_width(seed, level):
     return float(np.random.default_rng([seed, level, config.WIDTH_SALT]).uniform(low, high))
 
 
-def candidate_track(seed, level, attempt=0):
-    """One generation attempt for (seed, level). Returns None if the geometry is rejected."""
+def candidate_track(seed, level, attempt=0, width=None):
+    """One generation attempt for (seed, level). Returns None if the geometry is rejected. `width` replaces the map's
+    own road width: the viewer rebuilds an earlier revision's maps with that revision's width (revision 3.2 §7)."""
     spec = config.LEVELS[level]
-    width = map_width(seed, level)
+    width = map_width(seed, level) if width is None else float(width)
     rng = np.random.default_rng([seed, level, attempt])
     if spec["kind"] == "loop":
         n_points = int(rng.integers(spec["points"][0], spec["points"][1] + 1))
