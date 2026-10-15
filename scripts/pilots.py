@@ -1,4 +1,4 @@
-"""Pilot runs of revision 3.2 (§10; revision 3 §10.2): short runs of each evolutionary method from Easy with seed 0,
+"""Pilot runs of revision 3.2 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
 which show whether the 90% requirement can be reached with the reported settings, now with a road width of 10 to
 16 m per map and the position and width inputs, before the reported run starts. Each pilot starts over in
 results/pilots/revision3.2/<name>/ and adds a row to results/pilots/revision3.2/summary.md, with the population's mean

@@ -1,4 +1,4 @@
-"""Scripted expert driver (spec §7.1) and imitation dataset collection on freshly generated maps (spec §7.2-7.3, revision 3 §6.1)."""
+"""Scripted expert driver (spec §7.1) and imitation dataset collection on freshly generated maps (spec §7.2-7.3)."""
 import os
 import time
 from pathlib import Path
@@ -92,7 +92,7 @@ def collect_rows(track, rng):
 
 
 def dataset_seeds():
-    """(seed, level) of the imitation dataset's maps (revision 3 §6.1): config.DATASET_TRACKS maps per level, with
+    """(seed, level) of the imitation dataset's maps (spec §7.3): config.DATASET_TRACKS maps per level, with
     distinct seeds drawn once from config.DATASET_SEED_RANGE, so every collection uses the same maps."""
     low, high = config.DATASET_SEED_RANGE
     total = sum(config.DATASET_TRACKS.values())
@@ -120,7 +120,7 @@ def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky", resume=Tru
     across worker processes; each has its own random number generator, so the rows do not depend on n_jobs.
     Returns the arrays and a summary per split (tracks, rows, respawns after crashes) and records the collection
     time, the maps and the settings in <stem>_info.json next to the dataset. With resume, a complete dataset of the
-    same maps recorded with the current settings is loaded instead of collected again (revision 3 §8.2)."""
+    same maps recorded with the current settings is loaded instead of collected again (spec §3.3)."""
     path = Path(config.DATASET_PATH if path is None else path)
     splits = default_splits() if splits is None else splits
     items = {name: [[int(seed), int(level)] for seed, level in entries] for name, entries in splits.items()}

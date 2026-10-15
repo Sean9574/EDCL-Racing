@@ -1,5 +1,5 @@
 """Vectorized driving simulator (spec §5). Every per-car quantity is an array with one entry per car, including each
-car's setup: its sensor length and steering sensitivity (revision 3.1 §2)."""
+car's setup: its sensor length and steering sensitivity (spec §9.11)."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -27,8 +27,8 @@ class Cars:
     finished: np.ndarray            # completed `laps` laps
     done: np.ndarray                # crashed, finished, stalled or out of time
     finish_time: np.ndarray         # s, nan unless finished
-    ray_length: np.ndarray          # m, each car's sensor length (revision 3.1 §2.1)
-    steer_gain: np.ndarray          # each car's steering sensitivity (revision 3.1 §2.2)
+    ray_length: np.ndarray          # m, each car's sensor length (spec §5.2)
+    steer_gain: np.ndarray          # each car's steering sensitivity (spec §5.1)
     laps: int = 1
     time: float = 0.0
 
@@ -41,7 +41,7 @@ class RunResult:
     progress: np.ndarray            # fraction of the run completed, 0 to 1
     finish_time: np.ndarray
     steps: int
-    laps_done: np.ndarray           # laps completed when the run ended (revision 3 §4.1)
+    laps_done: np.ndarray           # laps completed when the run ended (spec §9.2)
 
 
 def setup_columns(setup, n):
@@ -58,7 +58,7 @@ def setup_columns(setup, n):
 
 
 def start_cars(track, n, laps=1, setup=None):
-    """n cars at rest on the start line, facing the direction of travel, each with its setup (revision 3.1 §2): an
+    """n cars at rest on the start line, facing the direction of travel, each with its setup (spec §9.11): an
     (n, 2) array of sensor lengths and steering sensitivities, or None for revision 3's."""
     x0, y0 = track.start_position
     nan = np.full(n, np.nan)
@@ -74,7 +74,7 @@ def start_cars(track, n, laps=1, setup=None):
 
 
 def ray_caps(lengths):
-    """Sphere-tracing iterations allowed for rays of the given lengths (revision 3.1 §2.1): RAY_MAX_ITERATIONS for a
+    """Sphere-tracing iterations allowed for rays of the given lengths (spec §5.2): RAY_MAX_ITERATIONS for a
     RAY_RANGE ray, scaled with the length, so a ray of revision 3's length is traced exactly as before."""
     return np.ceil(config.RAY_MAX_ITERATIONS * np.asarray(lengths, dtype=float) / config.RAY_RANGE).astype(np.int64)
 
@@ -105,7 +105,7 @@ def cast_rays(track, x, y, heading, lengths=None):
 
 def road_position(track, cars, rows):
     """Position across the road of the cars `rows`: −1 at the left edge, 0 on the centerline, +1 at the right edge,
-    relative to the driving direction, from each car's matched centerline point (revision 3.2 §3)."""
+    relative to the driving direction, from each car's matched centerline point (spec §5.2)."""
     i = np.asarray(cars.index[rows]) % len(track.centerline)
     tangent = track.tangent[i]
     dx = cars.x[rows] - track.centerline[i, 0]
@@ -115,8 +115,8 @@ def road_position(track, cars, rows):
 
 
 def sense(track, cars):
-    """Network inputs (revision 3.2 §3): ray distances / RAY_RANGE (each car's rays reach its own sensor length, so a
-    ray input can exceed 1; revision 3.1 §2.1), speed / SPEED_SCALE, position across the road (−1 at the left edge,
+    """Network inputs (spec §5.2): ray distances / RAY_RANGE (each car's rays reach its own sensor length, so a
+    ray input can exceed 1), speed / SPEED_SCALE, position across the road (−1 at the left edge,
     +1 at the right edge) and road width / WIDTH_SCALE. Rows of cars that are done stay zero."""
     obs = np.zeros((len(cars.x), config.N_INPUTS))
     live = np.flatnonzero(~cars.done)
@@ -131,8 +131,8 @@ def sense(track, cars):
 
 def step(track, cars, steer, throttle, time_limit, grip=config.GRIP):
     """Advance every car that is not done by one time step. steer and throttle are grip fractions in [-1, 1]; each
-    car's steering is multiplied by its steering sensitivity before the grip limit (revision 3.1 §2.2). `grip` is the
-    friction-circle limit: the training grip unless the application shows another (revision 3.1 §6)."""
+    car's steering is multiplied by its steering sensitivity before the grip limit (spec §5.1). `grip` is the
+    friction-circle limit: the training grip unless the application shows another (spec §10.5)."""
     live = ~cars.done
     a_lat = np.clip(steer * cars.steer_gain, -1.0, 1.0) * grip
     a_long = np.clip(throttle, -1.0, 1.0) * grip
@@ -203,7 +203,7 @@ def time_limit_for(track, laps=1):
 
 
 def target_time(track, factor, laps=config.LAPS):
-    """Target time of a time trial (revision 3 §4.1): factor × the expert's time for `laps` laps."""
+    """Target time of a time trial (spec §9.2): factor × the expert's time for `laps` laps."""
     if np.isnan(track.expert_lap_time):
         raise ValueError("track has no expert lap time")
     return factor * track.expert_lap_time * laps
@@ -211,7 +211,7 @@ def target_time(track, factor, laps=config.LAPS):
 
 def simulate(track, policy, n, time_limit=None, laps=1, setup=None, grip=config.GRIP):
     """Drive n cars from the start line until every car is done. policy(obs, cars) returns action classes. setup:
-    the cars' (n, 2) setups, None for revision 3's; grip: the friction-circle limit (revision 3.1 §2, §6)."""
+    the cars' (n, 2) setups, None for revision 3's; grip: the friction-circle limit (spec §9.11, §10.5)."""
     if time_limit is None:
         time_limit = time_limit_for(track, laps)
     cars = start_cars(track, n, laps, setup)

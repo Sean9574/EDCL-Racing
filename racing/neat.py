@@ -1,4 +1,4 @@
-"""NEAT, neuroevolution of augmenting topologies (revision 3 §5.4): feed-forward networks whose structure grows by
+"""NEAT, neuroevolution of augmenting topologies (spec §9.9): feed-forward networks whose structure grows by
 mutation. A genome lists node genes (output and hidden nodes, each with a bias; the inputs are implicit) and
 connection genes. Every structural mutation is recorded for the whole run, so the same connection or split has the
 same innovation number or node id in every genome, which aligns genomes for crossover and speciation."""
@@ -40,7 +40,7 @@ class Genome:
 
     @property
     def n_params(self):
-        """Enabled connections plus biases: the parameters the network uses (revision 3 §5.4)."""
+        """Enabled connections plus biases: the parameters the network uses (spec §9.9)."""
         return int(np.sum(self.enabled)) + len(self.bias)
 
     def to_dict(self):
@@ -183,7 +183,7 @@ def _mutate_values(rng, values, sigma):
 
 
 def mutate(rng, genome, innovations, sigma):
-    """A mutated copy (revision 3 §5.4): weights and biases, then with their own probabilities a new connection, a
+    """A mutated copy (spec §9.9): weights and biases, then with their own probabilities a new connection, a
     new node and one toggled connection."""
     g = genome.copy()
     g.weight = _mutate_values(rng, g.weight, sigma)
@@ -217,7 +217,7 @@ def crossover(rng, fitter, other):
 
 
 def distance(a, b):
-    """Compatibility distance δ = C1·E/N + C2·D/N + C3·W̄ (revision 3 §5.4): E excess genes (beyond the smaller
+    """Compatibility distance δ = C1·E/N + C2·D/N + C3·W̄ (spec §9.9): E excess genes (beyond the smaller
     genome's largest innovation number), D disjoint genes, W̄ the mean weight difference of matching genes, N the
     larger genome's gene count (1 if both have fewer than NEAT_SMALL_GENOME)."""
     if len(a.innov) == 0 and len(b.innov) == 0:
@@ -259,7 +259,7 @@ def node_depths(genome):
 
 @dataclass(eq=False)
 class Compiled:
-    """A population of genomes as flat arrays (revision 3 §5.4). Values live in one vector: each genome has a block
+    """A population of genomes as flat arrays (spec §9.9). Values live in one vector: each genome has a block
     of slots, its 10 inputs and then its nodes. Each level holds one depth: the slots it computes, their biases,
     whether each is hidden (tanh) or an output (identity), and its enabled connections (source slot, position of the
     target within the level, weight)."""
@@ -327,7 +327,7 @@ def forward(compiled, obs):
 
 class NeatNet:
     """One NEAT controller as one masked dense matrix per depth; drives a car like nets.DenseNet, with the car's
-    setup (revision 3.1 §2; revision 3's when none is given)."""
+    setup (spec §9.11; revision 3's when none is given)."""
 
     def __init__(self, genome, setup=None):
         self.genome = genome
@@ -379,7 +379,7 @@ class NeatNet:
 
 class NeatPopulation:
     """A NEAT population with the population interface of nets.DensePopulation: one genome and one setup row per
-    car (revision 3.1 §2)."""
+    car (spec §9.11)."""
 
     def __init__(self, genomes, setup=None):
         self.genomes = list(genomes)
@@ -402,7 +402,7 @@ class NeatPopulation:
 
 
 def to_keras(genome):
-    """Equivalent Keras model (revision 3 §5.4): per depth, a tanh Dense layer for the hidden nodes and a linear
+    """Equivalent Keras model (spec §9.9): per depth, a tanh Dense layer for the hidden nodes and a linear
     Dense layer for the outputs, each applied to the concatenation of the inputs and all shallower nodes, with zero
     weights where the genome has no connection; then a fixed selection layer that puts the outputs in output order,
     with a softmax. Used for the accuracy and timing columns only."""
@@ -443,8 +443,8 @@ def to_keras(genome):
 
 
 def save_neat_champion(approach, seed, genome, champion_dir=config.CHAMPIONS_DIR, setup=None):
-    """Final NEAT controller (revision 3 §5.4): its genome as <seed>.json, which drives, the equivalent Keras model
-    as <seed>.keras, and its setup as <seed>.setup.json (revision 3.1 §4; revision 3's when setup is None). Returns
+    """Final NEAT controller (spec §9.9): its genome as <seed>.json, which drives, the equivalent Keras model
+    as <seed>.keras, and its setup as <seed>.setup.json (spec §6; revision 3's when setup is None). Returns
     the Keras file's path."""
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -468,7 +468,7 @@ class Species:
 
 class SpeciesSet:
     """Speciation by compatibility distance with a threshold steered towards NEAT_TARGET_SPECIES species, and the
-    allotment of children to species (revision 3 §5.4)."""
+    allotment of children to species (spec §9.9)."""
 
     def __init__(self, threshold=config.NEAT_THRESHOLD0):
         self.threshold = float(threshold)
@@ -502,7 +502,7 @@ class SpeciesSet:
 
     def restart_records(self):
         """Forget every species' best fitness and stagnation count, so stagnation is measured within one level and
-        target (revision 3 §5.4): maps change every generation, so a best fitness is a record of noisy scores, and
+        target (spec §9.9): maps change every generation, so a best fitness is a record of noisy scores, and
         after a level-up or a shorter target the old records are out of reach."""
         for s in self.species:
             s.best_fitness, s.stale = float("-inf"), 0
@@ -540,9 +540,9 @@ RESTART_EVENTS = ("level_up", "goal", "tightened")    # engine events after whic
 
 
 class NEAT:
-    """NEAT as a method of the evolution engine (revision 3 §5.4): kept cars first, then children produced within
+    """NEAT as a method of the evolution engine (spec §9.9): kept cars first, then children produced within
     species, with the two-phase step size of the ES. A child inherits the setup of its fitter (or only) parent, which
-    the setup mutation then changes (revision 3.1 §3)."""
+    the setup mutation then changes (spec §9.11)."""
     approach = "neat"
 
     def __init__(self, pop_size=config.NEAT_POP):
@@ -562,12 +562,12 @@ class NEAT:
 
     @property
     def setup(self):
-        """Every car's setup, aligned with the population (revision 3.1 §2)."""
+        """Every car's setup, aligned with the population (spec §9.11)."""
         return self.population.setup
 
     def initialize(self, rng):
         genomes = [initial_genome(rng, self.innovations) for _ in range(self.pop_size)]
-        self.population = NeatPopulation(genomes, setup=car_setup.random(rng, self.pop_size))   # revision 3.1 §3.2
+        self.population = NeatPopulation(genomes, setup=car_setup.random(rng, self.pop_size))   # spec §9.11
         self.is_kept = np.zeros(self.pop_size, dtype=bool)
         self.ids = np.arange(self.pop_size, dtype=np.int64)
         self.parent_ids = np.full(self.pop_size, -1, dtype=np.int64)
@@ -662,7 +662,7 @@ class NEAT:
 
 def run_neat(seed=0, pop_size=config.NEAT_POP, out_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1,
              on_generation=None, start_level=1, max_generations=None):
-    """One NEAT run with the evolution engine (revision 3 §4, §5.4): resumable, written to runs/neat/seed<k>."""
+    """One NEAT run with the evolution engine (spec §9.2-9.5, §9.9): resumable, written to runs/neat/seed<k>."""
     from racing import evolution                      # evolution imports nets, which imports neat lazily
     out_dir = Path(out_dir or paths.run_dir("neat", seed))
     return evolution.run(NEAT(pop_size), seed, out_dir, champion_dir=champion_dir, n_jobs=n_jobs,

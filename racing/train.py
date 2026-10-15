@@ -3,7 +3,7 @@
 scripts/run_notebooks.py --runs starts several of these at once, on one or more machines (scripts/fleet.py). Each
 makes exactly the call of its notebook's loop (tests/test_train.py checks this), so a run trained here is the run the
 notebook would train; the notebook then finds it complete and only reports it. An imitation method's run is notebook
-03's DAgger refinement and speed push (revision 3.2 §6.2), an evolutionary method's the run of notebooks 04 to 07.
+03's DAgger refinement and speed push (spec §3.3), an evolutionary method's the run of notebooks 04 to 07.
 """
 import argparse
 import sys

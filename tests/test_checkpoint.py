@@ -118,7 +118,7 @@ def test_checkpoints_are_plain_pickles(tmp_path):
 
 def test_write_json_syncs_the_temporary_file_before_replacing(tmp_path, monkeypatch):
     """A record is on disk before it replaces the old one, so a reboot cannot leave it empty, and so is everything
-    written before it, such as the final controller the record vouches for (revision 3 §8.2)."""
+    written before it, such as the final controller the record vouches for (spec §3.3)."""
     calls, real_sync, real_fsync, real_replace = [], checkpoint.os.sync, checkpoint.os.fsync, checkpoint.os.replace
     monkeypatch.setattr(checkpoint.os, "sync", lambda: calls.append("sync") or real_sync())
     monkeypatch.setattr(checkpoint.os, "fsync", lambda fd: calls.append("fsync") or real_fsync(fd))

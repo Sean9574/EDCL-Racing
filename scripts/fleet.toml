@@ -1,4 +1,4 @@
-# Which machine runs which jobs, for scripts/fleet.py (revision 3.2 §6.3). A job is a run, approach:seed, or one of
+# Which machine runs which jobs, for scripts/fleet.py (spec §3.3). A job is a run, approach:seed, or one of
 # the notebooks nb:01 (dataset) and nb:02 (imitation and Keras Tuner searches); each belongs to one machine. A job
 # starts as soon as a slot is free and its inputs exist, in the order listed, so the longest runs come first.
 # The machine without a host is the one fleet.py runs on (the desktop); servers are reached from it with `ssh`.

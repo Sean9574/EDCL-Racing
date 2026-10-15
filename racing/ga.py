@@ -1,6 +1,6 @@
-"""Genetic algorithm over dense network weights (revision 3 §5.1): tournament selection, uniform crossover and
+"""Genetic algorithm over dense network weights (spec §9.6): tournament selection, uniform crossover and
 Gaussian mutation whose strength follows the share of the previous generation's children that succeeded. Every car
-also carries a setup, inherited value by value from either parent and mutated (revision 3.1 §3)."""
+also carries a setup, inherited value by value from either parent and mutated (spec §9.11)."""
 import numpy as np
 
 from racing import config, evolution, nets, paths, setup
@@ -26,13 +26,13 @@ class GA(evolution.DenseMethod):
     def initialize(self, rng):
         weights = nets.init_population(rng, self.pop_size, self.hidden)
         self.population = DensePopulation(weights, self.hidden, self.activation,
-                                          setup=setup.random(rng, self.pop_size))   # random start (revision 3.1 §3.2)
+                                          setup=setup.random(rng, self.pop_size))   # random start (spec §9.11)
         self.is_kept = np.zeros(self.pop_size, dtype=bool)
         self.step_size = float("nan")                  # generation 0 is not produced by mutation
 
     def advance(self, rng, result, kept, event):
         """Survivors first and unchanged, then children by tournament, uniform crossover and Gaussian mutation. A
-        child takes each setup value from either parent, then the setup mutation applies (revision 3.1 §3.3); these
+        child takes each setup value from either parent, then the setup mutation applies (spec §9.11); these
         draws come after the network's."""
         weights, setups = self.population.weights, self.population.setup
         n, p = weights.shape
@@ -60,6 +60,6 @@ class GA(evolution.DenseMethod):
 
 def run_ga(seed=0, pop_size=config.GA_POP, out_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1,
            on_generation=None, start_level=1, max_generations=None, s_max=config.GA_S_MAX):
-    """The GA with run seed `seed` (revision 3 §5.1). Returns the run's summary (racing/evolution.py)."""
+    """The GA with run seed `seed` (spec §9.6). Returns the run's summary (racing/evolution.py)."""
     return evolution.run(GA(pop_size=pop_size, s_max=s_max), seed, out_dir or paths.run_dir("ga", seed),
                          champion_dir, n_jobs, on_generation, start_level, max_generations)

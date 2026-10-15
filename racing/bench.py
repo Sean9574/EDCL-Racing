@@ -1,4 +1,4 @@
-"""Benchmarks (spec §9.5): the time of one evolutionary generation for each number of worker processes, and the
+"""Benchmarks (spec §9.10): the time of one evolutionary generation for each number of worker processes, and the
 time of one Keras training epoch for each choice of steps_per_execution and jit_compile.
 
 Run with:  python -m racing.bench              (both)
@@ -16,7 +16,7 @@ from racing import config, expert, population, sim
 from racing.tracks import get_track
 
 SEEDS = (0, 1, 2)
-JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (revision 3 §8.4)
+JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (spec §3.3)
 KERAS_STEPS = (1, 4, 16, 64)
 BACKEND = "loky"
 

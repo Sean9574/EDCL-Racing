@@ -23,7 +23,7 @@ def circle_track():
 @pytest.fixture(autouse=True)
 def private_progress_files(tmp_path_factory, monkeypatch):
     """The status file and the run log of every test live in a temporary folder, never in results/
-    (revision 3 §8.3)."""
+    (spec §3.3)."""
     from racing import config
     folder = tmp_path_factory.mktemp("progress")
     monkeypatch.setattr(config, "STATUS_PATH", folder / "status.json")
@@ -35,7 +35,7 @@ def private_progress_files(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def private_app_runs(tmp_path_factory, monkeypatch):
     """Viewer runs and their app cars of every test live in a temporary folder, never in results/
-    (revision 3.1 §6.1)."""
+    (spec §10.6)."""
     from racing import config
     folder = tmp_path_factory.mktemp("app_runs")
     monkeypatch.setattr(config, "APP_RUNS_DIR", folder)

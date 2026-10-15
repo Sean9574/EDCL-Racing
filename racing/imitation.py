@@ -1,5 +1,5 @@
 """Imitation-learning controllers (spec §8): a baseline network, three Keras Tuner searches, and retraining of the
-selected architectures with each run seed. Each trained network is saved as its imitation stage (revision 3 §6.5)."""
+selected architectures with each run seed. Each trained network is saved as its imitation stage (spec §8.6)."""
 import csv
 import json
 import math
@@ -85,7 +85,7 @@ def best_of(best, value):
 
 def epoch_status(approach, seed, on_epoch=None):
     """on_epoch of a reported training run: shows the epoch and its validation accuracy in the live status line
-    (revision 3 §8.3), then calls on_epoch."""
+    (spec §3.3), then calls on_epoch."""
     began, best = time.time(), [float("nan")]
 
     def report(epoch, model, val_accuracy):
@@ -109,13 +109,13 @@ def fit(model, data, epochs, on_epoch=None):
     return history, time.time() - start
 
 
-STAGE_FILE = "imitation.keras"     # the trained network in its run directory (revision 3 §6.5)
+STAGE_FILE = "imitation.keras"     # the trained network in its run directory (spec §8.6)
 
 
 def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None, report=True):
     """Save the trained network as the imitation stage, then write the run's summary. The summary records the
-    settings and is written last, so its presence marks a complete run (revision 3 §8.2). The final controller of an
-    imitation method comes from its speed push (revision 3 §6.4), not from here."""
+    settings and is written last, so its presence marks a complete run (spec §3.3). The final controller of an
+    imitation method comes from its speed push (spec §8.5), not from here."""
     stage = Path(out_dir) / STAGE_FILE
     model.save(stage)
     summary = {"approach": approach, "seed": seed, "epochs": len(history.history["val_accuracy"]),
@@ -138,7 +138,7 @@ def start_run(out_dir):
 
 def previous_run(out_dir, resume):
     """The summary of a complete earlier run in out_dir with the current settings, or None. A summary recorded with
-    other settings raises checkpoint.SettingsMismatch (revision 3 §8.2)."""
+    other settings raises checkpoint.SettingsMismatch (spec §3.3)."""
     if not resume:
         return None
     summary = checkpoint.completed(out_dir)
@@ -246,7 +246,7 @@ def run_tuner(approach, data, out_dir=None, on_trial=None, seed=config.SEARCH_SE
               bayes_initial=config.KT_BAYES_INITIAL, export_models=True, resume=True, report=True):
     """One Keras Tuner search (spec §8.2). Writes trials.csv, summary.json and, with export_models, the most-trained
     model of every configuration. Final controllers come from retrain(). With resume, a complete search recorded with
-    the current settings is returned instead of run again (revision 3 §8.2). With report (the experiment, not the
+    the current settings is returned instead of run again (spec §3.3). With report (the experiment, not the
     viewer), the live status line shows each completed trial and the run log the search's end."""
     out_dir = Path(out_dir or paths.search_dir(approach))
     if resume:

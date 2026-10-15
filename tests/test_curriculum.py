@@ -16,7 +16,7 @@ def test_mutation_strength_endpoints_and_midpoint():
     assert math.isclose(mutation_strength(0.5), (config.GA_S_MAX + config.GA_S_MIN) / 2)
 
 
-# ----- revision 3 (§3.4, §4.2-4.5, §5.1-5.2) -----
+# ----- revision 3 (spec §4.6, §9.3-9.4, §9.6-9.7) -----
 
 def test_mutation_strength_without_children_is_s_max():
     assert mutation_strength(float("nan")) == config.GA_S_MAX
@@ -220,7 +220,7 @@ def test_success_fraction_counts_ties_as_half():
     assert success_fraction(child, parent) == (1.0 + 0.5 + 1.0 + 0.0) / 4
 
 
-# ----- revision 3.2 §4: the speed push -----
+# ----- spec §9.4: the speed push -----
 
 def at_goal():
     tracker = MasteryTracker(level=config.MAX_LEVEL)

@@ -1,4 +1,4 @@
-"""Shared run loop of every evolutionary method (revision 3 §4, §8.2, §8.3). A method object holds the population
+"""Shared run loop of every evolutionary method (spec §3.3, §9.1-9.5). A method object holds the population
 and makes the children (racing/ga.py, racing/es.py, racing/neat.py); this loop drives fresh maps as time trials,
 applies the survival rule, follows the mastery levels and the speed push, logs every generation, saves a checkpoint
 after each one, reports progress and selects the final controller."""
@@ -23,7 +23,7 @@ LOG_FIELDS = ["generation", "level", "factor", "evals", "best", "mean", "worst",
 
 class Method(Protocol):
     """What the loop needs from a method. `population` holds the cars carried over unchanged first; `is_kept`
-    marks them; `population.setup` holds every car's setup (revision 3.1 §2). `advance` must assign a new population
+    marks them; `population.setup` holds every car's setup (spec §9.11). `advance` must assign a new population
     object (reports keep the evaluated one)."""
     approach: str
     population: object
@@ -65,11 +65,11 @@ class DenseMethod:
 
     @property
     def setup(self):
-        """Every car's setup, aligned with the population (revision 3.1 §2)."""
+        """Every car's setup, aligned with the population (spec §9.11)."""
         return self.population.setup
 
     def assemble(self, kept_weights, children, kept_setups, children_setups):
-        """The next population: the kept cars first, then the children, each with its setup (revision 3.1 §3.3);
+        """The next population: the kept cars first, then the children, each with its setup (spec §9.11);
         marks the kept cars."""
         self.population = DensePopulation(np.concatenate([kept_weights, children]), self.hidden, self.activation,
                                           setup=np.concatenate([kept_setups, children_setups]))
@@ -118,7 +118,7 @@ def append_log(path, report, fields=LOG_FIELDS):
     with open(path, "a", newline="") as f:
         csv.writer(f).writerow(row)
         f.flush()
-        os.fsync(f.fileno())           # on disk before the generation's checkpoint, which covers it (revision 3 §8.2)
+        os.fsync(f.fileno())           # on disk before the generation's checkpoint, which covers it (spec §3.3)
 
 
 def complete_row(row, header, generation):
@@ -130,7 +130,7 @@ def complete_row(row, header, generation):
 def truncate_log(path, generation, fields=LOG_FIELDS):
     """Keep the header and the whole rows of the generations before `generation`. A row written after the last
     checkpoint belongs to a generation that runs again when the run resumes, and a damaged row is dropped
-    (revision 3 §8.2). A missing log is started with the columns `fields`."""
+    (spec §3.3). A missing log is started with the columns `fields`."""
     path = Path(path)
     if not path.exists():
         start_log(path, fields)
@@ -168,7 +168,7 @@ def milestone_text(event, method, seed, generation, level, tracker):
 
 def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_generation=None, start_level=1,
         max_generations=None, rng_seed=None):
-    """Train `method` with run seed `seed` until the speed push ends or the safety stop (revision 3 §4.4-4.5), or
+    """Train `method` with run seed `seed` until the speed push ends or the safety stop (spec §9.4), or
     after `max_generations` (viewer, pilots, tests). A completed run in `out_dir` with the current settings is
     returned at once; an interrupted one resumes from its checkpoint. With champion_dir None no final controller is
     selected or saved and nothing is written to the status file or the run log: only the experiment's runs report
@@ -222,7 +222,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         evals += n
         cap = int(config.KEEP_MAX_FRACTION * n)
         kept = survivors(rng, result.fitness, result.all_success, result.lap_share, cap, config.ELITE_FLOOR)
-        speed_push = tracker.goal_reached                   # the rule this generation is judged by (revision 3.2 §4)
+        speed_push = tracker.goal_reached                   # the rule this generation is judged by (spec §9.4)
         event = tracker.update(result.min_share)
         now = active()
         report = {"approach": method.approach, "seed": seed, "generation": generation, "level": level,

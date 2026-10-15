@@ -1,4 +1,4 @@
-"""Checkpoints of long runs and the record of the settings a run was made with (revision 3 §8.2). A run saves its
+"""Checkpoints of long runs and the record of the settings a run was made with (spec §3.3). A run saves its
 state after every generation or round and continues from it after an interruption; a run made with other settings
 is never resumed and its results are never reused."""
 import json
@@ -117,7 +117,7 @@ def save(path, state):
 
 def write_json(path, data):
     """Write `data` as JSON through a temporary file in the same folder that is synced to disk before it replaces
-    `path`, so neither an interruption nor a reboot leaves a partial or empty record (revision 3 §8.2). Everything
+    `path`, so neither an interruption nor a reboot leaves a partial or empty record (spec §3.3). Everything
     written before the record, such as the final controller or stage file it vouches for, reaches the disk first."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

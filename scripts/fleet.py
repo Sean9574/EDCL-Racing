@@ -532,7 +532,7 @@ def wait_for_environment(machine, out=sys.stdout):
 
 def external_inputs(machine):
     """(local file, path relative to the project) of every input the machine's jobs need that none of its own jobs
-    make (revision 3.2 §6.3): a server must be given them before its jobs can start."""
+    make (spec §3.3): a server must be given them before its jobs can start."""
     results = PROJECT / "results"
     made = {path for job in machine.runs for path in jobs.makes(job, results)}
     found = []
@@ -899,7 +899,7 @@ def unfinished(results=None):
 
 def finish(machines, out=sys.stdout):
     """Collect, then, once all 24 runs are here, run notebooks 03 to 08 (they find the runs complete and report them,
-    revision 3.2 §6.3) and the evaluation in this machine's fleet session."""
+    spec §3.3) and the evaluation in this machine's fleet session."""
     if collect(machines, out):
         raise FleetError("some runs could not be collected; see above")
     missing = unfinished()
@@ -923,7 +923,7 @@ def archive_script(machine, name):
 
 def archive(machines, name, out=sys.stdout):
     """Move every machine's earlier results to results/archive/NAME/ (run_notebooks.py --archive), so the next start
-    begins afresh everywhere (revision 3.2 §6.1)."""
+    begins afresh everywhere (spec §3.3)."""
     problems = 0
     for machine in machines:
         code, answer, err = run_shell(machine, archive_script(machine, name))

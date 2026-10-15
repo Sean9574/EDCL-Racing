@@ -1,4 +1,4 @@
-"""DAgger refinement of the imitation controllers and their speed push (revision 3 §6.3-6.5).
+"""DAgger refinement of the imitation controllers and their speed push (spec §8.4-8.6).
 
 A refinement runs in rounds. The car drives fresh Extra hard maps; at every step the expert labels the car's exact
 state; the rows join the network's dataset and training continues; a time trial on further fresh maps checks the
@@ -23,9 +23,9 @@ SUMMARY_NAME = "dagger.json"
 
 def drive_and_label(driver, seed, level=config.MAX_LEVEL):
     """One car driven by `driver` for config.LAPS laps of one map, with the expert's action recorded in every state
-    the car reaches (revision 3 §6.3 steps 1-2). A crash puts the car back on the centerline, as during dataset
+    the car reaches (spec §8.4 steps 1-2). A crash puts the car back on the centerline, as during dataset
     collection, so the whole run is covered. The car drives with its setup (revision 3's for an imitation
-    network, revision 3.1 §3.1). Returns inputs, labels and the number of respawns."""
+    network, spec §9.11). Returns inputs, labels and the number of respawns."""
     track = get_track(seed, level)
     cars = sim.start_cars(track, 1, config.LAPS, setup=nets.drivers_setup([driver]))
     time_limit = sim.time_limit_for(track, config.LAPS)
@@ -65,7 +65,7 @@ def _time_trial(driver, seed, level, factor):
 
 def check(driver, seeds, factor=config.TARGET_FACTOR, level=config.MAX_LEVEL, n_jobs=1):
     """Number of maps on which the car completes the time trial: config.LAPS laps within the target time
-    (revision 3 §4.1, §6.3 step 4)."""
+    (spec §8.4 step 4, §9.2)."""
     return int(sum(_per_map(_time_trial, [(driver, seed, level, factor) for seed in seeds], n_jobs)))
 
 
@@ -85,7 +85,7 @@ def _round_model(stage_file, weights, rate, seed, number):
 
 
 def _train_round(model, x, y, rng):
-    """Continue training on the aggregated rows (revision 3 §6.3 step 3): at most config.DAGGER_EPOCHS epochs with
+    """Continue training on the aggregated rows (spec §8.4 step 3): at most config.DAGGER_EPOCHS epochs with
     early stopping on a config.DAGGER_HOLDOUT hold-out. Returns the epochs trained."""
     order = rng.permutation(len(y))
     held = int(round(config.DAGGER_HOLDOUT * len(y)))
@@ -115,7 +115,7 @@ def _load_rows(path, count):
 
 def _save_rows(path, x, y):
     """Save the correction rows through a temporary file that is synced to disk before it replaces the old rows, so
-    the rows the next checkpoint records survive a reboot (revision 3 §8.2)."""
+    the rows the next checkpoint records survive a reboot (spec §3.3)."""
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(temporary, "wb") as f:
         np.savez(f, X=x, y=y)
@@ -143,7 +143,7 @@ def _finished_message(label, seed, state):
 
 
 def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rounds=None):
-    """DAgger refinement of one trained imitation network (revision 3 §6.3). Returns the summary of a complete
+    """DAgger refinement of one trained imitation network (spec §8.4). Returns the summary of a complete
     refinement recorded with the current settings, resumes an interrupted one, and otherwise starts from the
     imitation stage. Writes the refined network as the 'dagger' stage: the network of the final round when the goal
     is reached, otherwise the network with the best check result."""
@@ -223,7 +223,7 @@ def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rou
 
 def speed_push(approach, seed, runs_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_generation=None,
                max_generations=None):
-    """Evolution strategy grown from the refined network, from Extra hard on (revision 3 §6.4). Its final controller
+    """Evolution strategy grown from the refined network, from Extra hard on (spec §8.5). Its final controller
     is the method's final controller; the run itself resumes and skips like every evolutionary run."""
     model = keras_cpu().models.load_model(paths.stage_path(approach, seed, "dagger", runs_dir), compile=False)
     hidden, activation = nets.dense_spec(model)
@@ -234,7 +234,7 @@ def speed_push(approach, seed, runs_dir=None, champion_dir=config.CHAMPIONS_DIR,
 
 
 def run(approach, seed, data, runs_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1):
-    """Refinement, then speed push: one counted run of revision 3 §8.3."""
+    """Refinement, then speed push: one counted run of spec §3.3."""
     refined = refine(approach, seed, data, runs_dir=runs_dir, n_jobs=n_jobs)
     pushed = speed_push(approach, seed, runs_dir=runs_dir, champion_dir=champion_dir, n_jobs=n_jobs)
     return {"approach": approach, "seed": seed, "dagger": refined, "speed": pushed}

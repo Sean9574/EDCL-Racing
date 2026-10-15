@@ -1,7 +1,7 @@
 # EC Racing: Design Specification
 
 **Evolutionary and Gradient-Based Search for Neural Network Driving Controllers**\
-ECDL Term Project · Fall 2026 · Version 3.2 · 11 October 2026
+ECDL Term Project · Fall 2026 · Version 3.3 · 14 October 2026
 
 ## Summary
 
@@ -30,10 +30,12 @@ visualization application shows training in progress and races between the final
 command executes the complete experiment; it saves checkpoints, resumes after an interruption and reports
 its progress live.
 
-Version 3.2 incorporates revision 3.2 (`docs/2026-10-11-ec-racing-robustness-design.md`): a road width of 10 to 16 m
+Version 3.3 adds a compiled simulator (§5.7): the time trials of training and the expert's validation lap run in a C++
+library that reproduces the numpy simulator exactly, at about a tenth of the processor time per generation.
+Version 3.2 incorporates revision 3.2: a road width of 10 to 16 m
 per map, two inputs for the position across the road and the road width, a stronger speed push, a robustness table at
 fixed widths, and jobs that run side by side on several machines as soon as their inputs exist.
-Version 3.1 incorporates revision 3.1 (`docs/2026-10-07-ec-racing-setup-design.md`): every evolved car also evolves its sensor length and steering sensitivity, the application can display races under a much higher grip, and training started in the application is kept. Version 3.0 incorporates revision 3 (`docs/2026-10-07-ec-racing-mastery-design.md`): freshly generated
+Version 3.1 incorporates revision 3.1: every evolved car also evolves its sensor length and steering sensitivity, the application can display races under a much higher grip, and training started in the application is kept. Version 3.0 incorporates revision 3: freshly generated
 circuits, time trials, the mastery criterion and speed push in place of a fixed evaluation budget, NEAT,
 DAgger and the execution of multi-day runs. Version 2.0 corrected the measurement of training epochs and
 inference time and added replication across seeds, the seeded ES and the run record.
@@ -128,7 +130,9 @@ Project/
 │   ├── track.py        track data structure, road grid, wall-distance lookup
 │   ├── track_gen.py    gentle loops, F1-inspired circuit generator, direction, geometric validation
 │   ├── tracks.py       validated tracks with the expert's lap time (bounded cache)
-│   ├── sim.py          vehicle dynamics, sensors, collisions, progress, fitness
+│   ├── sim.py          vehicle dynamics, sensors, collisions, progress, fitness (reference implementation)
+│   ├── fastsim.cpp     compiled simulator: time trials and the expert's lap (§5.7)
+│   ├── fastsim.py      builds and calls the compiled simulator; network programs
 │   ├── setup.py        evolved car setup: defaults, random draws, crossover, mutation
 │   ├── nets.py         dense populations and drivers, Keras conversion, champion loading
 │   ├── expert.py       scripted expert driver and dataset collection
@@ -151,7 +155,7 @@ Project/
 ├── scripts/            notebook generation, experiment runner, pilot runs, PDF rendering
 ├── tests/
 ├── results/            generated data (not under version control)
-└── docs/               design specifications and implementation plans
+└── docs/               this specification (PDF)
 ```
 
 *Figure 2. Repository layout.*
@@ -226,9 +230,11 @@ record of the reported run.
   available, the versions of Python, numpy, TensorFlow, Keras and keras-tuner, the settings that affect
   results (the values of §13), the code version (commit and whether the working tree had uncommitted
   changes), and the start and end time of each notebook.
-- **Worker count.** The number of worker processes is read from the environment variable
-  `EC_RACING_JOBS`, with a default of 6. `python -m racing.bench generation` measures the generation
-  time for a range of worker counts on the machine at hand. The run record logs the value used.
+- **Worker count.** The number of threads of the compiled simulator (§5.7), or of worker processes when the numpy
+  simulator runs, is read from the environment variable `EC_RACING_JOBS`, with a default of 6.
+  `python -m racing.bench generation` measures the generation time of both simulators for a range of counts on the
+  machine at hand. The run record logs the value used and the simulator (`compiled` with the g++ version, or
+  `numpy`).
 - **Platform.** The experiment runs on Linux. On the Windows desktop used for the reported run, it runs
   in the Windows Subsystem for Linux (WSL 2), with the project stored in the Linux file system, and the
   application's window is shown through WSLg. Windows must be prevented from sleeping during a run.
@@ -435,6 +441,70 @@ in training. Among completions, the faster run ranks higher.
 - **Deterministic:** all computation is in float64, and the step function involves no randomness.
   Identical weights on an identical track always produce identical results. This lets the training
   view re-simulate exactly the runs that training scored.
+- **Compiled:** the time trials of training and the expert's validation lap run in a compiled library (§5.7) that
+  reproduces this numpy implementation exactly.
+
+### 5.7 Compiled simulator
+
+The numpy simulator advances all cars of a map together, one step at a time, with a fixed cost of about 0.3 to 0.5 ms
+of interpreter and array-call overhead per step whatever the number of cars; a level-4 lap is about 1,900 steps. More
+worker processes do not remove this cost, and generations run one after another. The time trials and the expert's
+validation lap therefore run in a C++ library, `racing/fastsim.cpp`, called through Python's standard `ctypes` module by
+`racing/fastsim.py`. The time step stays 0.05 s.
+
+*Table 1a. Measured costs of the two simulators (development machine, Intel Core i7-12800H; level-4 maps).*
+
+| Quantity | numpy | Compiled |
+|---|---|---|
+| Time per car and step (550 trained cars, 3 laps) | 5.8–6.3 µs | 1.18–1.19 µs |
+| One generation, 550 cars × 3 maps × 3 laps, 6 workers or threads | 19.7 s | 1.96 s |
+| One generation, 12 workers (numpy) or 20 threads (compiled) | 25.3 s | 0.96 s |
+| Building one fresh map | 0.96 s, of which the expert's lap 0.81 s | about 0.15 s |
+
+- **Build.** The library is compiled with g++ (C++17; flags `-O3 -march=native -ffp-contract=off -std=c++17 -shared
+  -fPIC -pthread`) the first time it is needed on a machine, into `racing/_fastsim.so`, which is not under version
+  control, and again whenever `fastsim.cpp` is newer than the library or the library fails to load. A build writes a
+  temporary file and renames it into place, so runs that start at once never load a partly written library.
+- **One call per generation.** The maps of a generation, the cars' network programs and setups and each map's target
+  time are passed in one call. Every pair of map and car is an independent job; `EC_RACING_JOBS` threads take the next
+  unclaimed job from a shared counter, so a map whose cars finish early leaves no thread idle. Each job drives one car
+  from the start line until it is done, in the order of `sim.sense`, the network's action, `sim.step` and the progress
+  update; the car's own clock advances by DT per step. The returned values are those of `sim.RunResult`, and the
+  fitness is computed from them by `sim.fitness`. Results do not depend on the number of threads.
+- **Exact equivalence.** Every field of every `RunResult` equals the numpy simulator's (`np.array_equal`, with NaN
+  finish times in the same places). Every expression of `sim.py`, `track.wall_distance`, `expert.py` and
+  `actions.py` is transcribed with the same operand order in double precision; the build turns off fused
+  multiply-add and does not use `-ffast-math`; `cos`, `sin`, `hypot`, `atan2`, `tanh` and `sqrt` come from the C library
+  numpy calls on the same machine; rounding is half to even, as in `np.round`; ties go to the first largest output
+  (`np.argmax`) and the first nearest centerline point (`np.argmin`); indices wrap to non-negative values (`np.mod`).
+  Results produced with either simulator are therefore interchangeable, and interrupted runs resume with either.
+- **Network programs.** Every network is converted into a list of nodes evaluated in order: value slots hold the
+  inputs (0–11) and then one slot per node; a node has a slot, a bias, an activation (ReLU, tanh or identity) and its
+  incoming connections (source slot, weight); 15 output slots give the action order. A node's value is the sum of
+  source value × weight over its connections, from zero and in order, then plus the bias, then the activation. Dense
+  networks (`nets.DensePopulation`, evaluated with `np.einsum`) list each unit's inputs in index order; NEAT genomes
+  (`neat.NeatPopulation`, evaluated with `np.bincount`) list nodes by depth and each node's enabled connections in
+  genome order, so both sum exactly as numpy does. One format covers every architecture and activation, NEAT, and
+  networks of an earlier revision that read fewer inputs.
+- **Expert.** The expert (§7.1) and its quantization to the 15 actions are ported as a second kind of driver, used by
+  `expert.expert_lap_time` to validate every new map.
+- **Scope.** Single trained controllers (`nets.DenseNet`, `neat.NeatNet`) are evaluated with numpy's matrix product,
+  whose rounding depends on the linear-algebra library's internal order and cannot be reproduced. DAgger's own driving
+  (§8.4), the final races (§11), dataset collection (§7) and the application's playback (§10) therefore remain in
+  numpy; they still benefit from the faster map building.
+
+*Table 1b. Simulator used by each caller.*
+
+| Caller | Simulator |
+|---|---|
+| `population.evaluate_population`: every generation of GA, ES, seeded ES and NEAT, every speed push, the final selection (§9.5) | Compiled |
+| `expert.expert_lap_time`: validation of every map (`tracks.get_track`) | Compiled |
+| DAgger's driving and time trials, the final races, dataset collection, the application's playback | numpy |
+
+- **Choice and fallback.** `EC_RACING_SIM` selects the simulator: `auto` (default) uses the compiled simulator when the
+  library builds and numpy otherwise; `numpy` forces numpy. If g++ is missing or the build fails, the first use prints
+  one warning with the compiler's message and the run continues on numpy with identical results. Array shapes are
+  checked in Python before each call.
 
 ## 6. Controller Network Interface
 
@@ -847,17 +917,18 @@ The population size is 1,000, like the GA.
 
 The simulation is vectorized over individuals, and rays use sphere tracing (§5.2).
 
-- **Work distribution:** the evaluation of a generation is divided into tasks, each covering one of the
-  generation's three tracks for one share of the population, and the tasks are distributed across
-  worker processes (joblib). Each simulation step has a fixed cost of about 0.45 ms plus about 2.3 µs
-  per car, so a task should cover as many cars as possible on one track rather than few cars on all
-  three. Results are independent of the division, because cars do not interact.
-- **Number of workers:** chosen with the generation-time benchmark in `bench.py`, which times the same
-  evaluation path the training runs use.
+- **Work distribution:** with the compiled simulator (§5.7), a generation is one call in which threads drive the
+  pairs of map and car. With the numpy simulator, the evaluation is divided into tasks, each covering one of the
+  generation's three tracks for one share of the population, distributed across worker processes (joblib); each
+  numpy step has a fixed cost of about 0.45 ms plus about 2.3 µs per car, so a task should cover as many cars as
+  possible on one track. Results are independent of the division and of the simulator, because cars do not interact.
+- **Number of threads or workers:** chosen with the generation-time benchmark in `bench.py`, which times the same
+  evaluation path the training runs use, for both simulators.
 - **Keras training:** `steps_per_execution` (§8.1) is chosen with the Keras training-time benchmark in
   `bench.py`; XLA compilation is off for reliability (§8.1).
-- **Fresh maps:** each generation builds its three maps in the worker processes that drive them. A map
-  takes 0.1–0.6 s to build, against several seconds of driving. Every process keeps at most 8 built tracks, so memory stays constant over runs of many thousands of generations.
+- **Fresh maps:** each generation builds its three maps in the process that drives them: the calling process with the
+  compiled simulator, the worker processes with numpy. With the compiled expert lap (§5.7), a map takes about 0.15 s
+  to build. Every process keeps at most 8 built tracks, so memory stays constant over runs of many thousands of generations.
 - **Sensor length:** tracing time grows with a ray's length, so a population that evolves long sensors drives each
   generation more slowly. Results do not depend on it.
 - **NEAT:** all genomes of a generation are compiled into flat arrays and evaluated together, depth by
@@ -1150,6 +1221,12 @@ Automated tests use pytest.
   - reverse driving earns no progress
   - identical inputs produce identical outputs
 - **Sensors:** ray distances match analytically computed values for a car on a circular test track.
+- **Compiled simulator (§5.7):** every `RunResult` field equals the numpy simulator's (`np.array_equal`) for random
+  dense populations of several architectures and activations with per-car setups, NEAT populations after node and
+  connection mutations including disabled connections, a network that reads fewer inputs, the expert's lap on maps of
+  every level, and a generation of several maps in one call with one and with several threads; a slow test repeats the
+  comparison on a trained population from a checkpoint when one exists. The whole suite passes with either simulator
+  (`EC_RACING_SIM=numpy`).
 - **Expert driver:** completes every validated track at every level. Tracks it cannot complete are
   rejected, so no controller is scored on an infeasible track.
 - **Network interface:** the numpy forward pass and the exported Keras model produce identical classes
@@ -1233,7 +1310,9 @@ the pilots, the survival and step-size settings are reviewed before the reported
 | Model selection | Smallest network within one percentage point of the best validation accuracy |
 | Replication | Seeds 0, 1 and 2 for every method; Keras Tuner searches run once (seed 0) |
 | Map seeds | Validation 80–99; test 1000–1019; dataset 1,000,000–1,999,999; training from 2,000,000 |
-| Worker processes | `EC_RACING_JOBS`, default 6, chosen by benchmark per machine |
+| Threads (compiled) or worker processes (numpy) | `EC_RACING_JOBS`, default 6, chosen by benchmark per machine |
+| Simulator | `EC_RACING_SIM`: `auto` (compiled when it builds, default) or `numpy` |
+| Compiled simulator build | g++, C++17: `-O3 -march=native -ffp-contract=off -std=c++17 -shared -fPIC -pthread` |
 | Application playback | 1× equals twice real time |
 | Application grip | Normal 12 m/s²; Unlimited 120 m/s² (display only) |
 
@@ -1272,6 +1351,12 @@ completes every curriculum level reliably.
     This is accepted and included in the reported training cost.
 12. **Coarse steering.** Populations may settle at a steering sensitivity above 1, where steering saturates and loses
     smoothness. This is a result to be reported, not a defect.
+13. **Exactness of the compiled simulator.** Equality with numpy holds on one machine, because both call the same C
+    library; machines may differ in the last bit of a mathematical function, as the numpy simulator already may. A
+    numpy release that changed the summation order of `einsum` or `bincount` would break equality. The equivalence
+    tests (§12.1) run on every machine and detect both.
+14. **Threads beyond physical cores.** Hyperthreads and efficiency cores add less than a full core each; the benchmark
+    measures the best thread count per machine. A machine without g++ runs the numpy simulator, with identical results.
 
 ## 15. Software Environment
 
@@ -1279,6 +1364,8 @@ completes every curriculum level reliably.
   matplotlib, TensorFlow 2.21, Keras 3.13, keras-tuner, scikit-learn (which keras-tuner's Bayesian optimization
   needs), joblib, pygame, nbclient, nbformat, ipykernel,
   jupyter_client and pytest). A test verifies that the installed versions match the pinned ones.
+- **Compiler:** g++ with C++17 support for the compiled simulator (`sudo apt install build-essential` on Ubuntu and
+  WSL); without it, the numpy simulator runs.
 - **Platform:** Linux. On the Windows desktop used for the reported run, the Windows Subsystem for Linux
   (WSL 2) with the project in the Linux file system.
 - **Execution:** CPU only. Worker processes call `tf.config.set_visible_devices([], 'GPU')`. Every

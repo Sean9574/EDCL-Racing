@@ -1,4 +1,4 @@
-"""Final evaluation (spec §11, revision 3 §7): three-lap time trials on held-out maps, test accuracy, size, speed and
+"""Final evaluation (spec §11): three-lap time trials on held-out maps, test accuracy, size, speed and
 training cost, as tables and figures. Each method has one final controller per run seed; tables report the mean and
 standard deviation across seeds and lead with completion and lap times."""
 import json
@@ -27,12 +27,12 @@ EVENT_STYLES = {"level_up": "-", "goal": "-", "tightened": ":"}
 def _drive_track(drivers, track_seed, level, factor):
     """All config.LAPS laps for every controller on one track, simulated together (cars never interact). A car
     finishes within the simulator's limit of twice the reference lap time per lap, and succeeds if it finishes
-    within the target time (revision 3 §7.1)."""
+    within the target time (spec §11.1)."""
     return _drive_on(drivers, get_track(track_seed, level), track_seed, factor)
 
 
 def _drive_on(drivers, track, track_seed, factor):
-    """_drive_track on a given track (revision 3.2 §5.2 drives rebuilt maps)."""
+    """_drive_track on a given track (spec §11.1 drives rebuilt maps)."""
     keys = list(drivers)
     chosen = [drivers[k] for k in keys]
     result = sim.simulate(track, nets.mixed_policy(chosen), len(keys), laps=config.LAPS,
@@ -68,7 +68,7 @@ def driving_results(drivers, track_seeds, level=config.MAX_LEVEL, factor=config.
 
 def widened_track(seed, width, level=config.MAX_LEVEL):
     """Map `seed` rebuilt with the same centerline and a `width` m road, timed by the expert; None if the road would
-    reach another part of the map or the expert cannot drive it (revision 3.2 §5.2)."""
+    reach another part of the map or the expert cannot drive it (spec §11.1)."""
     track = build_track(get_track(seed, level).centerline, width, seed, level)
     if not geometry_ok(track, config.LEVELS[level]["min_corner"]):
         return None
@@ -86,7 +86,7 @@ def _drive_widened(drivers, seed, width, level, factor):
 
 def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, level=config.MAX_LEVEL,
                        factor=config.TARGET_FACTOR, n_jobs=1, backend="loky"):
-    """Every controller on every map rebuilt at every width (revision 3.2 §5.2), driven as a test map; maps left out
+    """Every controller on every map rebuilt at every width (spec §11.1), driven as a test map; maps left out
     at a width have no rows there. The maps are distributed across worker processes."""
     tasks = [(seed, width) for width in widths for seed in track_seeds]
     if n_jobs == 1:
@@ -99,7 +99,7 @@ def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, le
 
 
 def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
-    """Revision 3.2 §5.2: per method and width, the maps finished (in total and per seed) and succeeded, and the mean
+    """Spec §11.3 table 7: per method and width, the maps finished (in total and per seed) and succeeded, and the mean
     lap time on finished maps; each width's first column names how many maps it covers."""
     rows = []
     for approach in config.APPROACHES:
@@ -122,7 +122,7 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
 
 def best_seeds(validation):
     """For each approach, the run seed whose controller succeeded on the most validation maps; ties go to the higher
-    mean validation fitness, then to the lowest seed (revision 3 §7.1)."""
+    mean validation fitness, then to the lowest seed (spec §11.1)."""
     best = {}
     for approach in config.APPROACHES:
         sub = validation[validation["approach"] == approach]
@@ -181,14 +181,14 @@ def read_json(path):
 
 def run_summary(approach, seed, runs_dir):
     """Summary of the evolutionary run that produced a final controller: the run itself for the evolutionary methods,
-    the speed push for the imitation methods (revision 3 §6.4). {} if it does not exist."""
+    the speed push for the imitation methods (spec §8.5). {} if it does not exist."""
     if approach in config.IMITATION_APPROACHES:
         return read_json(paths.speed_dir(approach, seed, runs_dir) / "summary.json")
     return read_json(paths.run_dir(approach, seed, runs_dir) / "summary.json")
 
 
 def dagger_record(approach, seed, runs_dir):
-    """The DAgger refinement record of an imitation run (revision 3 §6.3); {} if it does not exist."""
+    """The DAgger refinement record of an imitation run (spec §8.4); {} if it does not exist."""
     return read_json(paths.run_dir(approach, seed, runs_dir) / "dagger.json")
 
 
@@ -206,7 +206,7 @@ def training_seconds(approach, seed, runs_dir):
 def metrics_per_seed(models, data, runs_dir, latency_calls=1000, drivers=None):
     """One row per final controller: test accuracy, size, speed and training cost. With drivers, the parameter count
     is the driver's, so a NEAT controller counts its genome's connections and biases rather than the zero-padded
-    layers of its Keras copy (revision 3 §5.4)."""
+    layers of its Keras copy (spec §9.9)."""
     rows = []
     for (approach, run_seed), model in models.items():
         same_prediction_settings(model)
@@ -271,7 +271,7 @@ def per_seed(per_track):
 
 def reduction_cell(summary):
     """The speed push's result for one run: the target reduction reached, 'not reached' if the run never reached the
-    mastery goal, '–' without a summary (revision 3 §4.4)."""
+    mastery goal, '–' without a summary (spec §9.4)."""
     if not summary:
         return "–"
     if not summary.get("goal_reached"):
@@ -281,7 +281,7 @@ def reduction_cell(summary):
 
 def setup_cells(drivers, approach, seeds):
     """The final controllers' sensor length (m, no decimals) and steering sensitivity (two decimals) as 'mean ± std'
-    across seeds (revision 3.1 §5); '–' for both without drivers for the method."""
+    across seeds (spec §11.3); '–' for both without drivers for the method."""
     rows = [np.asarray(drivers[(approach, int(s))].setup, dtype=float) for s in seeds
             if drivers and (approach, int(s)) in drivers]
     if not rows:
@@ -291,8 +291,8 @@ def setup_cells(drivers, approach, seeds):
 
 
 def results_table(per_track, runs_dir, drivers=None):
-    """Revision 3 §7.2 table 1: test maps finished and succeeded (in total and per seed), lap and race times,
-    crashes, the final controllers' setups (revision 3.1 §5; drivers: {(approach, seed): driver}) and the target
+    """Spec §11.3 table 1: test maps finished and succeeded (in total and per seed), lap and race times,
+    crashes, the final controllers' setups (drivers: {(approach, seed): driver}) and the target
     reduction of each seed's speed push."""
     seeds = per_seed(per_track)
     rows = []
@@ -318,7 +318,7 @@ def results_table(per_track, runs_dir, drivers=None):
 
 
 def head_to_head_table(per_track):
-    """Revision 3 §7.2 table 2: mean lap time on the test maps that every final controller finished, and on how many
+    """Spec §11.3 table 2: mean lap time on the test maps that every final controller finished, and on how many
     of those maps each method had the lowest lap time (its mean over seeds)."""
     if per_track.empty:
         return pd.DataFrame()
@@ -345,7 +345,7 @@ def head_to_head_table(per_track):
 
 def milestone_cell(summary, level):
     """When a run cleared `level` (on the last level: reached the mastery goal), as generation, evaluations and
-    active time (revision 3 §1, §7.2); 'not reached' if it never did; '–' without a summary or for a level below the
+    active time (spec §11.3); 'not reached' if it never did; '–' without a summary or for a level below the
     run's start level."""
     if not summary or summary.get("start_level", 1) > level:
         return "–"
@@ -371,7 +371,7 @@ def end_cell(summary):
 
 
 def training_cost_table(runs_dir):
-    """Revision 3 §7.2 table 3, one row per method and seed: when each level was cleared and the mastery goal
+    """Spec §11.3 table 3, one row per method and seed: when each level was cleared and the mastery goal
     reached, how the run ended, evaluations, and the time of each training stage. Seeds without any record are left
     out; missing records show '–' and goals never reached show 'not reached'."""
     rows = []
@@ -406,7 +406,7 @@ def training_cost_table(runs_dir):
 def stage_results(runs_dir, per_track, test_seeds=config.TEST_SEEDS, n_jobs=1):
     """Test-map results of the imitation methods after initial training and after DAgger (from their stage files)
     and after the speed push (their final controllers, taken from per_track), with a 'stage' column
-    (revision 3 §6.5)."""
+    (spec §8.6)."""
     from racing.backend import keras_cpu
     keras = keras_cpu()
     parts = []
@@ -428,7 +428,7 @@ def stage_results(runs_dir, per_track, test_seeds=config.TEST_SEEDS, n_jobs=1):
 
 
 def stages_table(results):
-    """Revision 3 §7.2 table 4: the imitation methods' test results after each stage."""
+    """Spec §11.3 table 4: the imitation methods' test results after each stage."""
     rows = []
     for approach in config.IMITATION_APPROACHES:
         for stage, name in STAGES:
@@ -446,7 +446,7 @@ def stages_table(results):
 
 
 def comparison_table(metrics):
-    """The course comparison (revision 3 §7.2 table 5), measured as in spec §11."""
+    """The course comparison (spec §11.3 table 5), measured as in spec §11.2."""
     rows = []
     for approach in config.APPROACHES:
         sub = metrics[metrics["approach"] == approach]
@@ -463,7 +463,7 @@ def comparison_table(metrics):
 
 
 def search_cost_table(runs_dir):
-    """Spec Table 5, search cost of each Keras Tuner method."""
+    """Spec §11.3 table 6, search cost of each Keras Tuner method."""
     rows = []
     for approach in config.TUNER_APPROACHES:
         summary = read_json(paths.search_dir(approach, runs_dir) / "summary.json")
@@ -621,7 +621,7 @@ SETUP_PANELS = (("sensor_mean", "Sensor length (m)", config.SENSOR_LENGTH_LIMITS
 
 
 def _setup_figure(plt, logs):
-    """Revision 3.1 §5: for each method, the population's mean sensor length (upper panel) and mean steering
+    """Spec §11.4: for each method, the population's mean sensor length (upper panel) and mean steering
     sensitivity (lower panel) per generation, one line per seed, with level advancements and target reductions
     marked and the revision 3 setup as a dashed line. None if no log records setups."""
     from matplotlib.lines import Line2D
@@ -662,8 +662,8 @@ def _setup_figure(plt, logs):
 
 
 def figures(runs_dir, out_dir):
-    """Revision 3 §7.3: the lowest map success share and the median lap time over training (one panel per method,
-    one line per seed), the population's mean setup over training (revision 3.1 §5), the step sizes, and the Keras
+    """Spec §11.4: the lowest map success share and the median lap time over training (one panel per method,
+    one line per seed), the population's mean setup over training, the step sizes, and the Keras
     Tuner trials. Only figures with data are written."""
     import matplotlib
     matplotlib.use("Agg")
@@ -773,7 +773,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
         frame.to_csv(folder / f"{name}.csv", index=False)
         (folder / f"{name}.md").write_text(to_markdown(frame))
     drawn = figures(runs_dir, out_dir / "figures")
-    if best:                                            # each method's best final controller (revision 3 §7.3)
+    if best:                                            # each method's best final controller (spec §11.4)
         drawn.append(netfig.draw_networks({approach: drivers[(approach, seed)] for approach, seed in best.items()},
                                           out_dir / "figures" / "networks.png"))
     return {**tables, "per_track": per_track, "validation": validation, "metrics": metrics, "best_seeds": best,

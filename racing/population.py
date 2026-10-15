@@ -1,4 +1,4 @@
-"""Shared helpers for the evolutionary approaches (spec §9.1, revision 3 §4): time-trial evaluation, final selection
+"""Shared helpers for the evolutionary approaches (spec §9.1-9.5): time-trial evaluation, final selection
 and saved controllers."""
 import json
 from dataclasses import dataclass
@@ -21,7 +21,7 @@ def fresh_workers(n_jobs):
 
 
 def split_tasks(n, seeds, n_jobs):
-    """(track position, track seed, individual indices) tasks for one evaluation (spec §9.5). Each track's
+    """(track position, track seed, individual indices) tasks for one evaluation (spec §9.10). Each track's
     individuals are split into n_jobs // len(seeds) shares (at least one), so a task drives many cars on one track."""
     shares = min(max(1, n_jobs // len(seeds)), max(n, 1))
     parts = np.array_split(np.arange(n), shares)
@@ -30,7 +30,7 @@ def split_tasks(n, seeds, n_jobs):
 
 @dataclass(eq=False)
 class TrialResult:
-    """One generation's time trials (revision 3 §4.1): one row per map, one column per car."""
+    """One generation's time trials (spec §9.2): one row per map, one column per car."""
     fitness: np.ndarray        # (n,) mean fitness over the maps, with the target time as the time limit
     success: np.ndarray        # (maps, n) three laps within the target time
     laps: np.ndarray           # (maps, n) laps completed within the target time
@@ -59,7 +59,7 @@ class TrialResult:
 
 def _time_trial(population, seed, level, factor):
     """Fitness, success, laps in time and finish time of every car over config.LAPS laps of one map, ending at the
-    target time (revision 3 §4.1). Every car drives with its own setup (revision 3.1 §2)."""
+    target time (spec §9.2). Every car drives with its own setup (spec §9.11)."""
     track = get_track(seed, level)
     result = sim.simulate(track, population.policy(), len(population), time_limit=sim.target_time(track, factor),
                           laps=config.LAPS, setup=population.setup)
@@ -68,7 +68,7 @@ def _time_trial(population, seed, level, factor):
 
 
 def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="loky"):
-    """Time trials of every car on every map (revision 3 §4.1). The per-map results are combined in map order, so
+    """Time trials of every car on every map (spec §9.2). The per-map results are combined in map order, so
     the result does not depend on n_jobs."""
     n = len(population)
     tasks = split_tasks(n, seeds, n_jobs)
@@ -95,7 +95,7 @@ def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="lok
 
 
 def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEEDS):
-    """The final controller (revision 3 §4.6): of the candidate indices, the car with the most successes on the
+    """The final controller (spec §9.5): of the candidate indices, the car with the most successes on the
     validation maps at target factor `factor`, then the highest mean fitness, then the earliest candidate. Returns
     (index into population, validation successes, mean validation fitness)."""
     candidates = np.asarray(candidates, dtype=np.int64)
@@ -106,8 +106,8 @@ def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEED
 
 
 def save_dense_champion(approach, seed, population, index, champion_dir=config.CHAMPIONS_DIR):
-    """Final dense controller (spec §6, revision 3 §6.4): a Keras file, the float64 weights (.npy) and the car's
-    setup (<seed>.setup.json, revision 3.1 §4); the architecture is the Keras file's. Returns the Keras file's path."""
+    """Final dense controller (spec §6, §9.5): a Keras file, the float64 weights (.npy) and the car's
+    setup (<seed>.setup.json); the architecture is the Keras file's. Returns the Keras file's path."""
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     flat = population.weights[int(index)]

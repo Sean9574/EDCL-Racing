@@ -1,4 +1,4 @@
-# EC Racing environment (revision 3 §8.4). Python 3.13.11.
+# EC Racing environment (spec §15). Python 3.13.11.
 # Install into a fresh Python 3.13 environment with:  pip install -r requirements.txt
 numpy==2.4.1
 scipy==1.17.1

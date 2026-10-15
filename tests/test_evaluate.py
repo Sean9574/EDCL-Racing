@@ -427,7 +427,7 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "50"
 
 
-# ----- revision 3.2 §5.2: robustness table -----
+# ----- spec §11.1: robustness table -----
 
 def test_a_widened_map_keeps_the_centerline_and_is_timed_by_the_expert(monkeypatch, fake_tracks):
     monkeypatch.setattr(evaluate.expert, "expert_lap_time", lambda track: 21.5)

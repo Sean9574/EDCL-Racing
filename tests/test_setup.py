@@ -96,7 +96,7 @@ def test_summary_reports_means_and_spreads():
         "sensor_mean": 50.0, "sensor_std": 10.0, "steer_mean": 1.5, "steer_std": 0.5}
 
 
-# ----- setups travel with the cars (revision 3.1 §2, §4; Review Focus 2) -----
+# ----- setups travel with the cars (spec §6, §9.11, §12.1) -----
 
 from racing import dagger, evaluate, nets, neat, population, sim  # noqa: E402
 

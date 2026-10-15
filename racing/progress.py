@@ -1,4 +1,4 @@
-"""Progress of a long experiment (revision 3 §8.3): the running run writes its state to a status file and its
+"""Progress of a long experiment (spec §3.3): the running run writes its state to a status file and its
 milestones to the run log; the runner, or a monitor in another terminal, shows the new milestones and a one-line
 status.
 
@@ -147,7 +147,7 @@ def format_status(status):
             reduction = _number(status.get("target_reduction"))
             parts.append("speed push" if math.isnan(reduction) else f"speed push −{100 * reduction:.1f}%")
         share = _number(status.get("min_share"))
-        need = config.SPEED_MASTERY_FRACTION if stage == "speed push" else config.MASTERY_FRACTION   # revision 3.2 §4
+        need = config.SPEED_MASTERY_FRACTION if stage == "speed push" else config.MASTERY_FRACTION   # spec §9.4
         fill = 0.0 if math.isnan(share) else share / need
         parts += [f"gen {status.get('generation', '?')}",
                   f"worst map {percent(share)} / {percent(need)} {bar(fill)}",
@@ -167,7 +167,7 @@ def stale_note(status, now=None):
 
 
 class Monitor:
-    """Shows the run log's new lines and the status line (revision 3 §8.3). In a terminal the status line is
+    """Shows the run log's new lines and the status line (spec §3.3). In a terminal the status line is
     updated in place; otherwise, as under nohup, it is printed as a whole line at most once per `period` seconds. A
     status that has not been updated for config.STATUS_STALE_AFTER seconds says so. With `status_dir`, the folder
     of runs trained side by side, it shows one status line per run instead."""

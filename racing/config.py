@@ -19,13 +19,13 @@ N_RAYS = 9
 RAY_ANGLES = np.radians(np.linspace(-90.0, 90.0, N_RAYS))   # index 0 = right, 4 = ahead, 8 = left
 RAY_RANGE = 50.0             # m, revision 3's sensor length and the ray input scale (an input of 1.0 is 50 m)
 RAY_MIN_STEP = 0.5           # m, smallest sphere-tracing step
-RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations of a RAY_RANGE ray; scaled with each ray's length (rev. 3.1 §2.1)
+RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations of a RAY_RANGE ray; scaled with each ray's length (spec §5.2)
 
-# --- Car setup (revision 3.1 §2) ---
+# --- Car setup (spec §9.11) ---
 DEFAULT_SETUP = (RAY_RANGE, 1.0)   # (sensor length m, steering sensitivity) of every car in revision 3
-SENSOR_LENGTH_LIMITS = (10.0, 150.0)   # m, the sensor lengths evolution may choose (revision 3.1 Table 1)
+SENSOR_LENGTH_LIMITS = (10.0, 150.0)   # m, the sensor lengths evolution may choose (spec §9.11)
 STEER_GAIN_LIMITS = (1.0 / 3.0, 3.0)   # the steering sensitivities evolution may choose
-SETUP_MUTATION_P = 0.2       # chance that each setup value of a child is mutated (revision 3.1 §3.3)
+SETUP_MUTATION_P = 0.2       # chance that each setup value of a child is mutated (spec §9.11)
 SETUP_MUTATION_SD = 0.1      # standard deviation of that mutation on the natural-log scale (about ±10%)
 
 # --- Track geometry (spec §4) ---
@@ -36,7 +36,7 @@ OVERLAP_MARGIN = 6.0         # m of grass required between separate parts of the
 MAX_TRACK_ATTEMPTS = 200
 PROGRESS_BACK = 5.0          # m behind the last matched centerline point
 PROGRESS_AHEAD = 30.0        # m ahead of the last matched centerline point
-LEVELS = {                   # revision 3 Table 1: Easy loops, circuits with F1-style features above it
+LEVELS = {                   # spec Table 1: Easy loops, circuits with F1-style features above it
     1: {"kind": "loop", "points": (4, 6), "radius": (60.0, 110.0), "min_corner": 45.0},
     2: {"kind": "circuit", "points": (6, 8), "radius": (60.0, 170.0), "slow": (25.0, 45.0), "fast": (50.0, 80.0),
         "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 24.0},
@@ -46,16 +46,16 @@ LEVELS = {                   # revision 3 Table 1: Easy loops, circuits with F1-
         "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0},
 }
 MAX_LEVEL = 4
-CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (revision 3 §3.2)
-DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (revision 3 §3.3)
-WIDTH_RANGE = (10.0, 16.0)   # m: every map's road width is drawn from this range (revision 3.2 §2.1)
+CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (spec §4.3)
+DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (spec §4.4)
+WIDTH_RANGE = (10.0, 16.0)   # m: every map's road width is drawn from this range (spec §4.2)
 WIDTH_SALT = 13              # a map's width: default_rng([seed, level, WIDTH_SALT]), the same for every attempt
 TRACK_CACHE_SIZE = 8         # built tracks kept per process (an Extra hard track holds 10-14 MB); training maps are
                              # fresh every generation, so a larger cache only costs memory in every worker
 
 # --- Network interface (spec §6) ---
-WIDTH_SCALE = 20.0           # m, input scale of the road width (revision 3.2 §3)
-N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (revision 3.2 §3)
+WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
+N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (spec §5.2)
 STEER_LEVELS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
 THROTTLE_LEVELS = np.array([-1.0, 0.0, 1.0])               # brake, coast, gas
 N_ACTIONS = len(STEER_LEVELS) * len(THROTTLE_LEVELS)       # 15
@@ -72,28 +72,28 @@ PERTURB_INTERVAL = (2.0, 4.0)   # s between steering disturbances
 PERTURB_DURATION = (0.3, 0.6)   # s per disturbance
 DATASET_SALT = 99
 
-# --- Seeds (revision 3 §3.4) ---
+# --- Seeds (spec §4.6) ---
 VAL_SEEDS = range(80, 100)
 TEST_SEEDS = range(1000, 1020)
 DATASET_SEED_RANGE = (1_000_000, 2_000_000)   # the imitation dataset's maps are drawn once from this range
-DATASET_TRACKS = {1: 1, 2: 20, 3: 20, 4: 80}  # dataset maps per level (revision 3 §6.1)
-TRAIN_SEED_START = 2_000_000                  # evolutionary and DAgger maps are drawn from here on (revision 3 §3.4)
+DATASET_TRACKS = {1: 1, 2: 20, 3: 20, 4: 80}  # dataset maps per level (spec §7.3)
+TRAIN_SEED_START = 2_000_000                  # evolutionary and DAgger maps are drawn from here on (spec §4.6)
 RUN_SEEDS = (0, 1, 2)        # every method is run once per seed (spec §11)
 SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 
-# --- Time trial, survival and levels (revision 3 §4) ---
+# --- Time trial, survival and levels (spec §9.2-9.4) ---
 TRACKS_PER_GEN = 3
-TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LAPS expert laps (revision 3 §4.1)
-MASTERY_FRACTION = 0.9       # lowest map success share for a passing generation (revision 3 §4.3)
+TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LAPS expert laps (spec §9.2)
+MASTERY_FRACTION = 0.9       # lowest map success share for a passing generation (spec §9.4)
 MASTERY_STREAK = 3           # consecutive passing generations to advance a level or master a target
-SPEED_STEP = 0.98            # target factor multiplier per mastered target in the speed push (revision 3.2 §4)
-SPEED_MASTERY_FRACTION = 0.75  # lowest map success share of a passing speed-push generation (revision 3.2 §4)
+SPEED_STEP = 0.98            # target factor multiplier per mastered target in the speed push (spec §9.4)
+SPEED_MASTERY_FRACTION = 0.75  # lowest map success share of a passing speed-push generation (spec §9.4)
 SPEED_PATIENCE = 300         # generations without mastering the current target that end the speed push
-SAFETY_PATIENCE = 2000       # generations without a new best 3-generation mean lowest share that end a run (§4.5)
-KEEP_MAX_FRACTION = 0.9      # kept cars fill at most this share of the population (revision 3 §4.2)
+SAFETY_PATIENCE = 2000       # generations without a new best 3-generation mean lowest share that end a run (spec §9.4)
+KEEP_MAX_FRACTION = 0.9      # kept cars fill at most this share of the population (spec §9.3)
 ELITE_FLOOR = 50             # at least this many of the fittest cars are kept
 
-# --- Genetic algorithm (revision 3 §5.1) ---
+# --- Genetic algorithm (spec §9.6) ---
 GA_POP = 1000
 GA_TOURNAMENT = 5
 GA_CROSSOVER_P = 0.5
@@ -101,7 +101,7 @@ GA_MUTATION_P = 0.1
 GA_S_MAX = 0.1               # chosen by the pilot runs (scripts/pilots.py) from 0.5, 0.2 and 0.1, fastest level progression
 GA_S_MIN = GA_S_MAX / 100
 
-# --- Evolution strategy (revision 3 §5.2) ---
+# --- Evolution strategy (spec §9.7) ---
 ES_POP = 550
 ES_MU = 50                   # children are copies of one of the ES_MU fittest cars
 ES_SIGMA0 = 0.1
@@ -109,7 +109,7 @@ ES_FACTOR = 0.82
 ES_SIGMA_MIN = 1e-4
 ES_SIGMA_MAX = 1.0
 
-# --- NEAT (revision 3 §5.4) ---
+# --- NEAT (spec §9.9) ---
 NEAT_POP = 1000
 NEAT_CROSSOVER = 0.75        # share of children produced by crossover; the rest are mutated copies
 NEAT_TOURNAMENT = 3          # parents are the winners of tournaments within their species
@@ -131,7 +131,7 @@ NEAT_STAGNATION = 20         # generations without improvement after which a spe
 
 # --- Parallelism ---
 def worker_count(environ=os.environ):
-    """Worker processes for parallel evaluation (revision 3 §8.4): EC_RACING_JOBS, or 6 when it is not set. The best
+    """Worker processes for parallel evaluation (spec §3.3): EC_RACING_JOBS, or 6 when it is not set. The best
     value for a machine is measured with `python -m racing.bench generation`."""
     value = environ.get("EC_RACING_JOBS", "").strip()
     if not value:
@@ -158,7 +158,7 @@ JIT_COMPILE = False          # XLA is ~11% faster per epoch (racing/bench.py, 64
                              # desktop's i9-12900K its JIT failed after ~130 Keras Tuner trials ("Failed to
                              # materialize symbols") and stayed broken in that process; reliability wins
 
-# --- DAgger (revision 3 §6.3) ---
+# --- DAgger (spec §8.4) ---
 DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and as many more for the round's check
 DAGGER_EPOCHS = 30           # at most, per round
 DAGGER_HOLDOUT = 0.1         # share of the aggregated rows held out for early stopping
@@ -172,18 +172,18 @@ APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga"
 TUNER_APPROACHES = ("kt_random", "kt_hyperband", "kt_bayesian")
 EVOLUTION_APPROACHES = ("ga", "es", "es_seeded", "neat")
 IMITATION_APPROACHES = ("baseline", *TUNER_APPROACHES)
-RUN_ORDER = tuple((a, s) for a in (*IMITATION_APPROACHES, *EVOLUTION_APPROACHES) for s in RUN_SEEDS)  # revision 3 §8.3
+RUN_ORDER = tuple((a, s) for a in (*IMITATION_APPROACHES, *EVOLUTION_APPROACHES) for s in RUN_SEEDS)  # spec §3.3
 LABELS = {"baseline": "Baseline", "kt_random": "KT Random", "kt_hyperband": "KT Hyperband",
           "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA", "es_seeded": "Seeded ES", "neat": "NEAT"}
 COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E9",
           "kt_bayesian": "#CC79A7", "es": "#009E73", "ga": "#D55E00", "es_seeded": "#0072B2",
-          "neat": "#F0E442"}         # the remaining Okabe-Ito color (revision 3 §9)
+          "neat": "#F0E442"}         # the remaining Okabe-Ito color (spec §10.1)
 
 # --- Application (spec §10) ---
 WINDOW_SIZE = (1280, 800)
 PANEL_WIDTH = 380
 FPS = 60
-POPULATION_PRESETS = (100, 250, 550, 1000, 2000)    # 550 is the ES population (revision 3 §5.2)
+POPULATION_PRESETS = (100, 250, 550, 1000, 2000)    # 550 is the ES population (spec §9.7)
 SPEEDS = (1, 2, 4, 8)
 PLAYBACK_BASE = 2.0          # simulated seconds per real second at 1× playback
 MAX_STEPS_PER_FRAME = 10     # simulation steps per drawn frame; a stalled frame cannot trigger a burst
@@ -192,8 +192,8 @@ KT_VIEW_SEED = 80
 RACE_LAPS = LAPS
 DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
 APP_GRIPS = {"Normal": GRIP, "Unlimited": 10.0 * GRIP}   # m/s², display grip of the viewer's own simulations only
-                                                         # (revision 3.1 §6); never a recorded setting
-ROBUSTNESS_WIDTHS = (8.0, 10.0, 14.0, 18.0)   # m, the robustness table's widths (revision 3.2 §5.2); evaluation only
+                                                         # (spec §10.5); never a recorded setting
+ROBUSTNESS_WIDTHS = (8.0, 10.0, 14.0, 18.0)   # m, the robustness table's widths (spec §11.1); evaluation only
 REPLAY_POLL_SECONDS = 1.0    # the notebook-run view looks for a newer generation at most this often
 CAMERA_ZOOMS = (1, 2, 4, 8)  # the camera button's steps; above 1 the camera follows the best car or the race leader
 
@@ -204,14 +204,14 @@ DATASET_PATH = RESULTS_DIR / "dataset.npz"
 DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"
 RUNS_DIR = RESULTS_DIR / "runs"
 APP_RUNS_DIR = RESULTS_DIR / "app_runs"
-APP_CHAMPIONS_DIR = APP_RUNS_DIR / "champions"   # the best car of each viewer run (revision 3.1 §6.1); never evaluated
+APP_CHAMPIONS_DIR = APP_RUNS_DIR / "champions"   # the best car of each viewer run (spec §10.6); never evaluated
 CHAMPIONS_DIR = RESULTS_DIR / "champions"
 BEST_SEEDS_NAME = "best_seeds.json"
 PILOTS_DIR = RESULTS_DIR / "pilots"
 RUN_INFO_PATH = RESULTS_DIR / "run_info.json"
 RUN_LOG_PATH = RESULTS_DIR / "run_log.txt"
 STATUS_PATH = Path(os.environ.get("EC_RACING_STATUS") or RESULTS_DIR / "status.json")   # a job trained side by side
-                             # gets its own status file, also inside a notebook's kernel (revision 3.2 §6.3)
+                             # gets its own status file, also inside a notebook's kernel (spec §3.3)
 STATUS_DIR = RESULTS_DIR / "status"          # one status file per run when runs train side by side (fleet)
 TRAIN_LOGS_DIR = RESULTS_DIR / "train_logs"  # what each run trained side by side prints itself
 STATUS_STALE_AFTER = 600.0   # s; the monitor marks an older status as not updated, as a stopped run leaves it

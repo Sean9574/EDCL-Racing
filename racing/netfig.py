@@ -1,4 +1,4 @@
-"""Network figure (revision 3 §7.3): each method's best final controller drawn as a graph. The nine distance rays
+"""Network figure (spec §11.4): each method's best final controller drawn as a graph. The nine distance rays
 and the speed input are on the left, hidden nodes in columns by depth, the 15 actions on the right. Connections are
 blue when positive and red when negative, wider and more opaque when stronger; biases are not drawn."""
 from pathlib import Path
@@ -100,7 +100,7 @@ def _draw_graph(ax, graph):
 
 
 def setup_text(driver):
-    """' · <sensor length> m · ×<steering sensitivity>' of a driver's setup (revision 3.1 §5); the revision 3 setup
+    """' · <sensor length> m · ×<steering sensitivity>' of a driver's setup (spec §11.4); the revision 3 setup
     for a driver without one."""
     length, gain = np.asarray(getattr(driver, "setup", config.DEFAULT_SETUP), dtype=float)
     return f" · {length:.0f} m · ×{gain:.2f}"

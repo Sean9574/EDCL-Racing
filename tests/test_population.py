@@ -65,7 +65,7 @@ def test_fresh_workers_with_one_job_only_clears_the_track_cache(monkeypatch):
     assert tracks.get_track.cache_info().currsize == 0
 
 
-# ----- revision 3 time trials (revision 3 §4.1, §4.6) -----
+# ----- revision 3 time trials (spec §9.2, §9.5) -----
 
 def dense(n, seed=0):
     return nets.DensePopulation(nets.init_population(np.random.default_rng(seed), n))
@@ -76,7 +76,7 @@ class ExpertCars:
 
     def __init__(self, track, n):
         self.track, self.n = track, n
-        self.setup = car_setup.default(n)                # revision 3's sensors and steering (revision 3.1 §2)
+        self.setup = car_setup.default(n)                # revision 3's sensors and steering (spec §9.11)
 
     def __len__(self):
         return self.n

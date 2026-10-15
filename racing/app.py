@@ -65,7 +65,7 @@ def needs_outline(color, background=WHITE):
     return contrast(color, background) < MIN_LINE_CONTRAST
 
 
-UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (revision 3.1 §6.1)
+UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (spec §10.6)
 UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
 
 
@@ -163,7 +163,7 @@ def car_polygon(sx, sy, heading, size):
 
 class Playback:
     """Re-simulates a set of controllers on one track, a few steps at a time, for display. Each car drives with its
-    own setup and every car with the viewer's display grip (revision 3.1 §6); training never uses this class."""
+    own setup and every car with the viewer's display grip (spec §10.5); training never uses this class."""
 
     def __init__(self, track, policy, n, laps=1, time_limit=None, setup=None, grip=config.GRIP):
         self.track = track
@@ -185,8 +185,8 @@ class Playback:
 
 
 def report_policy(report, indices):
-    """Policy for the chosen members of a training report: an evolutionary population (dense or NEAT, revision 3
-    §9) or the networks of an imitation report."""
+    """Policy for the chosen members of a training report: an evolutionary population (dense or NEAT, spec §10.2)
+    or the networks of an imitation report."""
     if "population" in report:
         return report["population"].subset(indices).policy()
     return nets.mixed_policy([report["nets"][i] for i in indices])
@@ -194,7 +194,7 @@ def report_policy(report, indices):
 
 def report_inputs(report):
     """Inputs the networks of a training report take; None for NEAT genomes, whose inputs are implicit. A report of
-    an earlier revision may take fewer than config.N_INPUTS (revision 3.2 §7)."""
+    an earlier revision may take fewer than config.N_INPUTS (spec §10.2)."""
     if "population" not in report:
         return report["nets"][0].n_inputs
     population = report["population"]
@@ -232,7 +232,7 @@ def folder_profile(name, folder):
 
 def report_setup(report, indices):
     """Setups of the chosen members of a training report: the population's rows, or each imitation network's own
-    (revision 3.1 §2)."""
+    (spec §9.11)."""
     if "population" in report:
         return report["population"].subset(indices).setup
     return nets.drivers_setup([report["nets"][i] for i in indices])
@@ -260,7 +260,7 @@ def leaderboard(playback, count):
 
 
 def save_app_car(report, champion_dir):
-    """The best car of an evolutionary report, saved with its setup as the run's app car (revision 3.1 §6.1): the
+    """The best car of an evolutionary report, saved with its setup as the run's app car (spec §10.6): the
     files of a final controller, in `champion_dir`. They are written in a staging folder and each moved into place in
     one step, so the race view, which may load the car while training continues, never reads a half-written file."""
     from racing import neat
@@ -281,7 +281,7 @@ def save_app_car(report, champion_dir):
 
 
 def save_app_model(approach, seed, model, champion_dir):
-    """An imitation network saved as the run's app car (revision 3.1 §6.1). It has no setup file, so it drives with
+    """An imitation network saved as the run's app car (spec §10.6). It has no setup file, so it drives with
     the revision 3 setup. The file is replaced in one step, so the race view never reads half a model."""
     population.clear_champion(approach, seed, champion_dir)
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
@@ -294,10 +294,10 @@ def save_app_model(approach, seed, model, champion_dir):
 def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=None, app_champions_dir=None,
                  acks=None):
     """Training process: trains one approach with run seed `seed` and sends a report after every generation, trial
-    or epoch (revision 3 §9). With `acks`, training runs in step with the viewer: after each report it waits until
+    or epoch (spec §10.2). With `acks`, training runs in step with the viewer: after each report it waits until
     the viewer has replayed it (or is not watching), so the generation on screen is the one just trained. An evolutionary run continues the saved run of the same approach and seed in the app
     runs folder (App.new_run removes it to start over); imitation training always starts afresh. The run's best car
-    so far is saved to the app champions folder so it can race (revision 3.1 §6.1); the reported results are never
+    so far is saved to the app champions folder so it can race (spec §10.6); the reported results are never
     written. Returns 0, or UNUSABLE_RUN when the saved run cannot be resumed (other settings or a damaged file)."""
     from racing import es, ga, imitation, neat
     from racing.expert import collect_dataset
@@ -349,7 +349,7 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
               "best": float(fitness.max()), "mean": float(fitness.mean()), "worst": float(fitness.min()),
               "leveled_up": False})
 
-    if approach == "baseline":                         # resume=False: always train live, never skip (revision 3 §9)
+    if approach == "baseline":                         # resume=False: always train live, never skip (spec §10.6)
         imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False, report=False,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
     else:
@@ -370,7 +370,7 @@ def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=
                     acks=None):
     """Entry point of the training process. It leads its own process group, so stopping it also stops the worker
     processes it starts (spec §10.2). A watcher thread ends the group if the viewer exits without stopping it. The
-    process exits with the trainer's code, so the viewer can tell an unusable saved run (revision 3.1 §6.1)."""
+    process exits with the trainer's code, so the viewer can tell an unusable saved run (spec §10.6)."""
     os.setpgrp()
     threading.Thread(target=watch_parent, args=(os.getppid(), os.killpg), daemon=True).start()
     code = trainer_main(approach, size, seed, level, reports, running, app_runs_dir, app_champions_dir, acks)
@@ -400,7 +400,7 @@ def share_text(shares):
 
 
 def setup_line(report):
-    """The population's mean and spread of sensor length and steering sensitivity (revision 3.1 §6)."""
+    """The population's mean and spread of sensor length and steering sensitivity (spec §10.2)."""
     return (f"Sensors {report['sensor_mean']:.0f} m ± {report['sensor_std']:.0f}  "
             f"Steering ×{report['steer_mean']:.2f} ± {report['steer_std']:.2f}")
 
@@ -427,9 +427,9 @@ REPLAY_KEYS = {"approach", "generation", "level", "seeds", "population", "fitnes
 
 
 def stats_lines(report, approach):
-    """Training panel stats lines (revision 3 §9). Evolutionary reports: difficulty and generation, each map's
+    """Training panel stats lines (spec §10.2). Evolutionary reports: difficulty and generation, each map's
     success share against the 90% requirement, the streak and the target cut mastered, the step size and the kept
-    cars, the fitness (and NEAT's species). With setups, the population's mean setup (revision 3.1 §6). Imitation
+    cars, the fitness (and NEAT's species). With setups, the population's mean setup (spec §10.2). Imitation
     reports: the epoch or trial and the validation accuracy."""
     if "min_share" not in report:
         unit = "Trial" if approach.startswith("kt") else "Epoch"
@@ -482,13 +482,13 @@ class App:
         self.folder_inputs, self.folder_widths = config.N_INPUTS, None      # folder_profile of that folder
         self.runs_dir = config.RUNS_DIR                 # the shown folder's notebook runs
         self.train_runs_dir = config.RUNS_DIR           # where the seeded ES trained here finds the DAgger baseline
-        self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (revision 3.1 §6.1)
+        self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (spec §10.6)
         self.app_champions_dir = config.APP_CHAMPIONS_DIR   # their best cars, raceable in the race view
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
         self.rays = False
         self.zoom_index = 0                 # into config.CAMERA_ZOOMS; above 1× the camera follows a car
-        self.grip_name = "Normal"           # display grip of the viewer's own simulations (revision 3.1 §6)
+        self.grip_name = "Normal"           # display grip of the viewer's own simulations (spec §10.5)
         self.process = None
         self.reports = None
         self.running = None
@@ -524,7 +524,7 @@ class App:
         self.race = None                    # Playback: the preview until the race starts
         self.racing = False
         self.failed = set()                 # (approach, seed) whose controller file could not be loaded
-        self.app_available = {}             # approach -> run seeds with a saved app car (revision 3.1 §6.1)
+        self.app_available = {}             # approach -> run seeds with a saved app car (spec §10.6)
         self.app_choice = {}                # approach -> "off" or a run seed
         self.app_lineup = []                # (approach, seed, "app") of the app cars in the race
         self.race_group = "final"           # the controller list shown: "final" (reported) or "app"
@@ -598,7 +598,7 @@ class App:
 
     def new_run(self):
         """Delete the saved run of the selected approach and run seed and its app car, then start training afresh
-        with the current settings (revision 3.1 §6.1). Ignored while training runs."""
+        with the current settings (spec §10.6). Ignored while training runs."""
         if self.process is not None or self.source == "notebook":
             return
         paths.remove(self.saved_run_dir())
@@ -672,7 +672,7 @@ class App:
 
     def cycle_folder(self):
         """Show the next results folder's notebook runs and controllers: the current results, then each archive of an
-        earlier revision, whose runs drive on that revision's maps (revision 3.2 §7). Training started here keeps
+        earlier revision, whose runs drive on that revision's maps (spec §10.2). Training started here keeps
         this revision's folders. Not during a race."""
         if self.racing:
             return
@@ -735,7 +735,7 @@ class App:
         if self.source == "notebook":                       # nothing to stop: the notebook run is not ours
             return
         self.stop_training()
-        self.halted = True                                   # the replay freezes where it is (revision 3 §9)
+        self.halted = True                                   # the replay freezes where it is (spec §10.2)
         self.status = "Stopped. Change the settings or press Play."
 
     def discard_reports(self):
@@ -997,7 +997,7 @@ class App:
         return config.APP_GRIPS[self.grip_name]
 
     def set_grip(self, name):
-        """Display grip for the viewer's races and training replays (revision 3.1 §6). Training, evaluation and the
+        """Display grip for the viewer's races and training replays (spec §10.5). Training, evaluation and the
         expert always use config.GRIP. Locked while a race runs; a running replay restarts with the new grip, a
         stopped one stays frozen and the next replay uses it."""
         if name not in config.APP_GRIPS or name == self.grip_name or self.racing:
@@ -1138,7 +1138,7 @@ class App:
         return f"Controllers: {'app runs' if self.race_group == 'app' else 'reported'} ▸"
 
     def cycle_race_group(self):
-        """Switch the controller list between the reported controllers and the app cars (revision 3.1 §6.1)."""
+        """Switch the controller list between the reported controllers and the app cars (spec §10.6)."""
         if self.app_available:
             self.race_group = "app" if self.race_group == "final" else "final"
 
@@ -1178,7 +1178,7 @@ class App:
             model, driver = nets.load_champion(approach, seed, directory)
             inputs = model.input_shape[-1]
             expected = self.folder_inputs if source == "final" else config.N_INPUTS     # app cars are this revision's
-            if inputs != expected:                           # a controller of another revision (revision 3.2 §7)
+            if inputs != expected:                           # a controller of another revision (spec §10.3)
                 raise ValueError(f"made for {inputs} inputs, these runs have {expected}")
             if not isinstance(driver, nets.DenseNet) and inputs != config.N_INPUTS:
                 raise ValueError("an earlier revision's NEAT controllers cannot be shown")
@@ -1485,7 +1485,7 @@ class App:
             self.draw_plot(pygame.Rect(x, y + 4, w, bottom - y - 4))
 
     def draw_view_toggles(self, x, y, w):
-        """Sensor rays and the display grip side by side (revision 3.1 §6). Returns the next free y."""
+        """Sensor rays and the display grip side by side (spec §10.2, §10.5). Returns the next free y."""
         half = (w - 8) // 2
         self.button(pygame.Rect(x, y, half, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
                     self.rays)

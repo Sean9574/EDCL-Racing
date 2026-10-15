@@ -1,4 +1,4 @@
-"""Car setups (revision 3.1 §2-3): each car's sensor length and steering sensitivity, as one row of an (n, 2)
+"""Car setups (spec §9.11): each car's sensor length and steering sensitivity, as one row of an (n, 2)
 array next to its network. Every method draws, inherits and mutates setups with these rules, so setup evolution
 favours no method. Values change on the natural-log scale, so halving and doubling are equally large steps."""
 import numpy as np
@@ -37,26 +37,26 @@ def as_row(value):
 
 
 def random(rng, n):
-    """n setups drawn uniformly on the log scale within the limits (revision 3.1 §3.2): one rng.uniform call."""
+    """n setups drawn uniformly on the log scale within the limits (spec §9.11): one rng.uniform call."""
     low, high = _limits()
     return np.exp(rng.uniform(np.log(low), np.log(high), (int(n), 2)))
 
 
 def clip(values):
-    """Setups moved into the limits of revision 3.1 Table 1."""
+    """Setups moved into the limits of spec §9.11."""
     low, high = _limits()
     return np.clip(np.asarray(values, dtype=float), low, high)
 
 
 def crossover(rng, a, b):
-    """Each value from setup a or setup b with equal probability (revision 3.1 §3.3): one rng.random call."""
+    """Each value from setup a or setup b with equal probability (spec §9.11): one rng.random call."""
     a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
     return np.where(rng.random(a.shape) < 0.5, a, b)
 
 
 def mutate(rng, values):
     """Each value, with probability SETUP_MUTATION_P, multiplied by exp(N(0, SETUP_MUTATION_SD)), then clipped
-    (revision 3.1 §3.3). Always draws two arrays of values.shape, the mask and then the noise."""
+    (spec §9.11). Always draws two arrays of values.shape, the mask and then the noise."""
     values = np.asarray(values, dtype=float)
     mask = rng.random(values.shape) < config.SETUP_MUTATION_P
     noise = rng.normal(0.0, config.SETUP_MUTATION_SD, values.shape)

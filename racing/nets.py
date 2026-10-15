@@ -22,7 +22,7 @@ def n_params(hidden=config.BASELINE_HIDDEN, n_inputs=config.N_INPUTS):
 
 def inputs_of(n_weights, hidden=config.BASELINE_HIDDEN):
     """Inputs of a dense network with `n_weights` weights and biases: config.N_INPUTS for this revision's networks,
-    fewer for an earlier revision's, which read only the first inputs (revision 3.2 §7)."""
+    fewer for an earlier revision's, which read only the first inputs (spec §6)."""
     first = (*hidden, config.N_ACTIONS)[0]                         # units of the first layer
     rest = n_params(hidden) - (config.N_INPUTS + 1) * first
     inputs, extra = divmod(int(n_weights) - rest, first)
@@ -92,8 +92,8 @@ def population_policy(flat, hidden=config.BASELINE_HIDDEN, activation="relu"):
 
 
 class DensePopulation:
-    """Dense networks of one architecture, one flat weight vector and one setup row per car (revision 3 §5,
-    revision 3.1 §2). Like every population type, it offers len(), subset(indices), policy(), driver(i) and setup."""
+    """Dense networks of one architecture, one flat weight vector and one setup row per car (spec §9.1, §9.11).
+    Like every population type, it offers len(), subset(indices), policy(), driver(i) and setup."""
 
     def __init__(self, weights, hidden=config.BASELINE_HIDDEN, activation="relu", setup=None):
         self.weights = np.asarray(weights, dtype=float)
@@ -121,7 +121,7 @@ class DensePopulation:
 
 class DenseNet:
     """A plain stack of dense layers in numpy. Drives a car with any trained controller, with the car's setup
-    (revision 3.1 §2; revision 3's when none is given)."""
+    (spec §9.11; revision 3's when none is given)."""
 
     def __init__(self, layers, activations, setup=None):
         self.layers = [(np.asarray(w, dtype=float), np.asarray(b, dtype=float)) for w, b in layers]
@@ -199,7 +199,7 @@ def to_flat(model):
 
 
 def drivers_setup(drivers):
-    """The (len(drivers), 2) setups of a list of drivers, in order, for sim.simulate (revision 3.1 §2)."""
+    """The (len(drivers), 2) setups of a list of drivers, in order, for sim.simulate (spec §9.11)."""
     return car_setup.as_rows([np.asarray(driver.setup, dtype=float) for driver in drivers], len(drivers))
 
 
@@ -228,9 +228,9 @@ def champion_seeds(directory=None):
 
 def load_champion(approach, seed, directory=None):
     """(Keras model, driver) of one final controller. A NEAT controller drives with its genome (<seed>.json,
-    revision 3 §5.4); an evolved dense controller with its float64 weights (.npy) and the architecture of its Keras
+    spec §9.9); an evolved dense controller with its float64 weights (.npy) and the architecture of its Keras
     file (dense_spec); an imitation controller with the Keras weights (spec §6). The driver has the setup saved in
-    <seed>.setup.json, or revision 3's without that file (revision 3.1 §4)."""
+    <seed>.setup.json, or revision 3's without that file (spec §6)."""
     keras_path = paths.champion_path(approach, seed, champion_dir=directory)
     model = keras_cpu().models.load_model(keras_path)
     genome_path = paths.champion_path(approach, seed, ".json", directory)

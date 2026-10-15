@@ -1,4 +1,4 @@
-"""Procedural track generation for curriculum levels 1-4 (revision 3 §3): gentle loops on Easy, and circuits of
+"""Procedural track generation for curriculum levels 1-4 (spec §4): gentle loops on Easy, and circuits of
 straights and rounded corners with hairpins, chicanes and esses on Medium, Hard and Extra hard. Every map runs
 clockwise or counter-clockwise, drawn from its seed."""
 import numpy as np
@@ -68,7 +68,7 @@ def insert_on_edge(poly, kinds, edge, along, side, kind):
 
 
 def circuit_points(rng, spec, width, step=0.5):
-    """A circuit (revision 3 §3.2): a stretched star polygon with a main straight, hairpins, chicanes and esses, its
+    """A circuit (spec §4.3): a stretched star polygon with a main straight, hairpins, chicanes and esses, its
     corners rounded with slow, fast or tight arcs."""
     n = int(rng.integers(spec["points"][0], spec["points"][1] + 1))
     angles = (np.arange(n) + rng.uniform(-0.3, 0.3, n)) * (2 * np.pi / n)
@@ -115,7 +115,7 @@ def circuit_points(rng, spec, width, step=0.5):
 
 
 def runs_clockwise(seed, level):
-    """Direction of the map for (seed, level), the same for every generation attempt (revision 3 §3.3)."""
+    """Direction of the map for (seed, level), the same for every generation attempt (spec §4.4)."""
     return bool(np.random.default_rng([seed, level, config.DIRECTION_SALT]).random() < 0.5)
 
 
@@ -134,14 +134,14 @@ def geometry_ok(track, min_corner):
 
 def map_width(seed, level):
     """Road width of map (seed, level) in m, drawn from WIDTH_RANGE by the seed and level alone, so a map keeps it on
-    every generation attempt (revision 3.2 §2.1)."""
+    every generation attempt (spec §4.2)."""
     low, high = config.WIDTH_RANGE
     return float(np.random.default_rng([seed, level, config.WIDTH_SALT]).uniform(low, high))
 
 
 def candidate_track(seed, level, attempt=0, width=None):
     """One generation attempt for (seed, level). Returns None if the geometry is rejected. `width` replaces the map's
-    own road width: the viewer rebuilds an earlier revision's maps with that revision's width (revision 3.2 §7)."""
+    own road width: the viewer rebuilds an earlier revision's maps with that revision's width (spec §4.2)."""
     spec = config.LEVELS[level]
     width = map_width(seed, level) if width is None else float(width)
     rng = np.random.default_rng([seed, level, attempt])

@@ -133,7 +133,7 @@ def test_dense_spec_reads_hidden_sizes_and_activation():
 
 def test_a_network_of_an_earlier_revision_reads_only_its_inputs():
     """Revision 3.1's networks took the first 10 inputs, the rays and the speed, which this revision computes the
-    same way: they drive on the first columns of this revision's observations (revision 3.2 §7)."""
+    same way: they drive on the first columns of this revision's observations (spec §6)."""
     rng = np.random.default_rng(0)
     hidden = (16, 8)
     old = nets.init_population(rng, 3, hidden, n_inputs=10)

@@ -1,4 +1,4 @@
-"""Where each run, stage and final controller is stored (spec §3.3, §9.1; revision 3 §6.5)."""
+"""Where each run, stage and final controller is stored (spec §3.3, §8.6, §9.1)."""
 import shutil
 from pathlib import Path
 
@@ -19,20 +19,20 @@ STAGES = ("imitation", "dagger")
 
 
 def stage_path(approach, seed, stage, runs_dir=None):
-    """An imitation network after one stage of revision 3 §6.5: <runs>/<approach>/seed<k>/<stage>.keras."""
+    """An imitation network after one stage of spec §8.6: <runs>/<approach>/seed<k>/<stage>.keras."""
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}; expected one of: {', '.join(STAGES)}")
     return run_dir(approach, seed, runs_dir) / f"{stage}.keras"
 
 
 def speed_dir(approach, seed, runs_dir=None):
-    """The speed push of one imitation network (revision 3 §6.4): <runs>/<approach>/seed<k>/speed."""
+    """The speed push of one imitation network (spec §8.5): <runs>/<approach>/seed<k>/speed."""
     return run_dir(approach, seed, runs_dir) / "speed"
 
 
 def final_record(approach, seed, runs_dir=None):
     """The record a run writes when it is complete: an evolutionary run's summary, an imitation method's speed-push
-    summary (revision 3.2 §6)."""
+    summary (spec §3.3)."""
     if approach in config.EVOLUTION_APPROACHES:
         return run_dir(approach, seed, runs_dir) / "summary.json"
     return speed_dir(approach, seed, runs_dir) / "summary.json"

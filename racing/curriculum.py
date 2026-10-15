@@ -1,4 +1,4 @@
-"""Curriculum rules (revision 3 §3.4, §4.2-4.5, §5.1-5.2): fresh training seeds, survival, levels with the mastery
+"""Curriculum rules (spec §4.6, §9.3-9.4, §9.6-9.7): fresh training seeds, survival, levels with the mastery
 goal, the speed push and the safety stop, GA mutation strength and the ES/NEAT step size."""
 import numpy as np
 
@@ -8,7 +8,7 @@ EVENTS = ("level_up", "goal", "tightened", "end_speed", "end_stalled")
 
 
 class SeedSource:
-    """Seeds of freshly generated training maps (revision 3 §3.4): drawn by the run's random generator from `start`
+    """Seeds of freshly generated training maps (spec §4.6): drawn by the run's random generator from `start`
     upwards and never repeated within the run. `used` restores the seeds of a resumed run."""
 
     def __init__(self, rng, start=config.TRAIN_SEED_START, used=()):
@@ -30,7 +30,7 @@ class SeedSource:
 
 
 def survivors(rng, fitness, all_success, lap_share, cap, floor):
-    """Indices of the cars kept unchanged (revision 3 §4.2): every car that succeeded on every map, fittest first;
+    """Indices of the cars kept unchanged (spec §9.3): every car that succeeded on every map, fittest first;
     then each other car with probability equal to its share of laps in time, fittest first, while fewer than `cap`
     are kept; then, if fewer than min(floor, cap) are kept, the fittest remaining cars. One rng.random(n) draw per
     call, so the result depends only on the generator's state."""
@@ -56,12 +56,12 @@ def survivors(rng, fitness, all_success, lap_share, cap, floor):
 
 def mastery_fraction(speed_push):
     """Lowest map success share of a passing generation: MASTERY_FRACTION on the levels, SPEED_MASTERY_FRACTION in
-    the speed push (revision 3.2 §4)."""
+    the speed push (spec §9.4)."""
     return config.SPEED_MASTERY_FRACTION if speed_push else config.MASTERY_FRACTION
 
 
 class MasteryTracker:
-    """Levels, the mastery goal, the speed push and the safety stop (revision 3 §4.3-4.5). update() takes the lowest
+    """Levels, the mastery goal, the speed push and the safety stop (spec §9.4). update() takes the lowest
     map success share of one generation and returns one of EVENTS or None."""
 
     def __init__(self, level=1, factor=config.TARGET_FACTOR):
@@ -72,7 +72,7 @@ class MasteryTracker:
         self.mastered_factor = float("nan")
         self.outcome = None             # None, "speed_limit" or "stalled"
         self.recent = []                # the level's latest lowest shares (at most MASTERY_STREAK, i.e. the three
-                                        # generations of revision 3 §4.5), for the safety stop
+                                        # generations of spec §9.4), for the safety stop
         self.best_mean = float("-inf")
         self.since_best = 0
         self.since_mastered = 0
@@ -137,7 +137,7 @@ class MasteryTracker:
 
 
 def mutation_strength(child_success, s_max=config.GA_S_MAX, s_min=config.GA_S_MIN):
-    """GA mutation strength (revision 3 §5.1): high when few children succeeded, s_min when all did; s_max when there
+    """GA mutation strength (spec §9.6): high when few children succeeded, s_min when all did; s_max when there
     were no children to measure (nan)."""
     if np.isnan(child_success):
         return s_max
@@ -151,7 +151,7 @@ def success_fraction(child_fitness, parent_fitness):
 
 
 class StepSize:
-    """ES and NEAT step size σ (revision 3 §5.2): the 1/5 success rule while the population learns; once at least
+    """ES and NEAT step size σ (spec §9.7): the 1/5 success rule while the population learns; once at least
     MASTERY_FRACTION of the parents succeed, σ shrinks while fewer than MASTERY_FRACTION of the children succeed and
     grows otherwise. Kept within [ES_SIGMA_MIN, ES_SIGMA_MAX]; a nan input leaves σ unchanged."""
 

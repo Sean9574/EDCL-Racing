@@ -4,7 +4,7 @@ Run with:  python scripts/make_notebooks.py
 
 Before the notebooks are first rewritten, the existing experiment notebooks, which hold the outputs of the revision
 2.0 run, are copied to results/archive/revision2-notebooks/. Every run function skips completed runs and continues
-interrupted ones (revision 3 §8.2), so re-executing a notebook continues where it stopped.
+interrupted ones (spec §3.3), so re-executing a notebook continues where it stopped.
 """
 import json
 import shutil
@@ -31,7 +31,7 @@ EVALUATION_TABLES = ("results", "head_to_head", "training_cost", "stages", "comp
 NOTEBOOKS = {
     "01_dataset.ipynb": [
         ("markdown", "# 1. Expert dataset\nCollects the imitation-learning dataset on freshly generated maps "
-                     "(revision 3 §6.1)."),
+                     "(spec §7.3)."),
         ("code", SETUP),
         ("code", "import json\n\nimport pandas as pd\n\nfrom racing import config\nfrom racing.expert import "
                  "collect_dataset\n\ndata, summary = collect_dataset(n_jobs=config.N_JOBS)\n"
@@ -41,7 +41,7 @@ NOTEBOOKS = {
     "02_imitation.ipynb": [
         ("markdown", "# 2. Imitation-learning controllers\nBaseline with each run seed, the three Keras Tuner "
                      "searches, and training of each selected architecture with each run seed (design "
-                     "specification §8; revision 3 §6.2)."),
+                     "specification §8)."),
         ("code", SETUP),
         ("code", "from racing import config, imitation\n\n\n" + BRIEF + "\n\ndata = imitation.load_dataset()\n"
                  "for seed in config.RUN_SEEDS:\n    brief(imitation.train_baseline(data, seed=seed))\n"
@@ -50,8 +50,7 @@ NOTEBOOKS = {
     ],
     "03_dagger.ipynb": [
         ("markdown", "# 3. DAgger and speed push\nEach imitation controller is refined by DAgger rounds and then "
-                     "pushed for speed by an evolution strategy grown from it, once per run seed (revision 3 "
-                     "§6.3–6.4)."),
+                     "pushed for speed by an evolution strategy grown from it, once per run seed (spec §8.4–8.5)."),
         ("code", SETUP),
         ("code", "from racing import config, dagger, imitation\n\n\n" + BRIEF + "\n\ndata = imitation.load_dataset()\n"
                  "for approach in config.IMITATION_APPROACHES:\n    for seed in config.RUN_SEEDS:\n"
@@ -59,21 +58,21 @@ NOTEBOOKS = {
     ],
     "04_ga.ipynb": [
         ("markdown", "# 4. Genetic algorithm\nFrom Easy to the mastery goal and the speed push, once per run seed "
-                     "(revision 3 §4, §5.1)."),
+                     "(spec §9.2–9.5, §9.6)."),
         ("code", SETUP),
         ("code", "from racing import config, ga\n\n\n" + BRIEF + "\n\n"
                  "for seed in config.RUN_SEEDS:\n    brief(ga.run_ga(seed=seed, n_jobs=config.N_JOBS))"),
     ],
     "05_es.ipynb": [
         ("markdown", "# 5. Evolution strategy\nThe ES with the two-phase step-size rule, once per run seed "
-                     "(revision 3 §4, §5.2)."),
+                     "(spec §9.2–9.5, §9.7)."),
         ("code", SETUP),
         ("code", "from racing import config, es\n\n\n" + BRIEF + "\n\n"
                  "for seed in config.RUN_SEEDS:\n    brief(es.run_es(seed=seed, n_jobs=config.N_JOBS))"),
     ],
     "06_es_seeded.ipynb": [
         ("markdown", "# 6. Seeded evolution strategy\nThe ES started from the DAgger-refined baseline of the same "
-                     "run seed (revision 3 §5.3)."),
+                     "run seed (spec §9.8)."),
         ("code", SETUP),
         ("code", "from racing import config, es\n\n\n" + BRIEF + "\n\n"
                  "for seed in config.RUN_SEEDS:\n"
@@ -81,7 +80,7 @@ NOTEBOOKS = {
                  "                    n_jobs=config.N_JOBS))"),
     ],
     "07_neat.ipynb": [
-        ("markdown", "# 7. NEAT\nNeuroevolution of augmenting topologies, once per run seed (revision 3 §5.4)."),
+        ("markdown", "# 7. NEAT\nNeuroevolution of augmenting topologies, once per run seed (spec §9.9)."),
         ("code", SETUP),
         ("code", "from racing import config, neat\n\n\n" + BRIEF + "\n\n"
                  "for seed in config.RUN_SEEDS:\n    brief(neat.run_neat(seed=seed, n_jobs=config.N_JOBS))"),
@@ -89,12 +88,12 @@ NOTEBOOKS = {
     "08_evaluate.ipynb": [
         ("markdown", "# 8. Evaluation\nTest maps finished and succeeded, lap times, training cost, imitation "
                      "stages and the course comparison, as mean ± standard deviation across run seeds "
-                     "(revision 3 §7)."),
+                     "(spec §11)."),
         ("code", SETUP),
         ("code", "from IPython.display import display\n\nfrom racing import config, evaluate\n\n"
                  "results = evaluate.main(n_jobs=config.N_JOBS)\n"
                  f"for name in {EVALUATION_TABLES!r}:\n    print(name)\n    display(results[name])"),
-        ("code", "import json\n\n# run conditions recorded by scripts/run_notebooks.py (revision 3 §8)\n"
+        ("code", "import json\n\n# run conditions recorded by scripts/run_notebooks.py (spec §3.3)\n"
                  "if config.RUN_INFO_PATH.exists():\n"
                  "    print(json.dumps(json.loads(config.RUN_INFO_PATH.read_text()), indent=1))"),
         ("code", "from IPython.display import Image\n\nfor path in results['figures']:\n"

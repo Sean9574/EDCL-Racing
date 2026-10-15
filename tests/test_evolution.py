@@ -159,7 +159,7 @@ def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):
     with pytest.raises(Interrupt):
         evolution.run(ga.GA(pop_size=20), 0, tmp_path / "split", champion_dir=None, max_generations=5,
                       on_generation=interrupt_at(3))
-    # generation 3 was logged, but the run stopped before its checkpoint (Review Focus 2)
+    # generation 3 was logged, but the run stopped before its checkpoint (spec §3.3)
     assert list(pd.read_csv(tmp_path / "split" / "log.csv")["generation"]) == [0, 1, 2, 3]
     summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "split", champion_dir=None, max_generations=5)
     whole, split = comparable(tmp_path / "whole" / "log.csv"), comparable(tmp_path / "split" / "log.csv")

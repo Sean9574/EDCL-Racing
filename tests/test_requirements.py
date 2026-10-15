@@ -24,6 +24,6 @@ def test_requirements_pin_every_package_exactly():
 
 
 def test_the_environment_matches_the_pins():
-    """The experiment runs in the environment requirements.txt describes (revision 3 §8.4)."""
+    """The experiment runs in the environment requirements.txt describes (spec §15)."""
     assert platform.python_version().startswith("3.13.")
     assert {name: version(name) for name in pinned()} == pinned()

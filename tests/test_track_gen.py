@@ -137,7 +137,7 @@ def test_a_full_cache_of_extra_hard_tracks_fits_the_memory_budget():
 
 @pytest.mark.slow
 def test_every_level_generates_drivable_maps():
-    """Calibration (revision 3 §3.1): 50 seeds per level are accepted and completed by the expert."""
+    """Calibration (spec §4.2): 50 seeds per level are accepted and completed by the expert."""
     for level in (1, 2, 3, 4):
         for seed in range(50):
             assert tracks.get_track(seed, level).expert_lap_time > 0

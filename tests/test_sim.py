@@ -353,7 +353,7 @@ def test_start_cars_rejects_a_setup_of_the_wrong_shape(circle_track):
         sim.start_cars(circle_track, 3, setup=default_setups(2))
 
 
-# ----- position across the road and road width (revision 3.2 §3) -----
+# ----- position across the road and road width (spec §5.2) -----
 
 def placed(track, offset_left, index=0):
     """One car at centerline point `index` (lap-counting), `offset_left` m to the left of the driving direction."""

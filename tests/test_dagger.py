@@ -13,7 +13,7 @@ FULL_RIGHT = int(controls_to_class(-1.0, 1.0)[0])     # full right lock at full 
 
 
 class Constant:
-    """A driver that always takes the same action, with revision 3's setup (revision 3.1 §3.1)."""
+    """A driver that always takes the same action, with revision 3's setup (spec §9.11)."""
 
     setup = np.asarray(config.DEFAULT_SETUP, dtype=float)
 
@@ -28,7 +28,7 @@ class Constant:
 
 
 class Expert:
-    """The expert as a driver of one map, with revision 3's setup (revision 3.1 §3.1)."""
+    """The expert as a driver of one map, with revision 3's setup (spec §9.11)."""
 
     setup = np.asarray(config.DEFAULT_SETUP, dtype=float)
 

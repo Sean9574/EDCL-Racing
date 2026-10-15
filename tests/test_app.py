@@ -27,7 +27,7 @@ def window(monkeypatch, circle_track):
 
 
 def ga_report(generation=0, n=30, approach="ga", population_=None, **extra):
-    """A training report as the evolution engine sends it (revision 3 §9)."""
+    """A training report as the evolution engine sends it (spec §10.2)."""
     rng = np.random.default_rng(generation)
     fitness = rng.random(n)
     if population_ is None:
@@ -52,7 +52,7 @@ def neat_report(generation=0, n=20):
 
 
 def test_button_text_is_dark_on_light_colors_and_white_on_dark_ones():
-    """NEAT's yellow is too light for white text (revision 3 §9)."""
+    """NEAT's yellow is too light for white text (spec §10.1)."""
     rgb = viewer.hex_to_rgb
     assert viewer.ink_for(rgb(config.COLORS["neat"])) == viewer.INK
     assert viewer.ink_for(rgb(config.COLORS["es_seeded"])) == viewer.WHITE         # dark blue
@@ -201,7 +201,7 @@ def test_toggle_grip_cycles_the_display_grips(window):
 
 
 def test_the_display_grip_never_reaches_training(window, monkeypatch, tmp_path):
-    """Review Focus 3: the trainer process gets the same arguments whatever the display grip, the training functions
+    """Spec §10.5: the trainer process gets the same arguments whatever the display grip, the training functions
     get no grip, and the training grip itself never changes."""
     from racing import ga
     created = []
@@ -685,7 +685,7 @@ def test_trainer_main_uses_app_runs_dir_and_resumes_saved_runs(monkeypatch, tmp_
     for name, size in (("ga", 30), ("es", 12), ("neat", 100)):
         assert calls[name]["champion_dir"] is None and calls[name]["pop_size"] == size
         assert calls[name]["max_generations"] is None and calls[name]["out_dir"] == tmp_path / name / "seed0"
-    assert calls["ga"]["existed"]                                  # Play continues the saved run (revision 3.1 §6.1)
+    assert calls["ga"]["existed"]                                  # Play continues the saved run (spec §10.6)
     assert [reports.get_nowait()["generation"] for _ in range(3)] == [0, 0, 0] and reports.empty()
 
 
@@ -1520,7 +1520,7 @@ def test_the_network_buttons_fit_both_panels(net, tmp_path):
     assert net.network_car_label() == f"Network of: {config.LABELS[approach]} s{seed} ▸"
 
 
-# ----- saved application runs (revision 3.1 §6.1) -----
+# ----- saved application runs (spec §10.6) -----
 def fake_trainer_context(monkeypatch, created):
     """Training processes that record their arguments and never start (tests never start real processes)."""
     class FakeProcess:
@@ -1962,7 +1962,7 @@ def test_the_notebook_view_names_what_it_cannot_replay(window, tmp_path):
 
 
 def test_the_notebook_view_names_a_run_of_an_earlier_revision(window, tmp_path):
-    """A replay saved by revision 3.1 holds networks of 10 inputs: it is named, never driven (revision 3.2 §7)."""
+    """A replay saved by revision 3.1 holds networks of 10 inputs: it is named, never driven (spec §10.2)."""
     notebook_view(window, tmp_path)
     for approach, hidden in (("ga", config.BASELINE_HIDDEN), ("kt_random", (16, 8))):
         window.select_approach(approach)

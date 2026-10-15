@@ -1,7 +1,7 @@
-"""Evolution strategy over dense network weights (revision 3 §5.2): each child is one of the fittest cars plus
+"""Evolution strategy over dense network weights (spec §9.7): each child is one of the fittest cars plus
 Gaussian noise of size σ, with the two-phase step-size rule. Started from a trained network it is the seeded ES
-(revision 3 §5.3) or the speed push of an imitation method (revision 3 §6.4). A child inherits its parent's setup,
-which the setup mutation then changes (revision 3.1 §3)."""
+(spec §9.8) or the speed push of an imitation method (spec §8.5). A child inherits its parent's setup,
+which the setup mutation then changes (spec §9.11)."""
 import numpy as np
 
 from racing import config, evolution, nets, paths, setup
@@ -38,7 +38,7 @@ class ES(evolution.DenseMethod):
     def initialize(self, rng):
         if self.initial is None:
             weights = nets.init_population(rng, self.pop_size, self.hidden)
-            setups = setup.random(rng, self.pop_size)           # random networks: a wide spread (revision 3.1 §3.2)
+            setups = setup.random(rng, self.pop_size)           # random networks: a wide spread (spec §9.11)
         else:
             weights = seeded_population(rng, self.initial, self.pop_size, self.sigma0)
             setups = setup.default(self.pop_size)               # the setup the network was trained with
@@ -51,7 +51,7 @@ class ES(evolution.DenseMethod):
 
     def success_rate(self, fitness):
         """Share of this generation's children that beat their own parent, a tie counting half, over the children
-        whose parent is still in the population (revision 3 §5.2); nan if there are none."""
+        whose parent is still in the population (spec §9.7); nan if there are none."""
         position = {int(i): k for k, i in enumerate(self.ids)}
         children = [k for k in np.flatnonzero(~self.is_kept) if int(self.parent_ids[k]) in position]
         if not children:
@@ -61,7 +61,7 @@ class ES(evolution.DenseMethod):
 
     def advance(self, rng, result, kept, event):
         """Adapt σ, then keep the survivors first and unchanged and add children of the ES_MU fittest cars; a child's
-        setup is its parent's, mutated after the network's draws (revision 3.1 §3.3)."""
+        setup is its parent's, mutated after the network's draws (spec §9.11)."""
         weights, setups = self.population.weights, self.population.setup
         n, p = weights.shape
         top = np.argsort(-result.fitness, kind="stable")[:min(self.parents, n)]
@@ -91,10 +91,9 @@ class ES(evolution.DenseMethod):
 
 
 def dagger_baseline(seed, runs_dir=None):
-    """Flat float64 weights of the baseline after its DAgger refinement, the start of the seeded ES (revision 3
-    §5.3)."""
+    """Flat float64 weights of the baseline after its DAgger refinement, the start of the seeded ES (spec §9.8)."""
     from racing.backend import keras_cpu
-    path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"     # paths.stage_path(..., "dagger"), Task 10
+    path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"     # paths.stage_path(..., "dagger")
     if not path.exists():
         raise FileNotFoundError(f"no refined baseline for seed {seed} at {path}; run notebook 03 first")
     return nets.to_flat(keras_cpu().models.load_model(path))
