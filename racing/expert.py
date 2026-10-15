@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import checkpoint, config, sim
+from racing import checkpoint, config, fastsim, sim
 from racing.actions import class_to_controls, controls_to_class
 from racing.tracks import get_track
 
@@ -46,7 +46,10 @@ def expert_policy(track):
 
 
 def expert_lap_time(track):
-    """The expert's lap time on this track, or None if it crashes, stalls or runs out of time."""
+    """The expert's lap time on this track, or None if it crashes, stalls or runs out of time; on the compiled
+    simulator when it is available (spec §5.7), with the same result."""
+    if fastsim.available():
+        return fastsim.expert_lap_time(track)
     result = sim.simulate(track, expert_policy(track), 1, time_limit=config.EXPERT_VALIDATION_TIME)
     return float(result.finish_time[0]) if result.finished[0] else None
 

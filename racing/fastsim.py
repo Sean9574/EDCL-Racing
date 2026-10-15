@@ -386,3 +386,15 @@ def simulate(tracks, population, time_limits, laps=1, grip=config.GRIP, threads=
     """sim.simulate(track, population.policy(), len(population), time_limit, laps, population.setup, grip) for every
     track, in one call with `threads` threads (spec §5.7). Returns one sim.RunResult per track."""
     return _run(tracks, program(population), population.setup, time_limits, laps, grip, threads)
+
+
+def simulate_expert(tracks, n, time_limits, laps=1, threads=1):
+    """sim.simulate(track, expert.expert_policy(track), n, time_limit, laps) for every track: n expert cars with the
+    default setup, in one call (spec §5.7). Returns one sim.RunResult per track."""
+    return _run(tracks, None, car_setup.default(n), time_limits, laps, config.GRIP, threads)
+
+
+def expert_lap_time(track):
+    """expert.expert_lap_time on the compiled simulator: the expert's lap time, or None if it does not finish."""
+    result = simulate_expert([track], 1, [config.EXPERT_VALIDATION_TIME])[0]
+    return float(result.finish_time[0]) if result.finished[0] else None

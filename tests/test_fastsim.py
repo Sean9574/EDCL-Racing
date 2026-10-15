@@ -276,3 +276,36 @@ def test_a_stale_library_without_an_entry_point_is_rebuilt(private_library):
     assert fastsim.LIBRARY.stat().st_mtime_ns >= fastsim.SOURCE.stat().st_mtime_ns
     assert fastsim.available()
     assert fastsim.LIBRARY.stat().st_mtime_ns > library_time
+
+
+from racing import expert, track_gen
+
+
+def numpy_expert(track, n=1, time_limit=config.EXPERT_VALIDATION_TIME, laps=1):
+    return sim.simulate(track, expert.expert_policy(track), n, time_limit=time_limit, laps=laps)
+
+
+@needs_compiler
+def test_the_expert_drives_exactly_as_in_numpy(circle_track):
+    tracks = [circle_track] + [t for t in (track_gen.candidate_track(seed, level, 0)
+                                           for level in range(1, config.MAX_LEVEL + 1) for seed in (3, 4))
+                               if t is not None]
+    limits = [config.EXPERT_VALIDATION_TIME] * len(tracks)
+    for compiled, track in zip(fastsim.simulate_expert(tracks, 1, limits), tracks):
+        same_results(compiled, numpy_expert(track))
+
+
+@needs_compiler
+def test_expert_lap_time_uses_the_compiled_simulator(circle_track, monkeypatch):
+    lap = expert.expert_lap_time(circle_track)
+    reference = numpy_expert(circle_track)
+    assert lap == float(reference.finish_time[0])
+    monkeypatch.setattr(fastsim.sim, "simulate", lambda *a, **k: pytest.fail("numpy simulator used"))
+    assert expert.expert_lap_time(circle_track) == lap
+
+
+@needs_compiler
+def test_several_expert_cars_over_three_laps(circle_track):
+    limit = sim.target_time(circle_track, 0.4)          # too tight: every car runs out of time partway
+    same_results(fastsim.simulate_expert([circle_track], 3, [limit], laps=config.LAPS)[0],
+                 numpy_expert(circle_track, 3, limit, config.LAPS))
