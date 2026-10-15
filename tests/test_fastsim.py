@@ -217,3 +217,62 @@ def test_a_math_mismatch_falls_back(private_library, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert err.count("using the numpy simulator") == 1
     assert "the compiled simulator's tanh differs from numpy's on this machine" in err
+
+
+from racing import neat
+
+
+def grown_genomes(n, seed=20):
+    """Genomes grown by node and connection mutations, with some connections disabled and random biases."""
+    rng = np.random.default_rng(seed)
+    innovations = neat.Innovations()
+    genomes = []
+    for rounds in rng.integers(0, 30, n):
+        genome = neat.initial_genome(rng, innovations)
+        for _ in range(int(rounds)):
+            genome = neat.add_node(rng, genome, innovations)
+            genome = neat.add_connection(rng, genome, innovations)
+            if rng.random() < 0.3:
+                k = int(rng.integers(len(genome.innov)))
+                genome.enabled[k] = not genome.enabled[k]
+        genome.bias = rng.normal(0.0, 0.5, len(genome.bias))
+        genomes.append(genome)
+    return genomes
+
+
+@needs_compiler
+def test_neat_programs_compute_numpys_outputs():
+    genomes = grown_genomes(12)
+    cars = neat.NeatPopulation(genomes)
+    obs = np.random.default_rng(21).random((12, config.N_INPUTS)) * 2 - 0.5
+    assert np.array_equal(fastsim.forward(cars, obs), neat.forward(neat.compile_population(genomes), obs))
+
+
+@needs_compiler
+def test_neat_time_trials_equal_numpys(circle_track):
+    tracks = [circle_track, get_track(0, 1), get_track(1, 2)]
+    rng = np.random.default_rng(22)
+    cars = neat.NeatPopulation(grown_genomes(40, seed=23), car_setup.random(rng, 40))
+    limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks]
+    for compiled, reference in zip(fastsim.simulate(tracks, cars, limits, laps=config.LAPS),
+                                   numpy_results(tracks, cars, limits, config.LAPS)):
+        same_results(compiled, reference)
+
+
+@needs_compiler
+def test_the_sincos_check_is_exercised():
+    assert [name for name, *_ in fastsim._math_inputs()][-1] == "sincos"
+    assert fastsim._math_mismatch(fastsim.library()) is None
+
+
+@needs_compiler
+def test_a_stale_library_without_an_entry_point_is_rebuilt(private_library):
+    real = fastsim.SOURCE.read_text()
+    fastsim.SOURCE.write_text('extern "C" void simulate() {}\n')
+    fastsim.build()
+    fastsim.SOURCE.write_text(real)
+    library_time = fastsim.LIBRARY.stat().st_mtime_ns
+    os.utime(fastsim.SOURCE, ns=(library_time - 1000, library_time - 1000))   # no newer than the library: not rebuilt
+    assert fastsim.LIBRARY.stat().st_mtime_ns >= fastsim.SOURCE.stat().st_mtime_ns
+    assert fastsim.available()
+    assert fastsim.LIBRARY.stat().st_mtime_ns > library_time

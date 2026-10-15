@@ -3,6 +3,7 @@ racing/fastsim.cpp exactly as racing/sim.py computes them. The library is built 
 and again whenever fastsim.cpp is newer; without g++ the numpy simulator runs instead, with identical results."""
 import ctypes
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -49,19 +50,35 @@ def _load():
         return ctypes.CDLL(str(LIBRARY))
 
 
+def _reload():
+    """Rebuilds the library and loads the new file. The dynamic loader returns the already loaded stale library for
+    the same path, so the new one is loaded through a copy with a name of its own."""
+    build(force=True)
+    copy = LIBRARY.with_name(f"{LIBRARY.name}.{os.getpid()}.reload")
+    try:
+        shutil.copyfile(LIBRARY, copy)
+        return ctypes.CDLL(str(copy))
+    finally:
+        copy.unlink(missing_ok=True)
+
+
 def library():
     """The loaded library, built first when needed. Raises OSError or CalledProcessError if it cannot be built."""
     global _library
     if _library is None:
         lib = _load()
-        _declare(lib)
+        try:
+            _declare(lib)
+        except AttributeError:                       # a stale library that loads but lacks an entry point
+            lib = _reload()
+            _declare(lib)
         _library = lib
     return _library
 
 
 def available():
     """True when the compiled simulator runs: EC_RACING_SIM is not "numpy", the library builds and loads, and its
-    tanh, sin, cos, atan2 and hypot equal numpy's on this machine (checked once per process). A failed build or check
+    tanh, sin, cos, atan2, hypot and sincos equal numpy's on this machine (checked once per process). A failed build or check
     prints one warning, and the numpy simulator runs instead (spec §5.7)."""
     global _failure, _math_checked
     if config.SIMULATOR == "numpy" or _failure is not None:
@@ -87,7 +104,7 @@ def available():
 
 def _math_inputs():
     """Fixed inputs, about 200,000 each, of the functions check_math computes, in the order of its kinds: (name,
-    numpy's function, x, y or None). Headings accumulate over laps, so sin and cos also see large angles."""
+    numpy's function, x, y or None); sincos, kind 5, has no single numpy function (see _math_mismatch). Headings accumulate over laps, so sin and cos also see large angles."""
     rng = np.random.default_rng(0)
     n = 100_000
     specials = np.array([0.0, 5e-324, 1e-300, 0.5, 19.06, 20.0, 1e300, np.inf])
@@ -95,7 +112,7 @@ def _math_inputs():
     angles = np.concatenate([rng.uniform(-4.0, 4.0, n), rng.uniform(-200.0, 200.0, n)])
     px, py = rng.uniform(-150.0, 150.0, (2, 2 * n))
     return [("tanh", np.tanh, tanh_x, None), ("sin", np.sin, angles, None), ("cos", np.cos, angles, None),
-            ("atan2", np.arctan2, px, py), ("hypot", np.hypot, px, py)]
+            ("atan2", np.arctan2, px, py), ("hypot", np.hypot, px, py), ("sincos", None, angles, None)]
 
 
 def _bits(values):
@@ -104,14 +121,22 @@ def _bits(values):
 
 
 def _math_mismatch(lib):
-    """The name of the first of tanh, sin, cos, atan2 and hypot whose values in the library differ from numpy's on
-    fixed inputs, or None. The engine calls no other function that is not exactly rounded, so equal values here make
-    the compiled simulator equal to numpy on this machine (spec §5.7)."""
+    """The name of the first of tanh, sin, cos, atan2, hypot and sincos whose values in the library differ from
+    numpy's on fixed inputs, or None. sincos is the library's sin and cos of one angle together, which the compiler
+    fuses into glibc's sincos; its first half is compared with np.sin and its second with np.cos. These are the
+    functions the engine calls that are not exactly rounded, so equal values here make the compiled simulator equal
+    to numpy on this machine (spec §5.7)."""
     for kind, (name, function, x, y) in enumerate(_math_inputs()):
-        out = np.empty_like(x)
-        lib.check_math(kind, _pointer(x), _pointer(x if y is None else y), _pointer(out), len(x))
-        expected = function(x) if y is None else function(x, y)
-        if not np.array_equal(_bits(out), _bits(expected)):
+        n = len(x)
+        out = np.empty(2 * n if name == "sincos" else n)
+        lib.check_math(kind, _pointer(x), _pointer(x if y is None else y), _pointer(out), n)
+        if name == "sincos":
+            same = (np.array_equal(_bits(out[:n]), _bits(np.sin(x)))
+                    and np.array_equal(_bits(out[n:]), _bits(np.cos(x))))
+        else:
+            expected = function(x) if y is None else function(x, y)
+            same = np.array_equal(_bits(out), _bits(expected))
+        if not same:
             return name
     return None
 
@@ -216,6 +241,35 @@ def dense_program(population):
                     outputs=np.tile(previous, (n, 1)).astype(np.int64))
 
 
+def neat_program(population):
+    """Programs of a neat.NeatPopulation: nodes by depth (neat.node_depths), each with its enabled connections in
+    genome order, so it sums as np.bincount does in neat.forward; hidden nodes use tanh, outputs the identity."""
+    from racing import neat
+    node_offset, bias, activation, counts, source, weight, outputs = [0], [], [], [], [], [], []
+    for genome in population.genomes:
+        depth = neat.node_depths(genome)
+        ids = genome.node_ids.tolist()
+        order = sorted(range(len(ids)), key=lambda k: depth[ids[k]])            # stable: ties keep id order
+        slot = {i: i for i in range(neat.N_IN)}
+        slot.update({ids[k]: config.N_INPUTS + j for j, k in enumerate(order)})
+        on = np.flatnonzero(genome.enabled)
+        for k in order:
+            node = ids[k]
+            mine = on[genome.dst[on] == node]                                    # genome order
+            bias.append(float(genome.bias[k]))
+            activation.append(ACTIVATIONS["tanh"] if node >= neat.FIRST_HIDDEN else IDENTITY)
+            counts.append(len(mine))
+            source.extend(slot[int(s)] for s in genome.src[mine])
+            weight.extend(genome.weight[mine].tolist())
+        node_offset.append(node_offset[-1] + len(ids))
+        outputs.append([slot[o] for o in neat.OUTPUT_IDS])
+    return Programs(node_offset=np.array(node_offset, dtype=np.int64), bias=np.array(bias, dtype=np.float64),
+                    activation=np.array(activation, dtype=np.int64),
+                    conn_offset=np.concatenate([[0], np.cumsum(counts, dtype=np.int64)]).astype(np.int64),
+                    source=np.array(source, dtype=np.int64), weight=np.array(weight, dtype=np.float64),
+                    outputs=np.array(outputs, dtype=np.int64).reshape(len(population.genomes), config.N_ACTIONS))
+
+
 def supports(population):
     """True for the populations the compiled simulator drives: dense and NEAT (spec §5.7)."""
     from racing import neat
@@ -225,6 +279,9 @@ def supports(population):
 def program(population):
     if isinstance(population, nets.DensePopulation):
         return dense_program(population)
+    from racing import neat
+    if isinstance(population, neat.NeatPopulation):
+        return neat_program(population)
     raise TypeError(f"the compiled simulator drives dense and NEAT populations, not {type(population).__name__}")
 
 
@@ -233,7 +290,8 @@ def _pointer(array, kind=P_DOUBLE):
 
 
 def _c_programs(programs, keep):
-    arrays = {name: np.ascontiguousarray(getattr(programs, name)) for name in
+    arrays = {name: np.ascontiguousarray(getattr(programs, name),
+                                         dtype=np.float64 if name in ("bias", "weight") else np.int64) for name in
               ("node_offset", "bias", "activation", "conn_offset", "source", "weight", "outputs")}
     keep.append(arrays)
     kinds = {"bias": P_DOUBLE, "weight": P_DOUBLE}
