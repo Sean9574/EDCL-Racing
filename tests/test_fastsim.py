@@ -22,13 +22,14 @@ def compiled_simulator(monkeypatch):
 
 @pytest.fixture
 def private_library(monkeypatch, tmp_path):
-    """The source and library in a temporary folder, with nothing loaded or failed yet in this process."""
+    """The source and library in a temporary folder, with nothing loaded, checked or failed yet in this process."""
     source = tmp_path / "fastsim.cpp"
     shutil.copy(fastsim.SOURCE, source)
     monkeypatch.setattr(fastsim, "SOURCE", source)
     monkeypatch.setattr(fastsim, "LIBRARY", tmp_path / "_fastsim.so")
     monkeypatch.setattr(fastsim, "_library", None)
     monkeypatch.setattr(fastsim, "_failure", None)
+    monkeypatch.setattr(fastsim, "_math_checked", False)
     return tmp_path
 
 
@@ -173,3 +174,46 @@ def test_mismatched_arguments_are_refused(circle_track):
     cars = dense_cars(3)
     with pytest.raises(ValueError, match="time limit"):
         fastsim.simulate([circle_track, circle_track], cars, [10.0])
+
+
+def library_math(kind, x, y=None):
+    """The library's check_math: function `kind` (0 numpy's tanh, 1 sin, 2 cos, 3 atan2, 4 hypot) at x, or at the
+    pairs (x, y)."""
+    x = np.ascontiguousarray(x, dtype=np.float64)
+    y = np.zeros_like(x) if y is None else np.ascontiguousarray(y, dtype=np.float64)
+    out = np.empty_like(x)
+    fastsim.library().check_math(kind, fastsim._pointer(x), fastsim._pointer(y), fastsim._pointer(out), len(x))
+    return out
+
+
+TANH_SPECIALS = np.array([0.0, 5e-324, 1e-300, 0.5, 19.06, 20.0, 1e300, np.inf])
+
+
+@needs_compiler
+def test_numpy_tanh_port_matches_numpy():
+    """numpy's own float64 tanh, bit for bit (spec §5.7): normal and uniform values, tiny and huge magnitudes, arbitrary
+    bit patterns (NaNs among them), the ulps around every edge of numpy's coefficient table and the special values."""
+    rng = np.random.default_rng(7)
+    edges = np.array([s * 2.0 ** e for e in range(-3, 5) for s in (1.0, 1.5)] + [24.0])   # where the table row changes
+    near_edges = (edges.view(np.int64)[:, None] + np.arange(-8, 9)).ravel().view(np.float64)
+    x = np.concatenate([rng.normal(0.0, 3.0, 500_000), rng.uniform(-25.0, 25.0, 500_000),
+                        rng.normal(0.0, 0.2, 400_000),
+                        rng.choice([-1.0, 1.0], 300_000) * 10.0 ** rng.uniform(-320.0, 308.0, 300_000),
+                        rng.integers(0, 2 ** 64, 300_000, dtype=np.uint64, endpoint=False).view(np.float64),
+                        near_edges, -near_edges, TANH_SPECIALS, -TANH_SPECIALS, [np.nan]])
+    assert np.array_equal(library_math(0, x).view(np.uint64), np.tanh(x).view(np.uint64))
+
+
+@needs_compiler
+def test_math_functions_match_numpy_here():
+    assert fastsim._math_mismatch(fastsim.library()) is None
+
+
+@needs_compiler
+def test_a_math_mismatch_falls_back(private_library, monkeypatch, capsys):
+    monkeypatch.setattr(fastsim, "_math_mismatch", lambda lib: "tanh")
+    assert not fastsim.available()
+    assert not fastsim.available()
+    err = capsys.readouterr().err
+    assert err.count("using the numpy simulator") == 1
+    assert "the compiled simulator's tanh differs from numpy's on this machine" in err

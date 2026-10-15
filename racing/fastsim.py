@@ -21,7 +21,8 @@ COMPILER = "g++"
 FLAGS = ["-O3", "-march=native", "-ffp-contract=off", "-std=c++17", "-shared", "-fPIC", "-pthread"]
 
 _library = None          # the loaded library
-_failure = None          # the error of a failed build or load in this process; the numpy simulator runs instead
+_failure = None          # the error of a failed build, load or math check in this process; the numpy simulator runs
+_math_checked = False    # the library's math functions have been found equal to numpy's in this process
 
 
 def build(force=False):
@@ -59,20 +60,60 @@ def library():
 
 
 def available():
-    """True when the compiled simulator runs: EC_RACING_SIM is not "numpy" and the library builds and loads. A failed
-    build prints one warning with the compiler's message, and the numpy simulator runs instead (spec §5.7)."""
-    global _failure
+    """True when the compiled simulator runs: EC_RACING_SIM is not "numpy", the library builds and loads, and its
+    tanh, sin, cos, atan2 and hypot equal numpy's on this machine (checked once per process). A failed build or check
+    prints one warning, and the numpy simulator runs instead (spec §5.7)."""
+    global _failure, _math_checked
     if config.SIMULATOR == "numpy" or _failure is not None:
         return False
     try:
-        library()
+        lib = library()
     except (OSError, subprocess.CalledProcessError) as error:
         _failure = error
         detail = (getattr(error, "stderr", None) or str(error)).strip()
         print(f"EC Racing: the compiled simulator is unavailable ({detail}); using the numpy simulator",
               file=sys.stderr)
         return False
+    if not _math_checked:
+        name = _math_mismatch(lib)
+        if name is not None:
+            _failure = RuntimeError(f"the compiled simulator's {name} differs from numpy's")
+            print(f"EC Racing: the compiled simulator's {name} differs from numpy's on this machine; using the numpy "
+                  f"simulator", file=sys.stderr)
+            return False
+        _math_checked = True
     return True
+
+
+def _math_inputs():
+    """Fixed inputs, about 200,000 each, of the functions check_math computes, in the order of its kinds: (name,
+    numpy's function, x, y or None). Headings accumulate over laps, so sin and cos also see large angles."""
+    rng = np.random.default_rng(0)
+    n = 100_000
+    specials = np.array([0.0, 5e-324, 1e-300, 0.5, 19.06, 20.0, 1e300, np.inf])
+    tanh_x = np.concatenate([rng.normal(0.0, 3.0, n), rng.uniform(-25.0, 25.0, n), specials, -specials, [np.nan]])
+    angles = np.concatenate([rng.uniform(-4.0, 4.0, n), rng.uniform(-200.0, 200.0, n)])
+    px, py = rng.uniform(-150.0, 150.0, (2, 2 * n))
+    return [("tanh", np.tanh, tanh_x, None), ("sin", np.sin, angles, None), ("cos", np.cos, angles, None),
+            ("atan2", np.arctan2, px, py), ("hypot", np.hypot, px, py)]
+
+
+def _bits(values):
+    """values as unsigned integers, every NaN as the one quiet NaN."""
+    return np.where(np.isnan(values), np.nan, values).view(np.uint64)
+
+
+def _math_mismatch(lib):
+    """The name of the first of tanh, sin, cos, atan2 and hypot whose values in the library differ from numpy's on
+    fixed inputs, or None. The engine calls no other function that is not exactly rounded, so equal values here make
+    the compiled simulator equal to numpy on this machine (spec §5.7)."""
+    for kind, (name, function, x, y) in enumerate(_math_inputs()):
+        out = np.empty_like(x)
+        lib.check_math(kind, _pointer(x), _pointer(x if y is None else y), _pointer(out), len(x))
+        expected = function(x) if y is None else function(x, y)
+        if not np.array_equal(_bits(out), _bits(expected)):
+            return name
+    return None
 
 
 def description():
@@ -127,6 +168,8 @@ def _declare(lib):
                              ctypes.POINTER(Results)]
     lib.forward.restype = None
     lib.forward.argtypes = [ctypes.POINTER(CPrograms), P_DOUBLE, ctypes.c_int64, ctypes.c_int64, P_DOUBLE]
+    lib.check_math.restype = None
+    lib.check_math.argtypes = [ctypes.c_int64, P_DOUBLE, P_DOUBLE, P_DOUBLE, ctypes.c_int64]
 
 
 @dataclass(eq=False)
