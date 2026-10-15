@@ -78,6 +78,7 @@ def test_run_record_holds_the_settings_and_code_version(runner, tmp_path, monkey
     assert info["settings"] == json.loads(json.dumps(runner.checkpoint.settings_record()))
     assert "N_JOBS" not in info["settings"]            # results do not depend on it; recorded as n_jobs
     assert info["n_jobs"] == runner.config.N_JOBS
+    assert info["simulator"] == "numpy" or info["simulator"].startswith("compiled (g++ ")
     assert len(info["git_commit"]) == 40 and int(info["git_commit"], 16) >= 0
     assert isinstance(info["git_dirty"], bool)
 

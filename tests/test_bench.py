@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from racing import bench, config, nets, population
 
@@ -49,9 +50,29 @@ def test_recommend_prefers_fewer_workers_on_a_near_tie():
     assert bench.recommend({1: 6.9, 6: 2.4, 12: 1.9}) == 12
 
 
-def test_generation_main_prints_the_command_for_the_fastest_count(monkeypatch, capsys):
+def test_generation_main_prints_the_command_for_the_fastest_count(monkeypatch, capsys, numpy_simulator):
     monkeypatch.setattr(bench, "get_track", lambda seed, level: None)
     monkeypatch.setattr(bench, "job_counts", lambda cpus=None: [1, 4])
     monkeypatch.setattr(bench, "generation_time", lambda pop, jobs, repeats=3: {1: 5.0, 4: 2.0}[jobs])
     assert bench.generation_main() == {1: 5.0, 4: 2.0}
     assert "export EC_RACING_JOBS=4" in capsys.readouterr().out
+
+
+def test_compiled_generation_time_on_a_small_batch():
+    from racing import fastsim
+    if not fastsim.available():
+        pytest.skip("no compiled simulator")
+    assert bench.compiled_generation_time(8, 2, repeats=1) > 0.0
+
+
+def test_generation_main_times_the_compiled_simulator_when_it_runs(monkeypatch, capsys):
+    from racing import fastsim
+    monkeypatch.setattr(fastsim, "available", lambda: True)
+    monkeypatch.setattr(fastsim, "description", lambda: "compiled (g++ 13.3.0)")
+    monkeypatch.setattr(bench, "get_track", lambda seed, level: None)
+    monkeypatch.setattr(bench, "job_counts", lambda cpus=None: [1, 4])
+    monkeypatch.setattr(bench, "compiled_generation_time", lambda pop, jobs, repeats=3: {1: 3.0, 4: 1.0}[jobs])
+    monkeypatch.setattr(bench, "generation_time", lambda *a, **k: pytest.fail("numpy timed"))
+    assert bench.generation_main() == {1: 3.0, 4: 1.0}
+    out = capsys.readouterr().out
+    assert "compiled (g++ 13.3.0)" in out and "thread" in out and "export EC_RACING_JOBS=4" in out

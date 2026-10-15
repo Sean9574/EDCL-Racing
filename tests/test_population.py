@@ -108,7 +108,7 @@ def test_trial_result_properties():
     assert np.allclose(r.lap_times[success], 60.0 / config.LAPS)
 
 
-def test_time_trial_ends_at_the_target_time(monkeypatch, fake_tracks):
+def test_time_trial_ends_at_the_target_time(monkeypatch, fake_tracks, numpy_simulator):
     target = config.TARGET_FACTOR * fake_tracks.expert_lap_time * config.LAPS
     seen = []
 

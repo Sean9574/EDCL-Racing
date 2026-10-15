@@ -37,7 +37,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
-from racing import checkpoint, config, jobs, paths, progress  # noqa: E402
+from racing import checkpoint, config, fastsim, jobs, paths, progress  # noqa: E402
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
@@ -267,6 +267,7 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     version = code_version()
     warning = code_change(info, version)
     info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
+                 "simulator": fastsim.description(),
                  "power_profile": power_profile(), "versions": versions(),
                  "settings": checkpoint.settings_record(), **version})
     info.setdefault("notebooks", [])
@@ -423,6 +424,7 @@ def run_side_by_side(job_list, at_once, log_path=config.RUN_LOG_PATH, info_path=
     version = code_version()
     warning = code_change(info, version)
     info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
+                 "simulator": fastsim.description(),
                  "power_profile": power_profile(), "versions": versions(),
                  "settings": checkpoint.settings_record(), **version})
     names = [job.label for job in job_list]

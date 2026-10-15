@@ -309,3 +309,26 @@ def test_several_expert_cars_over_three_laps(circle_track):
     limit = sim.target_time(circle_track, 0.4)          # too tight: every car runs out of time partway
     same_results(fastsim.simulate_expert([circle_track], 3, [limit], laps=config.LAPS)[0],
                  numpy_expert(circle_track, 3, limit, config.LAPS))
+
+
+from racing import population
+
+
+@needs_compiler
+def test_training_time_trials_use_the_compiled_simulator_with_the_same_result(monkeypatch, circle_track):
+    monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
+    cars = dense_cars(30, seed=8)
+    compiled = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=4)
+    monkeypatch.setattr(config, "SIMULATOR", "numpy")
+    reference = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=1)
+    for field in ("fitness", "success", "laps"):
+        assert np.array_equal(getattr(compiled, field), getattr(reference, field)), field
+    assert np.array_equal(compiled.finish_time, reference.finish_time, equal_nan=True)
+
+
+@needs_compiler
+def test_unknown_population_types_use_numpy(monkeypatch, circle_track):
+    from tests.test_population import ExpertCars
+    monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
+    result = population.evaluate_population(ExpertCars(circle_track, 2), [0], 1, config.TARGET_FACTOR)
+    assert result.success.all()

@@ -149,7 +149,7 @@ def test_drivers_setup_lists_each_drivers_setup_in_order():
     assert np.array_equal(nets.drivers_setup(drivers), ROWS[[2, 0, 3, 1]])
 
 
-def test_parallel_evaluation_gives_every_task_its_cars_setups(monkeypatch, circle_track):
+def test_parallel_evaluation_gives_every_task_its_cars_setups(monkeypatch, circle_track, numpy_simulator):
     monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
     rows = setup.random(np.random.default_rng(3), 9)
     cars = nets.DensePopulation(nets.init_population(np.random.default_rng(2), 9), setup=rows)
@@ -166,7 +166,7 @@ def test_parallel_evaluation_gives_every_task_its_cars_setups(monkeypatch, circl
         assert np.sum(np.all(stacked == row, axis=1)) == 2 * 3
 
 
-def test_final_selection_drives_the_candidates_with_their_setups(monkeypatch, circle_track):
+def test_final_selection_drives_the_candidates_with_their_setups(monkeypatch, circle_track, numpy_simulator):
     monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
     cars = dense_with_setup()
     seen = []

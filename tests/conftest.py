@@ -40,3 +40,10 @@ def private_app_runs(tmp_path_factory, monkeypatch):
     folder = tmp_path_factory.mktemp("app_runs")
     monkeypatch.setattr(config, "APP_RUNS_DIR", folder)
     monkeypatch.setattr(config, "APP_CHAMPIONS_DIR", folder / "champions")
+
+
+@pytest.fixture
+def numpy_simulator(monkeypatch):
+    """Forces the numpy simulator, for tests that watch sim.simulate or the joblib task division (spec §5.7)."""
+    from racing import config
+    monkeypatch.setattr(config, "SIMULATOR", "numpy")

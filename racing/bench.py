@@ -12,7 +12,7 @@ import time
 
 from joblib import Parallel, delayed
 
-from racing import config, expert, population, sim
+from racing import config, expert, fastsim, population, sim
 from racing.tracks import get_track
 
 SEEDS = (0, 1, 2)
@@ -79,17 +79,34 @@ def recommend(times):
     return min(jobs for jobs, seconds in times.items() if seconds <= best * 1.02)
 
 
+def compiled_generation_time(pop, threads, repeats=3):
+    """Best of `repeats` wall times for one worst-case generation on the compiled simulator (spec §5.7): pop expert
+    cars, each completing a lap of each of the three level-4 tracks, in one call with `threads` threads."""
+    tracks = [get_track(seed, config.MAX_LEVEL) for seed in SEEDS]
+    limits = [sim.time_limit_for(track) for track in tracks]
+    times = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        fastsim.simulate_expert(tracks, pop, limits, threads=threads)
+        times.append(time.perf_counter() - start)
+    return min(times)
+
+
 def generation_main():
-    """Times one worst-case generation for each worker count and prints the command that selects the fastest."""
+    """Times one worst-case generation for each worker or thread count on the simulator in use, and prints the
+    command that selects the fastest."""
     for seed in SEEDS:
         get_track(seed, config.MAX_LEVEL)
-    print(f"One generation of {config.GA_POP} cars, every car completing a lap on 3 level-4 tracks:")
+    compiled = fastsim.available()
+    unit = "thread(s)" if compiled else "process(es)"
+    print(f"One generation of {config.GA_POP} cars, every car completing a lap on 3 level-4 tracks "
+          f"({fastsim.description()} simulator):")
     times = {}
     for jobs in job_counts():
-        times[jobs] = generation_time(config.GA_POP, jobs)
-        print(f"  {jobs:2d} process(es): {times[jobs]:6.2f} s", flush=True)
+        times[jobs] = (compiled_generation_time if compiled else generation_time)(config.GA_POP, jobs)
+        print(f"  {jobs:2d} {unit}: {times[jobs]:6.2f} s", flush=True)
     best = recommend(times)
-    print(f"Fastest: {best} worker processes (current setting {config.N_JOBS}). Select it with:")
+    print(f"Fastest: {best} {unit} (current setting {config.N_JOBS}). Select it with:")
     print(f"  export EC_RACING_JOBS={best}")
     return times
 

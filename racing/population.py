@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from racing import config, nets, paths, sim, tracks
+from racing import config, fastsim, nets, paths, sim, tracks
 from racing import setup as car_setup
 from racing.tracks import get_track
 
@@ -57,27 +57,40 @@ class TrialResult:
         return self.finish_time / config.LAPS
 
 
-def _time_trial(population, seed, level, factor):
-    """Fitness, success, laps in time and finish time of every car over config.LAPS laps of one map, ending at the
-    target time (spec §9.2). Every car drives with its own setup (spec §9.11)."""
-    track = get_track(seed, level)
-    result = sim.simulate(track, population.policy(), len(population), time_limit=sim.target_time(track, factor),
-                          laps=config.LAPS, setup=population.setup)
+def _trial_values(result):
+    """(fitness, success, laps done within the target time, finish time) of a time trial's RunResult (spec §9.2)."""
     return (result.fitness, result.finished, np.minimum(result.laps_done, config.LAPS),
             np.where(result.finished, result.finish_time, np.nan))
 
 
+def _time_trial(population, seed, level, factor):
+    """Fitness, success, laps in time and finish time of every car over config.LAPS laps of one map, ending at the
+    target time (spec §9.2). Every car drives with its own setup (spec §9.11)."""
+    track = get_track(seed, level)
+    return _trial_values(sim.simulate(track, population.policy(), len(population),
+                                      time_limit=sim.target_time(track, factor), laps=config.LAPS,
+                                      setup=population.setup))
+
+
 def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="loky"):
-    """Time trials of every car on every map (spec §9.2). The per-map results are combined in map order, so
-    the result does not depend on n_jobs."""
+    """Time trials of every car on every map (spec §9.2). Dense and NEAT populations run on the compiled simulator
+    when it is available, in one call with n_jobs threads (spec §5.7); otherwise the per-map tasks run on numpy
+    in n_jobs worker processes. The per-map results are combined in map order, so the result depends on neither."""
     n = len(population)
-    tasks = split_tasks(n, seeds, n_jobs)
-    if n_jobs == 1 or len(tasks) == 1:
-        parts = [_time_trial(population.subset(idx), seed, level, factor) for _, seed, idx in tasks]
+    if fastsim.supports(population) and fastsim.available():
+        tracks = [get_track(seed, level) for seed in seeds]
+        results = fastsim.simulate(tracks, population, [sim.target_time(t, factor) for t in tracks],
+                                   laps=config.LAPS, threads=n_jobs)
+        tasks = [(k, seed, np.arange(n)) for k, seed in enumerate(seeds)]
+        parts = [_trial_values(result) for result in results]
     else:
-        from joblib import Parallel, delayed
-        parts = Parallel(n_jobs=n_jobs, backend=backend)(
-            delayed(_time_trial)(population.subset(idx), seed, level, factor) for _, seed, idx in tasks)
+        tasks = split_tasks(n, seeds, n_jobs)
+        if n_jobs == 1 or len(tasks) == 1:
+            parts = [_time_trial(population.subset(idx), seed, level, factor) for _, seed, idx in tasks]
+        else:
+            from joblib import Parallel, delayed
+            parts = Parallel(n_jobs=n_jobs, backend=backend)(
+                delayed(_time_trial)(population.subset(idx), seed, level, factor) for _, seed, idx in tasks)
     maps = len(seeds)
     per_map = np.zeros((maps, n))
     success = np.zeros((maps, n), dtype=bool)
