@@ -332,3 +332,44 @@ def test_unknown_population_types_use_numpy(monkeypatch, circle_track):
     monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
     result = population.evaluate_population(ExpertCars(circle_track, 2), [0], 1, config.TARGET_FACTOR)
     assert result.success.all()
+
+
+@needs_compiler
+@pytest.mark.slow
+def test_a_trained_population_matches_numpy_on_its_last_maps():
+    """Trained cars drive full laps, so every part of the simulator runs for thousands of steps (spec §12.1)."""
+    from racing import checkpoint
+    found = sorted(config.RESULTS_DIR.glob("runs/*/seed*/checkpoint.pkl"))
+    states = [s for s in (checkpoint.load(path) for path in found) if "weights" in s["method"]]
+    if not states:
+        pytest.skip("no dense checkpoint in results/")
+    method = states[0]["method"]
+    cars = nets.DensePopulation(method["weights"], method["hidden"], method["activation"], method["setup"])
+    tracks = [get_track(seed, config.MAX_LEVEL) for seed in states[0]["seeds"][-3:]]
+    limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks]
+    for compiled, reference in zip(fastsim.simulate(tracks, cars, limits, laps=config.LAPS, threads=6),
+                                   numpy_results(tracks, cars, limits, config.LAPS)):
+        assert compiled.finished.sum() > len(cars) // 2              # mostly finishers: long trajectories
+        same_results(compiled, reference)
+
+
+@needs_compiler
+def test_final_selection_with_setups_matches_numpy(monkeypatch, circle_track):
+    monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
+    cars = dense_cars(6, seed=9)
+    compiled = population.select_final(cars, [3, 1], config.TARGET_FACTOR, seeds=[80])
+    monkeypatch.setattr(config, "SIMULATOR", "numpy")
+    reference = population.select_final(cars, [3, 1], config.TARGET_FACTOR, seeds=[80])
+    assert compiled == reference
+
+
+@needs_compiler
+def test_neat_training_time_trials_match_numpy(monkeypatch, circle_track):
+    monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
+    cars = neat.NeatPopulation(grown_genomes(30, seed=24), car_setup.random(np.random.default_rng(25), 30))
+    compiled = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=4)
+    monkeypatch.setattr(config, "SIMULATOR", "numpy")
+    reference = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=1)
+    for field in ("fitness", "success", "laps"):
+        assert np.array_equal(getattr(compiled, field), getattr(reference, field)), field
+    assert np.array_equal(compiled.finish_time, reference.finish_time, equal_nan=True)

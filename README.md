@@ -69,6 +69,18 @@ The experiment runs on Linux. On Windows it runs in the Windows Subsystem for Li
 
    If `conda` asks to accept the terms of service of its default channels, run the command it prints and repeat
    `conda create`. Activate the environment (`conda activate ec-racing`) in every new terminal.
+### Compiled simulator
+
+Training runs its time trials on a compiled simulator (`racing/fastsim.cpp`, specification §5.7), which gives
+exactly the numpy simulator's results at about a tenth of the processor time. It needs g++:
+
+    sudo apt install build-essential
+
+The library is built into `racing/_fastsim.so` the first time a run needs it, and again after a `git pull` that
+changes `fastsim.cpp`. Without g++, a run prints one warning and uses the numpy simulator, with the same results.
+`EC_RACING_SIM=numpy` forces numpy. `EC_RACING_JOBS` sets the compiled simulator's threads; measure the best value
+with `python -m racing.bench generation`.
+
 6. **Keep Windows awake and without restarts.** WSL pauses while Windows sleeps. Set Settings → System → Power →
    *Screen and sleep* → "When plugged in, put my device to sleep after" to *Never* (or run
    `powercfg /change standby-timeout-ac 0` in PowerShell) for the duration of the run. Pause Windows Update for the
