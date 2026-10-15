@@ -21,3 +21,16 @@ def test_run_order_lists_the_24_counted_runs():
     assert config.RUN_ORDER[0] == ("baseline", 0) and config.RUN_ORDER[-1] == ("neat", 2)
     assert config.RUN_ORDER.index(("ga", 1)) == 13
     assert config.STATUS_PATH.name == "status.json"      # the test fixture redirects the folder to a temporary one
+
+
+def test_simulator_choice_reads_ec_racing_sim():
+    assert config.simulator_choice({}) == "auto"
+    assert config.simulator_choice({"EC_RACING_SIM": " numpy "}) == "numpy"
+    assert config.simulator_choice({"EC_RACING_SIM": "auto"}) == "auto"
+    with pytest.raises(ValueError, match="EC_RACING_SIM"):
+        config.simulator_choice({"EC_RACING_SIM": "cpp"})
+
+
+def test_simulator_choice_is_not_a_result_setting():
+    from racing import checkpoint
+    assert "SIMULATOR" not in checkpoint.settings_record()

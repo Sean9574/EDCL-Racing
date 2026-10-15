@@ -131,8 +131,8 @@ NEAT_STAGNATION = 20         # generations without improvement after which a spe
 
 # --- Parallelism ---
 def worker_count(environ=os.environ):
-    """Worker processes for parallel evaluation (spec §3.3): EC_RACING_JOBS, or 6 when it is not set. The best
-    value for a machine is measured with `python -m racing.bench generation`."""
+    """Threads of the compiled simulator, or worker processes of the numpy simulator (spec §3.3, §5.7): EC_RACING_JOBS,
+    or 6 when it is not set. The best value for a machine is measured with `python -m racing.bench generation`."""
     value = environ.get("EC_RACING_JOBS", "").strip()
     if not value:
         return 6
@@ -142,6 +142,18 @@ def worker_count(environ=os.environ):
 
 
 N_JOBS = worker_count()      # results do not depend on it (spec §9.10); recorded in results/run_info.json
+
+
+def simulator_choice(environ=os.environ):
+    """The simulator (spec §5.7): EC_RACING_SIM, "auto" (the compiled simulator when it builds, otherwise numpy;
+    the default) or "numpy"."""
+    value = environ.get("EC_RACING_SIM", "").strip() or "auto"
+    if value not in ("auto", "numpy"):
+        raise ValueError(f"EC_RACING_SIM must be auto or numpy, not {value!r}")
+    return value
+
+
+SIMULATOR = simulator_choice()   # results do not depend on it (spec §5.7); recorded in results/run_info.json
 
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3
