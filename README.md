@@ -76,8 +76,10 @@ exactly the numpy simulator's results at about a tenth of the processor time. It
 
     sudo apt install build-essential
 
-The library is built into `racing/_fastsim.so` the first time a run needs it, and again after a `git pull` that
-changes `fastsim.cpp`. Without g++, a run prints one warning and uses the numpy simulator, with the same results.
+The library is built into `racing/_fastsim-<id>.so` the first time a run needs it, where `<id>` identifies the
+source, the compiler flags and the processor, so a `git pull` that changes `fastsim.cpp` leads to a new build. When
+the library loads, it is checked against numpy on this machine (math functions and network outputs). Without g++, or
+if the check finds a difference, a run prints one warning and uses the numpy simulator, with the same results.
 `EC_RACING_SIM=numpy` forces numpy. `EC_RACING_JOBS` sets the compiled simulator's threads; measure the best value
 with `python -m racing.bench generation`.
 
@@ -98,13 +100,13 @@ with `python -m racing.bench generation`.
    sized for the machine (leave a few GB for Windows), then run `wsl --shutdown` in PowerShell and open Ubuntu again
    to apply it. Check the memory with `free -h` during the first hour at Extra hard (notebook 03 reaches it first);
    if *available* falls below about 2 GB, stop the run, lower `EC_RACING_JOBS` and resume.
-8. **Choose the number of worker processes** for this machine:
+8. **Choose the number of threads of the compiled simulator (worker processes with numpy)** for this machine:
 
    ```bash
    python -m racing.bench generation
    ```
 
-   It times one generation for each worker count up to the number of logical processors and ends with a line such as
+   It times one generation for each count up to the number of logical processors and ends with a line such as
    `export EC_RACING_JOBS=16`. The recommendation measures speed only and does not check memory (step 7). Make it
    permanent:
 
@@ -117,8 +119,9 @@ To update the code later: `git pull`, but never while a run is in progress (see 
 
 ## Setup on Linux
 
-On a Linux machine follow steps 2–8 without WSL. On the development laptop the Conda base environment is used
-instead of `ec-racing`, with `~/miniconda3/bin/python` in place of `python`.
+On a Linux machine follow steps 2–8 without WSL, and install g++ as described in the "Compiled simulator" subsection
+after step 5. On the development laptop the Conda base environment is used instead of `ec-racing`, with
+`~/miniconda3/bin/python` in place of `python`.
 
 ## Running the experiment
 

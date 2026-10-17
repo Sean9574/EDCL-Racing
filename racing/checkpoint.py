@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import config
+from racing import config, fastsim
 
 CHECKPOINT_NAME = "checkpoint.pkl"
 
@@ -82,9 +82,10 @@ def processor():
 
 def machine_record():
     """The machine a run finished on: runs of one experiment may be trained on several machines (scripts/fleet.py),
-    so each run's summary says where, with how many worker processes."""
+    so each run's summary says where, with how many threads of the compiled simulator or worker processes of the
+    numpy simulator (n_jobs), and which simulator ran its time trials (spec §5.7)."""
     return {"host": platform.node() or "unknown", "processor": processor(), "logical_processors": os.cpu_count(),
-            "n_jobs": config.N_JOBS}
+            "n_jobs": config.N_JOBS, "simulator": fastsim.description()}
 
 
 def check_settings(recorded):

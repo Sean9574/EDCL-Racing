@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from racing import checkpoint, config, jobs, paths, progress
+from racing import checkpoint, config, fastsim, jobs, paths, progress
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "fleet.py"
 TMUX_STUB = """#!/bin/bash
@@ -511,8 +511,9 @@ def test_main_reports_a_failed_check_with_code_1(fake, capsys, monkeypatch):
 
 def test_runs_record_the_machine_they_finished_on():
     record = checkpoint.machine_record()
-    assert set(record) == {"host", "processor", "logical_processors", "n_jobs"}
+    assert set(record) == {"host", "processor", "logical_processors", "n_jobs", "simulator"}
     assert record["n_jobs"] == config.N_JOBS and json.dumps(record)
+    assert record["simulator"] == fastsim.description()
 
 
 def test_jobs_whose_inputs_the_machine_makes_itself_need_nothing_sent(fake):

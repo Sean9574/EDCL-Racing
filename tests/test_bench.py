@@ -1,7 +1,10 @@
+import os
+import time
+
 import numpy as np
 import pytest
 
-from racing import bench, config, nets, population
+from racing import bench, checkpoint, config, nets, population
 
 
 def test_time_full_laps_runs_on_a_small_batch():
@@ -76,3 +79,59 @@ def test_generation_main_times_the_compiled_simulator_when_it_runs(monkeypatch, 
     assert bench.generation_main() == {1: 3.0, 4: 1.0}
     out = capsys.readouterr().out
     assert "compiled (g++ 13.3.0)" in out and "thread" in out and "export EC_RACING_JOBS=4" in out
+
+
+def test_generation_main_names_the_expert_workload_without_a_trained_population(monkeypatch, capsys, tmp_path):
+    from racing import fastsim
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path)                      # no runs/*/seed*/checkpoint.pkl
+    monkeypatch.setattr(fastsim, "available", lambda: True)
+    monkeypatch.setattr(fastsim, "description", lambda: "compiled (g++ 13.3.0)")
+    monkeypatch.setattr(bench, "job_counts", lambda cpus=None: [1])
+    monkeypatch.setattr(bench, "compiled_generation_time", lambda pop, jobs, repeats=3: 1.0)
+    bench.generation_main()
+    assert "Workload: expert cars (no trained population found; lighter than training)" in capsys.readouterr().out
+
+
+def trained_checkpoint(results, method_name, n_cars, n_inputs=config.N_INPUTS, seeds=(5, 6, 7, 8)):
+    """A checkpoint of n_cars dense cars in results/runs/<method_name>/seed0, with the given map seeds."""
+    rng = np.random.default_rng(0)
+    weights = nets.init_population(rng, n_cars, (16,), n_inputs)
+    state = {"seeds": list(seeds), "method": {"weights": weights, "hidden": (16,), "activation": "relu",
+                                              "setup": np.ones((n_cars, 2))}}
+    path = results / "runs" / method_name / "seed0" / "checkpoint.pkl"
+    checkpoint.save(path, state)
+    return path
+
+
+def test_the_compiled_benchmark_times_the_newest_trained_population(monkeypatch, capsys, tmp_path, circle_track):
+    """With a trained dense population, the compiled benchmark runs training's time trials (spec §9.10): pop of its
+    cars, repeated, over config.LAPS laps of its last 3 maps at level 4, ending at the target time."""
+    from racing import fastsim, sim
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path)
+    older = trained_checkpoint(tmp_path, "ga", 3)
+    os.utime(older, (time.time() - 60, time.time() - 60))
+    trained_checkpoint(tmp_path, "old", 3, n_inputs=10)                 # newer, but an earlier revision's networks
+    trained_checkpoint(tmp_path, "es", 4)
+    os.utime(tmp_path / "runs/es/seed0/checkpoint.pkl", (time.time() - 30, time.time() - 30))
+    built, calls = [], []
+    monkeypatch.setattr(bench, "get_track", lambda seed, level: built.append((seed, level)) or circle_track)
+    monkeypatch.setattr(fastsim, "simulate", lambda tracks, cars, limits, laps=1, grip=None, threads=1:
+                        calls.append((len(tracks), cars, limits, laps, threads)))
+    assert bench.compiled_generation_time(10, 3, repeats=2) >= 0.0
+    assert built == [(6, config.MAX_LEVEL), (7, config.MAX_LEVEL), (8, config.MAX_LEVEL)]
+    assert len(calls) == 2
+    n_tracks, cars, limits, laps, threads = calls[0]
+    assert (n_tracks, len(cars), laps, threads) == (3, 10, config.LAPS, 3)
+    es = checkpoint.load(tmp_path / "runs/es/seed0/checkpoint.pkl")["method"]["weights"]
+    assert np.array_equal(cars.weights, es[[0, 1, 2, 3, 0, 1, 2, 3, 0, 1]])
+    assert limits == [sim.target_time(circle_track, config.TARGET_FACTOR)] * 3
+
+    monkeypatch.setattr(fastsim, "available", lambda: True)
+    monkeypatch.setattr(fastsim, "description", lambda: "compiled (g++ 13.3.0)")
+    monkeypatch.setattr(bench, "job_counts", lambda cpus=None: [1])
+    monkeypatch.setattr(bench, "compiled_generation_time", lambda pop, jobs, repeats=3: 1.0)
+    bench.generation_main()
+    out = capsys.readouterr().out
+    folder = tmp_path / "runs" / "es" / "seed0"
+    assert f"Workload: trained population from {folder}, {config.LAPS} laps of its last 3 maps" in out
+

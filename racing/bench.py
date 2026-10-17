@@ -1,5 +1,6 @@
-"""Benchmarks (spec §9.10): the time of one evolutionary generation for each number of worker processes, and the
-time of one Keras training epoch for each choice of steps_per_execution and jit_compile.
+"""Benchmarks (spec §9.10): the time of one evolutionary generation for each number of threads of the compiled
+simulator (worker processes with numpy), and the time of one Keras training epoch for each choice of
+steps_per_execution and jit_compile.
 
 Run with:  python -m racing.bench              (both)
            python -m racing.bench generation   (generation time only)
@@ -12,13 +13,14 @@ import time
 
 from joblib import Parallel, delayed
 
-from racing import config, expert, fastsim, population, sim
+from racing import checkpoint, config, expert, fastsim, nets, population, sim
 from racing.tracks import get_track
 
 SEEDS = (0, 1, 2)
 JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (spec §3.3)
 KERAS_STEPS = (1, 4, 16, 64)
 BACKEND = "loky"
+EXPERT_WORKLOAD = "expert cars (no trained population found; lighter than training)"
 
 
 def time_full_laps(seed, n):
@@ -79,28 +81,85 @@ def recommend(times):
     return min(jobs for jobs, seconds in times.items() if seconds <= best * 1.02)
 
 
+def trained_population():
+    """The newest checkpoint in results/runs of a dense population whose networks read config.N_INPUTS inputs: (its
+    run folder, the population, the seeds of its last three maps), or None if there is none."""
+    paths = sorted(config.RESULTS_DIR.glob("runs/*/seed*/checkpoint.pkl"), key=lambda path: path.stat().st_mtime,
+                   reverse=True)
+    for path in paths:
+        state = checkpoint.load(path)
+        method = state.get("method") or {}
+        if not all(key in method for key in ("weights", "hidden", "activation", "setup")):
+            continue
+        cars = nets.DensePopulation(method["weights"], method["hidden"], method["activation"], method["setup"])
+        if cars.n_inputs == config.N_INPUTS:
+            return path.parent, cars, list(state["seeds"][-3:])
+    return None
+
+
+def shown(path):
+    """`path` relative to the project folder when it lies inside it."""
+    try:
+        return path.relative_to(config.PROJECT_DIR)
+    except ValueError:
+        return path
+
+
+def workload_label(found):
+    """The workload compiled_generation_time times, for the benchmark's output; `found` is trained_population()."""
+    if found is None:
+        return EXPERT_WORKLOAD
+    return (f"trained population from {shown(found[0])}, {config.LAPS} laps of its last {len(found[2])} maps at "
+            f"level {config.MAX_LEVEL}")
+
+
+def compiled_workload(pop):
+    """The generation compiled_generation_time times (spec §9.10): (tracks, cars or None, time limits, laps). With a
+    trained population (trained_population), it is the evaluation path of training: pop of its cars (repeated or
+    truncated) drive config.LAPS laps of its last three maps at config.MAX_LEVEL, each ending at the target time of
+    config.TARGET_FACTOR, as population.evaluate_population runs them. Without one, pop expert cars (cars None)
+    each complete one lap of the three level-4 benchmark tracks, which is lighter than training: the expert neither
+    casts rays nor runs a network."""
+    found = trained_population()
+    if found is None:
+        tracks = [get_track(seed, config.MAX_LEVEL) for seed in SEEDS]
+        return tracks, None, [sim.time_limit_for(track) for track in tracks], 1
+    _, cars, seeds = found
+    tracks = [get_track(seed, config.MAX_LEVEL) for seed in seeds]
+    cars = cars.subset([k % len(cars) for k in range(pop)])
+    return tracks, cars, [sim.target_time(track, config.TARGET_FACTOR) for track in tracks], config.LAPS
+
+
 def compiled_generation_time(pop, threads, repeats=3):
-    """Best of `repeats` wall times for one worst-case generation on the compiled simulator (spec §5.7): pop expert
-    cars, each completing a lap of each of the three level-4 tracks, in one call with `threads` threads."""
-    tracks = [get_track(seed, config.MAX_LEVEL) for seed in SEEDS]
-    limits = [sim.time_limit_for(track) for track in tracks]
+    """Best of `repeats` wall times for one generation of pop cars on the compiled simulator (spec §5.7, §9.10), in
+    one call with `threads` threads: the trained population's time trials when results/runs has one, otherwise
+    expert cars (compiled_workload)."""
+    tracks, cars, limits, laps = compiled_workload(pop)
     times = []
     for _ in range(repeats):
         start = time.perf_counter()
-        fastsim.simulate_expert(tracks, pop, limits, threads=threads)
+        if cars is None:
+            fastsim.simulate_expert(tracks, pop, limits, laps=laps, threads=threads)
+        else:
+            fastsim.simulate(tracks, cars, limits, laps=laps, threads=threads)
         times.append(time.perf_counter() - start)
     return min(times)
 
 
 def generation_main():
-    """Times one worst-case generation for each worker or thread count on the simulator in use, and prints the
-    command that selects the fastest."""
-    for seed in SEEDS:
-        get_track(seed, config.MAX_LEVEL)
+    """Times one generation for each worker or thread count on the simulator in use, and prints the workload timed
+    and the command that selects the fastest count."""
     compiled = fastsim.available()
-    unit = "thread(s)" if compiled else "process(es)"
-    print(f"One generation of {config.GA_POP} cars, every car completing a lap on 3 level-4 tracks "
-          f"({fastsim.description()} simulator):")
+    if compiled:
+        unit = "thread(s)"
+        workload = workload_label(trained_population())
+    else:
+        unit = "process(es)"
+        workload = "expert cars, every car completing a lap on 3 level-4 tracks"
+        for seed in SEEDS:
+            get_track(seed, config.MAX_LEVEL)
+    print(f"One generation of {config.GA_POP} cars on the {fastsim.description()} simulator")
+    print(f"Workload: {workload}")
     times = {}
     for jobs in job_counts():
         times[jobs] = (compiled_generation_time if compiled else generation_time)(config.GA_POP, jobs)
