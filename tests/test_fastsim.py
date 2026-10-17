@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import numpy as np
@@ -22,14 +23,14 @@ def compiled_simulator(monkeypatch):
 
 @pytest.fixture
 def private_library(monkeypatch, tmp_path):
-    """The source and library in a temporary folder, with nothing loaded, checked or failed yet in this process."""
+    """The source in a temporary folder, where its library is built, with nothing loaded, checked or failed yet in
+    this process."""
     source = tmp_path / "fastsim.cpp"
     shutil.copy(fastsim.SOURCE, source)
     monkeypatch.setattr(fastsim, "SOURCE", source)
-    monkeypatch.setattr(fastsim, "LIBRARY", tmp_path / "_fastsim.so")
     monkeypatch.setattr(fastsim, "_library", None)
     monkeypatch.setattr(fastsim, "_failure", None)
-    monkeypatch.setattr(fastsim, "_math_checked", False)
+    monkeypatch.setattr(fastsim, "_checked", False)
     return tmp_path
 
 
@@ -42,8 +43,20 @@ def test_numpy_choice_disables_the_compiled_simulator(monkeypatch):
 @needs_compiler
 def test_the_library_builds_and_describes_its_compiler(private_library):
     assert fastsim.available()
-    assert fastsim.LIBRARY.exists()
+    assert fastsim.library_path().exists()
+    assert fastsim.library_path().parent == private_library
     assert fastsim.description().startswith("compiled (g++ ")
+
+
+@needs_compiler
+def test_the_description_names_the_compiler_that_built_the_library_without_running_it(private_library,
+                                                                                       monkeypatch):
+    installed = subprocess.run([fastsim.COMPILER, "-dumpfullversion"], capture_output=True, text=True).stdout.strip()
+    assert fastsim.available()
+    monkeypatch.setattr(fastsim, "COMPILER", "no-such-compiler-ec-racing")     # g++ removed after the build
+    built = fastsim.library().compiler_version().decode()
+    assert built.split()[0] == installed
+    assert fastsim.description() == f"compiled (g++ {built})"
 
 
 def test_a_failed_build_warns_once_and_falls_back(private_library, monkeypatch, capsys):
@@ -55,24 +68,57 @@ def test_a_failed_build_warns_once_and_falls_back(private_library, monkeypatch, 
     assert fastsim.description() == "numpy"
 
 
+def test_the_build_identity_covers_the_flags_and_the_processor(private_library, monkeypatch):
+    first = fastsim.build_id()
+    assert len(first) == 16 and int(first, 16) >= 0
+    assert fastsim.library_path().name == f"_fastsim-{first}.so"
+    monkeypatch.setattr(fastsim, "cpu_flags", lambda: "flags\t\t: fpu sse2")     # another processor
+    other_processor = fastsim.build_id()
+    monkeypatch.setattr(fastsim, "FLAGS", [*fastsim.FLAGS, "-g"])                # other flags
+    assert len({first, other_processor, fastsim.build_id()}) == 3
+
+
 @needs_compiler
-def test_a_stale_library_is_rebuilt(private_library):
-    fastsim.build()
-    source_time = fastsim.SOURCE.stat().st_mtime
-    os.utime(fastsim.LIBRARY, (source_time - 60, source_time - 60))   # older than the source, as after a git pull
-    fastsim.build()
-    rebuilt = fastsim.LIBRARY.stat().st_mtime_ns
-    assert rebuilt >= fastsim.SOURCE.stat().st_mtime_ns
-    fastsim.build()                                             # up to date now: no rebuild
-    assert fastsim.LIBRARY.stat().st_mtime_ns == rebuilt
+def test_a_changed_source_is_built_under_a_new_name(private_library):
+    """After a git pull that changes fastsim.cpp, the library of the new source is built; the earlier one is younger
+    than a day and stays for jobs that may still use it (spec §5.7)."""
+    earlier = fastsim.library_path()
+    fastsim.build(earlier)
+    fastsim.SOURCE.write_text(fastsim.SOURCE.read_text() + "\n// changed by a git pull\n")
+    current = fastsim.library_path()
+    assert current != earlier and not current.exists()
+    assert fastsim.available()
+    assert current.exists() and earlier.exists()
+
+
+@needs_compiler
+def test_a_library_of_the_current_identity_is_used_as_it_is(private_library):
+    path = fastsim.library_path()
+    fastsim.build(path)
+    built = path.stat().st_mtime_ns
+    assert fastsim.available()
+    assert path.stat().st_mtime_ns == built
 
 
 @needs_compiler
 def test_an_unloadable_library_is_rebuilt(private_library):
-    fastsim.LIBRARY.write_bytes(b"not a library")
-    later = time.time() + 5
-    os.utime(fastsim.LIBRARY, (later, later))                   # newer than the source, so only loading reveals it
+    fastsim.library_path().write_bytes(b"not a library")             # a damaged file under the current name
     assert fastsim.available()
+
+
+@needs_compiler
+def test_libraries_of_other_identities_are_removed_once_a_day_old(private_library):
+    day_old = time.time() - fastsim.OLD_LIBRARY_AGE - 60
+    old = private_library / "_fastsim-0123456789abcdef.so"
+    young = private_library / "_fastsim-fedcba9876543210.so"
+    unnamed = private_library / "_fastsim.so"                         # the name before build identities
+    for path in (old, young, unnamed):
+        path.write_bytes(b"an earlier library")
+    os.utime(old, (day_old, day_old))
+    os.utime(unnamed, (day_old, day_old))
+    assert fastsim.available()
+    assert not old.exists() and not unnamed.exists()
+    assert young.exists() and fastsim.library_path().exists()
 
 
 @needs_compiler
@@ -80,12 +126,34 @@ def test_concurrent_builds_all_load(private_library):
     """Four processes that start at once each load a complete library (spec §5.7)."""
     code = (f"import sys; sys.path.insert(0, {str(config.PROJECT_DIR)!r}); from pathlib import Path; "
             f"from racing import fastsim; fastsim.SOURCE = Path({str(fastsim.SOURCE)!r}); "
-            f"fastsim.LIBRARY = Path({str(fastsim.LIBRARY)!r}); fastsim.library(); print('ok')")
+            f"fastsim.library(); print('ok')")
     procs = [subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
              for _ in range(4)]
     outputs = [p.communicate(timeout=300) for p in procs]
     assert all(p.returncode == 0 and out.strip() == "ok" for p, (out, _) in zip(procs, outputs)), outputs
     assert not list(private_library.glob("*.tmp"))
+    assert [path.name for path in private_library.glob("_fastsim*")] == [fastsim.library_path().name]
+
+
+@needs_compiler
+def test_threads_that_start_at_once_share_one_library(private_library, capsys):
+    """Four threads of one process (the viewer builds maps on threads) call available() at the same moment on a
+    library that is not built yet: each gets True, without leftover files or warnings (spec §5.7)."""
+    start = threading.Barrier(4)
+    answers = []
+
+    def first_use():
+        start.wait()
+        answers.append(fastsim.available())
+
+    threads = [threading.Thread(target=first_use) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert answers == [True] * 4
+    assert not list(private_library.glob("*.tmp"))
+    assert capsys.readouterr().err == ""
 
 
 from racing import nets, sim
@@ -149,6 +217,56 @@ def test_results_do_not_depend_on_the_number_of_threads(circle_track):
 
 
 @needs_compiler
+def test_a_thread_that_cannot_start_does_not_end_the_process():
+    """With the process limit reached no thread can start: the calling thread drives every car instead, with the
+    same results, and the process does not abort (spec §5.7)."""
+    code = f"""
+import resource, sys, threading
+sys.path.insert(0, {str(config.PROJECT_DIR)!r})
+import numpy as np
+from racing import config, fastsim, nets, sim
+from racing.track import build_track
+config.SIMULATOR = "auto"                                          # whatever EC_RACING_SIM says, as in this module
+assert fastsim.available()
+a = np.linspace(-np.pi / 2, 1.5 * np.pi, 3200, endpoint=False)
+track = build_track(np.column_stack([50 * np.cos(a), 50 * np.sin(a)]), 16.0, seed=0, level=1)
+track.expert_lap_time = 20.0
+cars = nets.DensePopulation(nets.init_population(np.random.default_rng(0), 12))
+limit = sim.target_time(track, config.TARGET_FACTOR)
+one = fastsim.simulate([track], cars, [limit], laps=config.LAPS, threads=1)[0]
+resource.setrlimit(resource.RLIMIT_NPROC, (1, resource.getrlimit(resource.RLIMIT_NPROC)[1]))
+try:
+    threading.Thread(target=lambda: None).start()
+    print("threads still start")
+    sys.exit(0)
+except RuntimeError:
+    pass
+many = fastsim.simulate([track], cars, [limit], laps=config.LAPS, threads=8)[0]
+same = (np.array_equal(one.fitness, many.fitness) and np.array_equal(one.progress, many.progress)
+        and np.array_equal(one.finish_time, many.finish_time, equal_nan=True) and one.steps == many.steps)
+print("same" if same else "different")
+"""
+    fastsim.library()                                               # built here, before the limit
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    if done.stdout.strip() == "threads still start":
+        pytest.skip("the process limit does not stop threads here")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "same"
+
+
+@needs_compiler
+def test_nan_outputs_choose_actions_as_np_argmax_does(circle_track):
+    """np.argmax counts NaN as the largest value, so the first NaN output is the action; the library chooses the
+    same, whether the NaN comes first, after a number or among several (spec §5.7)."""
+    cars = dense_cars(6, seed=10)
+    for car, outputs in enumerate([[0], [8], [5, 8], [14], [3, 11, 2], list(range(config.N_ACTIONS))]):
+        cars.weights[car, -config.N_ACTIONS + np.array(outputs)] = np.nan      # biases of the output layer
+    limit = sim.target_time(circle_track, config.TARGET_FACTOR)
+    same_results(fastsim.simulate([circle_track], cars, [limit], laps=config.LAPS)[0],
+                 numpy_results([circle_track], cars, [limit], config.LAPS)[0])
+
+
+@needs_compiler
 def test_the_grip_setting_is_passed_through(circle_track):
     cars = dense_cars(30, seed=5)
     limit = sim.time_limit_for(circle_track, 1)
@@ -178,7 +296,9 @@ def test_mismatched_arguments_are_refused(circle_track):
 
 def library_math(kind, x, y=None):
     """The library's check_math: function `kind` (0 numpy's tanh, 1 sin, 2 cos, 3 atan2, 4 hypot) at x, or at the
-    pairs (x, y)."""
+    pairs (x, y). Kind 5 (sincos) writes 2n values and is refused here."""
+    if kind not in (0, 1, 2, 3, 4):
+        raise ValueError(f"library_math computes kinds 0 to 4, not {kind}")
     x = np.ascontiguousarray(x, dtype=np.float64)
     y = np.zeros_like(x) if y is None else np.ascontiguousarray(y, dtype=np.float64)
     out = np.empty_like(x)
@@ -210,13 +330,33 @@ def test_math_functions_match_numpy_here():
 
 
 @needs_compiler
-def test_a_math_mismatch_falls_back(private_library, monkeypatch, capsys):
-    monkeypatch.setattr(fastsim, "_math_mismatch", lambda lib: "tanh")
+@pytest.mark.parametrize("check, name", [("_math_mismatch", "tanh"), ("_network_mismatch", "dense forward"),
+                                         ("_network_mismatch", "neat forward")])
+def test_a_load_check_mismatch_falls_back(private_library, monkeypatch, capsys, check, name):
+    monkeypatch.setattr(fastsim, check, lambda lib: name)
     assert not fastsim.available()
     assert not fastsim.available()
     err = capsys.readouterr().err
     assert err.count("using the numpy simulator") == 1
-    assert "the compiled simulator's tanh differs from numpy's on this machine" in err
+    assert f"the compiled simulator's {name} differs from numpy's on this machine" in err
+
+
+@needs_compiler
+def test_network_outputs_match_numpy_here():
+    assert fastsim._network_mismatch(fastsim.library()) is None
+
+
+@needs_compiler
+def test_the_network_check_sees_a_last_bit_difference(monkeypatch):
+    """The load-time check compares bits: one ulp in one output of numpy's dense or NEAT forward is a mismatch."""
+    from racing import neat
+    lib = fastsim.library()
+    dense_forward, neat_forward = nets.forward, neat.forward
+    monkeypatch.setattr(nets, "forward", lambda *args: np.nextafter(dense_forward(*args), np.inf))
+    assert fastsim._network_mismatch(lib) == "dense forward"
+    monkeypatch.setattr(nets, "forward", dense_forward)
+    monkeypatch.setattr(neat, "forward", lambda *args: np.nextafter(neat_forward(*args), np.inf))
+    assert fastsim._network_mismatch(lib) == "neat forward"
 
 
 from racing import neat
@@ -266,16 +406,15 @@ def test_the_sincos_check_is_exercised():
 
 
 @needs_compiler
-def test_a_stale_library_without_an_entry_point_is_rebuilt(private_library):
-    real = fastsim.SOURCE.read_text()
-    fastsim.SOURCE.write_text('extern "C" void simulate() {}\n')
-    fastsim.build()
-    fastsim.SOURCE.write_text(real)
-    library_time = fastsim.LIBRARY.stat().st_mtime_ns
-    os.utime(fastsim.SOURCE, ns=(library_time - 1000, library_time - 1000))   # no newer than the library: not rebuilt
-    assert fastsim.LIBRARY.stat().st_mtime_ns >= fastsim.SOURCE.stat().st_mtime_ns
-    assert fastsim.available()
-    assert fastsim.LIBRARY.stat().st_mtime_ns > library_time
+def test_a_library_without_an_entry_point_falls_back(private_library, capsys):
+    """A library under the current name that loads but lacks an entry point (not one this source built) is
+    unavailable: one warning, then numpy."""
+    stub = private_library / "stub.cpp"
+    stub.write_text('extern "C" void simulate() {}\n')
+    subprocess.run([fastsim.COMPILER, *fastsim.FLAGS, str(stub), "-o", str(fastsim.library_path())], check=True)
+    assert not fastsim.available()
+    assert not fastsim.available()
+    assert capsys.readouterr().err.count("using the numpy simulator") == 1
 
 
 from racing import expert, track_gen

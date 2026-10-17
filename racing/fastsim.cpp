@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -256,14 +257,17 @@ void evaluate(const Programs& p, int64_t car, int64_t n_inputs, const double* ob
     }
 }
 
-// nets.act / np.argmax: the first largest output
+// nets.act / np.argmax: the first largest output. np.argmax counts NaN as larger than every number, so the first NaN
+// output wins: a NaN becomes the best unless the best is already NaN, and nothing replaces a NaN best.
 int64_t network_action(const Programs& p, int64_t car, int64_t n_inputs, const double* obs,
                        std::vector<double>& values) {
     evaluate(p, car, n_inputs, obs, values);
     const int64_t* out = p.outputs + car * p.n_outputs;
     int64_t best = 0;
-    for (int64_t j = 1; j < p.n_outputs; ++j)
-        if (values[out[j]] > values[out[best]]) best = j;
+    for (int64_t j = 1; j < p.n_outputs; ++j) {
+        if (std::isnan(values[out[best]])) break;
+        if (std::isnan(values[out[j]]) || values[out[j]] > values[out[best]]) best = j;
+    }
     return best;
 }
 
@@ -389,12 +393,21 @@ extern "C" void simulate(const Track* tracks, int64_t n_tracks, const Settings* 
             drive(tracks[job / n_cars], *settings, programs, setup, job % n_cars, job, *out);
     };
     threads = std::max<int64_t>(1, std::min(threads, jobs));
+    int64_t processors = std::thread::hardware_concurrency();          // 0 when unknown
+    if (processors > 0) threads = std::min(threads, processors);
     if (threads == 1) {
         work();
         return;
     }
+    // If a thread cannot start (the system's limit on threads is reached), no more are started: the threads already
+    // running take every job, or this thread does if none started. No exception may leave this C function.
     std::vector<std::thread> pool;
-    for (int64_t k = 0; k < threads; ++k) pool.emplace_back(work);
+    pool.reserve(threads);
+    try {
+        for (int64_t k = 0; k < threads; ++k) pool.emplace_back(work);
+    } catch (const std::system_error&) {
+    }
+    if (pool.empty()) work();
     for (auto& thread : pool) thread.join();
 }
 
@@ -409,8 +422,9 @@ extern "C" void forward(const Programs* programs, const double* obs, int64_t n_c
 
 // Values of the engine's math functions that are not exactly rounded everywhere, which racing/fastsim.py compares
 // with numpy's when the library loads (spec §5.7): kind 0 numpy's tanh, 1 sin(x), 2 cos(x), 3 atan2(x, y),
-// 4 hypot(x, y), 5 sin and cos of x together (the compiler fuses them into glibc's sincos, which
-// every cosine in the engine uses): out has length 2n, sin in the first half and cos in the second. sqrt, floor, nearbyint and fabs are exactly rounded on every machine.
+// 4 hypot(x, y), 5 sin and cos of x together (the compiler fuses them into glibc's sincos, which every cosine in the
+// engine uses): out has length 2n, sin in the first half and cos in the second. sqrt, floor, ceil, nearbyint and fabs
+// are exactly rounded on every machine.
 extern "C" void check_math(int64_t kind, const double* x, const double* y, double* out, int64_t n) {
     for (int64_t i = 0; i < n; ++i) {
         switch (kind) {
@@ -423,3 +437,6 @@ extern "C" void check_math(int64_t kind, const double* x, const double* y, doubl
         }
     }
 }
+
+// The version of the compiler that built this library, for the run records (spec §5.7)
+extern "C" const char* compiler_version() { return __VERSION__; }
