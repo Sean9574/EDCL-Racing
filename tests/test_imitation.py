@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 import types
 from pathlib import Path
 
@@ -278,3 +281,59 @@ def test_hyperband_epochs_and_configurations(toy_data, tmp_path):
     assert summary["total_epochs"] == int(trials["epochs"].sum())
     exported = sorted(p.stem for p in (tmp_path / "kt_hyperband" / "models").glob("*.keras"))
     assert len(exported) == summary["configurations"]
+
+
+STEPS = '''
+import sys
+from pathlib import Path
+import numpy as np
+from racing import config, imitation
+
+rng = np.random.default_rng(0)
+w = rng.normal(size=(config.N_INPUTS, 15))
+
+
+def make(n):
+    x = rng.random((n, config.N_INPUTS)).astype(np.float32)
+    return x, np.argmax(x @ w, axis=1).astype(np.int64)
+
+
+(xt, yt), (xv, yv), (xs, ys) = make(3000), make(500), make(500)
+data = {"X_train": xt, "y_train": yt, "X_val": xv, "y_val": yv, "X_test": xs, "y_test": ys}
+out, search = Path(sys.argv[1]), Path(sys.argv[2])
+for step in sys.argv[3:]:
+    if step == "baseline":
+        imitation.train_baseline(data, out_dir=out / "baseline", epochs=2, seed=0, report=False)
+    elif step == "search":
+        imitation.run_tuner("kt_random", data, out_dir=search, max_trials=2, max_epochs=2, export_models=False,
+                            report=False)
+    else:
+        imitation.retrain("kt_random", data, seed=1, search=search, out_dir=out / "kt_random", epochs=2,
+                          report=False)
+'''
+
+
+def _steps(out, search, *steps):
+    """Run notebook 02's steps `steps` in one fresh Python process."""
+    env = {**os.environ, "PYTHONPATH": str(config.PROJECT_DIR), "CUDA_VISIBLE_DEVICES": "-1",
+           "TF_CPP_MIN_LOG_LEVEL": "3"}
+    subprocess.run([sys.executable, "-c", STEPS, str(out), str(search), *steps], check=True, env=env,
+                   cwd=config.PROJECT_DIR)
+
+
+@pytest.mark.slow
+def test_a_search_and_a_retraining_in_fresh_processes_equal_notebook_order(tmp_path):
+    """Every step sets its random seed when it starts, so a network trained in a job of its own equals the network
+    notebook 02 trains in order, after other networks, in one process (spec §3.3, §12.1)."""
+    from racing.backend import keras_cpu
+    _steps(tmp_path / "order", tmp_path / "order" / "search", "baseline", "search", "retrain")
+    _steps(tmp_path / "jobs", tmp_path / "jobs" / "search", "search")
+    _steps(tmp_path / "jobs", tmp_path / "jobs" / "search", "retrain")
+    in_order = json.loads((tmp_path / "order" / "search" / "summary.json").read_text())
+    alone = json.loads((tmp_path / "jobs" / "search" / "summary.json").read_text())
+    for key in ("chosen_hyperparameters", "best_val_accuracy", "chosen_val_accuracy", "total_epochs", "trials"):
+        assert in_order[key] == alone[key], key
+    load = keras_cpu().models.load_model
+    for a, b in zip(load(tmp_path / "order" / "kt_random" / "imitation.keras").get_weights(),
+                    load(tmp_path / "jobs" / "kt_random" / "imitation.keras").get_weights(), strict=True):
+        assert np.array_equal(a, b)
