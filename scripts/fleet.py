@@ -451,8 +451,8 @@ def code_lines():
 
 
 def environment_lines():
-    """Script lines that install Miniforge and the environment if missing, then the pinned packages and, where the server has
-    no g++, conda-forge's gxx (the compiled simulator, spec §5.7), and check the imports."""
+    """Script lines that install Miniforge and the environment if missing, then the pinned packages and, where the
+    server has no g++, conda-forge's gxx (the compiled simulator, spec §5.7), and check the imports."""
     return f"""if [ ! -x "$HOME"/miniforge3/bin/conda ]; then
   echo "installing Miniforge (conda with conda-forge) into ~/miniforge3 ..."
   curl -fsSL {MINIFORGE} -o "$HOME"/miniforge-installer.sh
