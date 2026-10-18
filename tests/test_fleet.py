@@ -138,6 +138,8 @@ def test_the_plan_names_each_machines_runs(fake):
     ('[machines.a]\nruns = ["ga:1"]\n[machines.b]\nhost = "x"\nruns = ["ga:1"]\n', "on both a and b"),
     ('[machines.a]\nruns = ["nb:03"]\n', "the notebook job is nb:01"),
     ('[machines.a]\nruns = ["nb:02"]\n', "search:kt_random, search:kt_hyperband, search:kt_bayesian"),
+    ('[machines.a]\nruns = ["nb:01"]\n[machines.b]\nhost = "x"\nruns = ["search:kt_random"]\n',
+     "machine b: search:kt_random runs only on the machine fleet.py runs on"),
     ('[machines.a]\nruns = ["ga:3"]\n', "seed must be one of"),
     ('[machines.a]\nhost = "x"\nruns = ["ga:1"]\n', "exactly one machine"),
     ('[machines.a]\nruns = []\n[machines.b]\nruns = []\n', "exactly one machine"),
@@ -538,6 +540,22 @@ def test_a_dagger_run_on_a_server_counts_as_finished_only_after_its_speed_push(f
     assert "results/runs/baseline/seed1/speed/summary.json" in script and "nb" not in script.split("done=()")[1]
 
 
+def test_a_search_job_is_no_run_to_collect(fake):
+    script = fake.fleet.collect_script(fake.fleet.Machine("s", jobs.parse_jobs("nb:01,search:kt_random,ga:0"),
+                                                          host="h"))
+    listed = script.split("done=()")[1]
+    assert "results/runs/ga/seed0/summary.json" in listed
+    assert "search" not in listed and "kt_random" not in listed and "None" not in listed
+
+
+def test_collect_does_not_wait_for_a_search(fake):
+    fake.ready_server()
+    server = fake.fleet.Machine("server", jobs.parse_jobs("search:kt_random,ga:0"), host="me@server", ssh="ssh")
+    out = io.StringIO()
+    assert fake.fleet.collect([fake.machines()[0], server], out=out) == 0, out.getvalue()
+    assert "not finished yet: ga:0" in out.getvalue() and "search" not in out.getvalue()
+
+
 def test_the_plan_reads_jobs(fake):
     plan = write_plan(fake.tmp, '[machines.here]\nruns = ["nb:01", "search:kt_random", "baseline:0", "es_seeded:0"]\n')
     (here,) = fake.fleet.load_plan(plan)
@@ -574,7 +592,7 @@ def test_a_dagger_run_from_a_server_joins_its_imitation_files_here(fake):
                                                        ssh="ssh")]
     server = fake.server_project() / "results"
     finished_run(server, "kt_random", 1)
-    for results in (server, fake.desktop / "results"):                   # notebook 02 made these on the desktop
+    for results in (server, fake.desktop / "results"):                   # an unfinished copy here, the same network
         run = results / "runs" / "kt_random" / "seed1"
         run.mkdir(parents=True, exist_ok=True)
         (run / "imitation.keras").write_bytes(b"imitation network")

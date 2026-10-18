@@ -12,7 +12,8 @@ with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
   python scripts/fleet.py archive NAME   every machine moves its earlier results to results/archive/NAME/
   python scripts/fleet.py finish    once all 24 runs have finished: collect, then notebooks 02 to 08 (they find
-                                    the runs complete and report them) and the evaluation, in the "fleet" session here
+                                    the networks, searches and runs complete and report them) and the evaluation, in
+                                    the "fleet" session here
 
 Which machine trains which runs: scripts/fleet.toml. Watch a session with  tmux attach -t fleet  (detach with
 Ctrl+B, then D); on a server, log in first with  ssh.exe <host>.
@@ -130,6 +131,9 @@ def load_plan(path=PLAN):
         for run in runs:
             if run in owner:
                 raise PlanError(f"run {train_label(run)} is on both {owner[run]} and {name}")
+            if run.is_search and entry.get("host") is not None:
+                raise PlanError(f"machine {name}: {run.label} runs only on the machine fleet.py runs on (its search "
+                                "folder is not collected from a server, spec §3.3)")
             owner[run] = name
         machines.append(Machine(name=name, runs=runs, at_once=positive(entry, "at_once", 1, name),
                                 workers=positive(entry, "workers", 6, name), host=entry.get("host"),
@@ -774,7 +778,7 @@ def collect_script(machine):
     """Name the machine's finished runs and pack them, with the run log and record, into OUTGOING."""
     lines = [f"cd {machine.root} 2>/dev/null || exit 0", "done=()"]
     for job in machine.runs:
-        if job.is_notebook:
+        if job.is_notebook or job.is_search:
             continue
         final = paths.final_record(job.approach, job.seed, Path("results") / "runs").as_posix()
         lines.append(f"[ -f {final} ] && "
@@ -824,7 +828,7 @@ def place_run(staging, results, run, source):
             raise FleetError(f"{name}: {existing} belongs to a different run; nothing was copied")
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
-        shutil.copytree(incoming, target, dirs_exist_ok=True)                # adds the run to notebook 02's files
+        shutil.copytree(incoming, target, dirs_exist_ok=True)                # completes the identical unfinished copy
     else:
         shutil.move(str(incoming), str(target))
     for champion in champions:
@@ -835,9 +839,9 @@ def place_run(staging, results, run, source):
 
 
 def joins(incoming, target, approach):
-    """Whether a run collected from a server may be added to the folder `target` here: an imitation method's folder
-    holds the files notebook 02 made here (the server got them from here), so it joins when every file in both is
-    identical. An evolutionary run's folder here is an unfinished copy of the same run, which is never mixed in."""
+    """Whether a run collected from a server may be added to the folder `target` here, an unfinished copy of the same
+    run. An imitation run trains its own network, as an evolutionary run does; its copy here joins only when every file
+    in both is identical, so nothing of either is replaced. An evolutionary run's copy is never mixed in."""
     if approach not in config.IMITATION_APPROACHES:
         return False
     for path in incoming.rglob("*"):
@@ -886,7 +890,8 @@ def collect(machines, out=sys.stdout, results=None):
                 except FleetError as error:
                     print(f"{machine.where}: {error}", file=out)
                     problems += 1
-            waiting = [job.label for job in machine.runs if not job.is_notebook and (job.approach, job.seed) not in done]
+            waiting = [job.label for job in machine.runs
+                       if not (job.is_notebook or job.is_search) and (job.approach, job.seed) not in done]
             if waiting:
                 print(f"{machine.where}: not finished yet: {', '.join(waiting)}", file=out)
         finally:
