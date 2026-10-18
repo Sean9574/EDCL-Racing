@@ -467,7 +467,7 @@ def test_training_time_trials_use_the_compiled_simulator_with_the_same_result(mo
 
 @needs_compiler
 def test_unknown_population_types_use_numpy(monkeypatch, circle_track):
-    from tests.test_population import ExpertCars
+    from test_population import ExpertCars          # pytest puts tests/ on the path; "tests." can hit a site-packages "tests"
     monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
     result = population.evaluate_population(ExpertCars(circle_track, 2), [0], 1, config.TARGET_FACTOR)
     assert result.success.all()
