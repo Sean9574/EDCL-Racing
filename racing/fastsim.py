@@ -21,8 +21,11 @@ from racing import setup as car_setup
 
 SOURCE = Path(__file__).with_name("fastsim.cpp")
 COMPILER = "g++"
-# -ffp-contract=off: no fused multiply-add, so every product and sum rounds as it does in numpy (spec §5.7)
-FLAGS = ["-O3", "-march=native", "-ffp-contract=off", "-std=c++17", "-shared", "-fPIC", "-pthread"]
+# -ffp-contract=off: no fused multiply-add, so every product and sum rounds as it does in numpy; -fno-builtin-sin and
+# -fno-builtin-cos: the sin and cos of one angle stay two calls, as numpy makes them, instead of the C library's sincos,
+# which in glibc 2.35 differs from its own sin and cos (spec §5.7)
+FLAGS = ["-O3", "-march=native", "-ffp-contract=off", "-fno-builtin-sin", "-fno-builtin-cos", "-std=c++17", "-shared",
+         "-fPIC", "-pthread"]
 OLD_LIBRARY_AGE = 24 * 3600     # s: a library of another build identity is removed once it is this old
 
 # The first use builds, loads and checks the library once per process. The viewer builds maps on several threads at
@@ -171,8 +174,9 @@ def _bits(values):
 
 def _math_mismatch(lib):
     """The name of the first of tanh, sin, cos, atan2, hypot and sincos whose values in the library differ from
-    numpy's on fixed inputs, or None. sincos is the library's sin and cos of one angle together, which the compiler
-    fuses into glibc's sincos; its first half is compared with np.sin and its second with np.cos. These are the
+    numpy's on fixed inputs, or None. sincos is the library's sin and cos of one angle together, as the engine computes
+    them, which a compiler that fused them into the C library's sincos would change (FLAGS forbid that); its first half
+    is compared with np.sin and its second with np.cos. These are the
     functions the engine calls that are not exactly rounded, so equal values here make the compiled simulator equal
     to numpy on this machine (spec §5.7)."""
     for kind, (name, function, x, y) in enumerate(_math_inputs()):

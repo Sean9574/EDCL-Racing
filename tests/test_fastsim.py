@@ -406,6 +406,17 @@ def test_the_sincos_check_is_exercised():
 
 
 @needs_compiler
+@pytest.mark.skipif(shutil.which("objdump") is None, reason="no objdump on this machine")
+def test_the_library_calls_sin_and_cos_not_sincos():
+    """g++ fuses the sin and cos of one angle into the C library's sincos unless the build forbids it, and glibc
+    2.35's sincos differs from its own sin and cos, which numpy calls, in about one angle in 1,500 (spec §5.7)."""
+    fastsim.library()
+    symbols = subprocess.run(["objdump", "-T", str(fastsim.library_path())], capture_output=True, text=True,
+                             check=True).stdout.split()
+    assert "sin" in symbols and "cos" in symbols and "sincos" not in symbols
+
+
+@needs_compiler
 def test_a_library_without_an_entry_point_falls_back(private_library, capsys):
     """A library under the current name that loads but lacks an entry point (not one this source built) is
     unavailable: one warning, then numpy."""

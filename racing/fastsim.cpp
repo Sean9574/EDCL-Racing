@@ -422,9 +422,9 @@ extern "C" void forward(const Programs* programs, const double* obs, int64_t n_c
 
 // Values of the engine's math functions that are not exactly rounded everywhere, which racing/fastsim.py compares
 // with numpy's when the library loads (spec §5.7): kind 0 numpy's tanh, 1 sin(x), 2 cos(x), 3 atan2(x, y),
-// 4 hypot(x, y), 5 sin and cos of x together (the compiler fuses them into glibc's sincos, which every cosine in the
-// engine uses): out has length 2n, sin in the first half and cos in the second. sqrt, floor, ceil, nearbyint and fabs
-// are exactly rounded on every machine.
+// 4 hypot(x, y), 5 sin and cos of x together, as the engine computes them (the build keeps them two calls rather than
+// the C library's sincos, see FLAGS in racing/fastsim.py): out has length 2n, sin in the first half and cos in the
+// second. sqrt, floor, ceil, nearbyint and fabs are exactly rounded on every machine.
 extern "C" void check_math(int64_t kind, const double* x, const double* y, double* out, int64_t n) {
     for (int64_t i = 0; i < n; ++i) {
         switch (kind) {
