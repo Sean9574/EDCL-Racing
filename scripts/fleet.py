@@ -451,8 +451,8 @@ def code_lines():
 
 
 def environment_lines():
-    """Script lines that install Miniforge and the environment if missing, then the pinned packages, and check the
-    imports."""
+    """Script lines that install Miniforge and the environment if missing, then the pinned packages and, where the server has
+    no g++, conda-forge's gxx (the compiled simulator, spec §5.7), and check the imports."""
     return f"""if [ ! -x "$HOME"/miniforge3/bin/conda ]; then
   echo "installing Miniforge (conda with conda-forge) into ~/miniforge3 ..."
   curl -fsSL {MINIFORGE} -o "$HOME"/miniforge-installer.sh
@@ -465,6 +465,10 @@ if [ ! -x {REMOTE_PYTHON} ]; then
 fi
 echo "installing the pinned packages (requirements.txt) ..."
 {REMOTE_PYTHON} -m pip install -q --disable-pip-version-check -r requirements.txt
+if ! command -v g++ >/dev/null 2>&1 && [ ! -x "$HOME"/miniforge3/envs/ec-racing/bin/g++ ]; then
+  echo "no g++ here: installing a C++ compiler (conda-forge gxx) into the ec-racing environment ..."
+  "$HOME"/miniforge3/bin/conda install -y -q -n ec-racing -c conda-forge gxx
+fi
 CUDA_VISIBLE_DEVICES=-1 TF_CPP_MIN_LOG_LEVEL=3 {REMOTE_PYTHON} -c "import numpy, tensorflow, racing.train; print('environment ready: Python', __import__('platform').python_version())"
 """
 

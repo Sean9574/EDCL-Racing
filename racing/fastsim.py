@@ -1,7 +1,7 @@
 """Compiled simulator (spec §5.7): time trials of dense and NEAT populations and the expert's lap, computed by
-racing/fastsim.cpp exactly as racing/sim.py computes them. The library is built with g++ the first time it is needed,
-under a name given by its build identity (the source, the compiler flags and the processor); without g++ the numpy
-simulator runs instead, with identical results."""
+racing/fastsim.cpp exactly as racing/sim.py computes them. The library is built with the C++ compiler (compiler()) the
+first time it is needed, under a name given by its build identity (the source, the compiler flags and the processor);
+without a compiler the numpy simulator runs instead, with identical results."""
 import ctypes
 import hashlib
 import os
@@ -20,7 +20,20 @@ from racing import config, nets, sim
 from racing import setup as car_setup
 
 SOURCE = Path(__file__).with_name("fastsim.cpp")
-COMPILER = "g++"
+
+
+def compiler(environ=os.environ, python=sys.executable):
+    """The C++ compiler (spec §5.7): EC_RACING_CXX when it is set, otherwise the g++ beside the Python interpreter (a
+    conda environment's own compiler, which fleet.py setup installs on a server without g++), otherwise g++ on the
+    search path."""
+    chosen = environ.get("EC_RACING_CXX", "").strip()
+    if chosen:
+        return chosen
+    beside = Path(python).parent / "g++"
+    return str(beside) if beside.exists() else "g++"
+
+
+COMPILER = compiler()
 # -ffp-contract=off: no fused multiply-add, so every product and sum rounds as it does in numpy; -fno-builtin-sin and
 # -fno-builtin-cos: the sin and cos of one angle stay two calls, as numpy makes them, instead of the C library's sincos,
 # which in glibc 2.35 differs from its own sin and cos (spec §5.7)

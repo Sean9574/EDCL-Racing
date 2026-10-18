@@ -291,6 +291,13 @@ def test_the_environment_is_python_3_13_with_the_pinned_packages(fake):
     assert "python=3.13" in script and "-r requirements.txt" in script and "Miniforge3-Linux-x86_64.sh" in script
 
 
+def test_the_environment_gets_conda_forge_gxx_only_without_g_plus_plus(fake):
+    script = fake.fleet.environment_lines()
+    assert "command -v g++" in script and "envs/ec-racing/bin/g++" in script
+    assert "conda install -y -q -n ec-racing -c conda-forge gxx" in script
+    assert script.index("-r requirements.txt") < script.index("conda-forge gxx")
+
+
 # ----- start -----
 
 def test_nothing_starts_until_every_machine_is_ready(fake):

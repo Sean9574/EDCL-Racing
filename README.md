@@ -76,6 +76,10 @@ exactly the numpy simulator's results at about a tenth of the processor time. It
 
     sudo apt install build-essential
 
+Without administrator rights, conda-forge's compiler works as well: `conda install -c conda-forge gxx` into the
+environment. The `g++` beside the environment's Python is used first, then `g++` on the path; `EC_RACING_CXX` names
+another compiler. `scripts/fleet.py setup` installs it on a server that has no g++.
+
 The library is built into `racing/_fastsim-<id>.so` the first time a run needs it, where `<id>` identifies the
 source, the compiler flags and the processor, so a `git pull` that changes `fastsim.cpp` leads to a new build. When
 the library loads, it is checked against numpy on this machine (math functions and network outputs). Without g++, or

@@ -557,3 +557,20 @@ def test_neat_training_time_trials_match_numpy(monkeypatch, circle_track):
     for field in ("fitness", "success", "laps"):
         assert np.array_equal(getattr(compiled, field), getattr(reference, field)), field
     assert np.array_equal(compiled.finish_time, reference.finish_time, equal_nan=True)
+
+
+def test_the_compiler_is_ec_racing_cxx_then_the_g_plus_plus_beside_python_then_the_path(tmp_path):
+    python = tmp_path / "env" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    assert fastsim.compiler({"EC_RACING_CXX": "/opt/gcc/bin/g++-14"}, python) == "/opt/gcc/bin/g++-14"
+    assert fastsim.compiler({}, python) == "g++"                                 # none beside it: the search path
+    (python.parent / "g++").write_text("")
+    assert fastsim.compiler({}, python) == str(python.parent / "g++")             # a conda environment's own
+    assert fastsim.compiler({"EC_RACING_CXX": "  "}, python) == str(python.parent / "g++")
+
+
+def test_a_named_compiler_that_does_not_exist_warns_once_and_falls_back(private_library, monkeypatch, capsys):
+    monkeypatch.setattr(fastsim, "COMPILER", fastsim.compiler({"EC_RACING_CXX": "/nonexistent/g++"}))
+    assert not fastsim.available() and not fastsim.available()
+    assert capsys.readouterr().err.count("using the numpy simulator") == 1
