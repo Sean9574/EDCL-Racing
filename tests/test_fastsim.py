@@ -1,11 +1,13 @@
 """The compiled simulator (spec §5.7, §12.1): its build and fallback, its network programs, and exact equality with the
 numpy simulator."""
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -414,6 +416,29 @@ def test_the_library_calls_sin_and_cos_not_sincos():
     symbols = subprocess.run(["objdump", "-T", str(fastsim.library_path())], capture_output=True, text=True,
                              check=True).stdout.split()
     assert "sin" in symbols and "cos" in symbols and "sincos" not in symbols
+
+
+def _bound_versions(path, names=("sin", "cos", "atan2", "hypot")):
+    """The C library version each of `names` is bound to in the shared object at `path` (objdump -T)."""
+    found = {}
+    listing = subprocess.run(["objdump", "-T", str(path)], capture_output=True, text=True, check=True).stdout
+    for line in listing.splitlines():
+        match = re.search(r"\*UND\*\s+\S+\s+\(?(GLIBC_[\d.]+)\)?\s+(\w+)$", line)
+        if match and match.group(2) in names:
+            found[match.group(2)] = match.group(1)
+    return found
+
+
+@needs_compiler
+@pytest.mark.skipif(shutil.which("objdump") is None, reason="no objdump on this machine")
+def test_the_library_binds_the_math_functions_numpy_binds():
+    """The C library may hold several versions of a function: glibc 2.35 added a rewritten hypot. The library must
+    call the version numpy calls (spec §5.7)."""
+    fastsim.library()
+    umath = next(Path(np.__file__).parent.glob("*core/_multiarray_umath*.so"))
+    ours, numpys = _bound_versions(fastsim.library_path()), _bound_versions(umath)
+    assert set(ours) == {"sin", "cos", "atan2", "hypot"}
+    assert ours == {name: numpys[name] for name in ours}
 
 
 @needs_compiler
