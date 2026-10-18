@@ -6,7 +6,8 @@ Run with:  python -m racing.bench              (both)
            python -m racing.bench generation   (generation time only)
            python -m racing.bench keras        (Keras only; needs results/dataset.npz)
 Run on an otherwise idle machine.
-Training uses every available processor for the compiled simulator (spec §3.3); the worker count is chosen here for numpy.
+Training uses every available processor for the compiled simulator (spec §3.3); the worker count is chosen here for
+numpy.
 """
 import os
 import sys
