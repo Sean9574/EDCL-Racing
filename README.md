@@ -107,8 +107,9 @@ fixes the number, to keep processors free for other work.
    if *available* falls below about 2 GB, stop the run, lower `EC_RACING_JOBS` and resume.
 8. **Worker processes.** The compiled simulator needs no setting: it uses every processor. `EC_RACING_JOBS` (default
    6) is the number of worker processes of the numpy simulator, DAgger's driving, dataset collection and the final
-   evaluation; each holds its own maps (step 7). `python -m racing.bench generation` times both simulators on this
-   machine and, for numpy, ends with a line such as `export EC_RACING_JOBS=16`; add it to `~/.bashrc` to keep it.
+   evaluation; each holds its own maps (step 7). `python -m racing.bench generation` times only the simulator in
+   use; `EC_RACING_SIM=numpy python -m racing.bench generation` times numpy and ends with a line such as
+   `export EC_RACING_JOBS=16`; add it to `~/.bashrc` to keep it.
 
 To update the code later: `git pull`, but never while a run is in progress (see below).
 
@@ -194,9 +195,9 @@ python -m racing.progress                            # live status; Ctrl+C stops
 | `07_neat` | NEAT, three seeds |
 | `08_evaluate` | Tables and figures |
 
-The processor, worker count, package versions, settings, code version (git commit) and notebook times are recorded
+The processor, worker count and thread setting, package versions, settings, code version (git commit) and notebook times are recorded
 in `results/run_info.json`. Each evolutionary run's `summary.json` also records the machine it finished on (host,
-processor, worker count), because runs may be trained side by side or on several machines (below). Their training
+processor, worker count, thread setting), because runs may be trained side by side or on several machines (below). Their training
 times then depend on the machine and on what else ran on it, so compare the methods' cost by evaluations
 (`evals`, exact on any machine) and give training times as context.
 
@@ -223,8 +224,8 @@ To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\resu
 
 ### Several machines
 
-One run cannot use more than about 6 to 8 worker processes (`python -m racing.bench generation`), so a machine with
-more processors runs several jobs side by side, and several machines can share the experiment. The runs are independent
+A compiled run uses every processor and runs side by side share them, so several jobs side by side keep a machine
+busy through each run's map building and Keras phases, and several machines can share the experiment. The runs are independent
 and fixed by their seeds and settings, so where they train changes only their training times.
 
 **Side by side on one machine:**

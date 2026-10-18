@@ -275,6 +275,7 @@ def test_the_monitor_prints_the_runner_milestones(runner, tmp_path, monkeypatch)
     assert run_main(runner, tmp_path, [], monitor=True, out=out) == 0
     text = out.getvalue()
     assert "run started" in text and "done 03_c.ipynb" in text and "run finished" in text
+    assert "simulator " in next(line for line in text.splitlines() if "run started" in line)
     assert text.index("start 01_a.ipynb") < text.index("run finished")
 
 
@@ -557,6 +558,7 @@ def test_jobs_side_by_side_train_at_most_at_once_and_are_recorded(runner, tmp_pa
     for name in ("ga:0", "ga:1", "es:0"):
         assert f"start {name}" in log and f"done {name}" in log
     assert "runs finished" in log and "2 at a time" in log
+    assert "simulator " in next(line for line in log.splitlines() if "run started" in line)
     info = json.loads((tmp_path / "info.json").read_text())
     assert [e["run"] for e in info["trained"]] == ["ga:0", "ga:1", "es:0"]
     assert all("finished" in e for e in info["trained"])

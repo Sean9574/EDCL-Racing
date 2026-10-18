@@ -14,9 +14,11 @@
 #include <thread>
 #include <vector>
 
+#if defined(__x86_64__) && defined(__GLIBC__)
 // numpy calls the C library's hypot of version GLIBC_2.2.5. glibc 2.35 added a rewritten hypot under GLIBC_2.35, which
 // a build on glibc 2.35 or later would bind instead, so the library binds numpy's (spec §5.7)
-__asm__(".symver hypot,hypot@GLIBC_2.2.5");
+__asm__(".symver hypot,hypot@GLIBC_2.2.5");     // GLIBC_2.2.5 is the x86-64 base version; elsewhere it would not link
+#endif
 
 extern "C" {
 

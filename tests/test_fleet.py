@@ -140,6 +140,11 @@ def test_the_plan_names_each_machines_runs(fake):
     ('[machines.a]\nruns = ["nb:02"]\n', "search:kt_random, search:kt_hyperband, search:kt_bayesian"),
     ('[machines.a]\nruns = ["nb:01"]\n[machines.b]\nhost = "x"\nruns = ["search:kt_random"]\n',
      "machine b: search:kt_random runs only on the machine fleet.py runs on"),
+    ('[machines.a]\nruns = []\n[machines.b]\nhost = "x"\nruns = ["nb:01"]\n',
+     r"machine b: nb:01 .*\(the dataset is not collected from a server, spec §3.3\)"),
+    ('[machines.a]\nruns = []\n[machines.b]\nhost = "x"\nruns = ["baseline:0"]\n',
+     r"machine b: baseline:0 runs only on the machine fleet.py runs on \(its Keras training may round differently "
+     r"on another processor, spec §3.3\)"),
     ('[machines.a]\nruns = ["ga:3"]\n', "seed must be one of"),
     ('[machines.a]\nhost = "x"\nruns = ["ga:1"]\n', "exactly one machine"),
     ('[machines.a]\nruns = []\n[machines.b]\nruns = []\n', "exactly one machine"),
@@ -297,7 +302,9 @@ def test_the_environment_is_python_3_13_with_the_pinned_packages(fake):
 
 def test_the_environment_gets_conda_forge_gxx_only_without_g_plus_plus(fake):
     script = fake.fleet.environment_lines()
-    assert "command -v g++" in script and "envs/ec-racing/bin/g++" in script
+    assert "command -v g++" not in script and "envs/ec-racing/bin/g++" in script
+    assert "g++ -std=c++17 -x c++ -" in script
+    assert "fastsim.description()" in script and "WARNING: the compiled simulator does not run here" in script
     assert "conda install -y -q -n ec-racing -c conda-forge gxx" in script
     assert script.index("-r requirements.txt") < script.index("conda-forge gxx")
 
