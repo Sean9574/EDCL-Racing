@@ -6,6 +6,7 @@ Run with:  python -m racing.bench              (both)
            python -m racing.bench generation   (generation time only)
            python -m racing.bench keras        (Keras only; needs results/dataset.npz)
 Run on an otherwise idle machine.
+Training uses every available processor for the compiled simulator (spec §3.3); the worker count is chosen here for numpy.
 """
 import os
 import sys
@@ -148,7 +149,8 @@ def compiled_generation_time(pop, threads, repeats=3):
 
 def generation_main():
     """Times one generation for each worker or thread count on the simulator in use, and prints the workload timed
-    and the command that selects the fastest count."""
+    and the command that selects the fastest count for numpy, or how training chooses its threads for the compiled
+    simulator."""
     compiled = fastsim.available()
     if compiled:
         unit = "thread(s)"
@@ -165,8 +167,13 @@ def generation_main():
         times[jobs] = (compiled_generation_time if compiled else generation_time)(config.GA_POP, jobs)
         print(f"  {jobs:2d} {unit}: {times[jobs]:6.2f} s", flush=True)
     best = recommend(times)
-    print(f"Fastest: {best} {unit} (current setting {config.N_JOBS}). Select it with:")
-    print(f"  export EC_RACING_JOBS={best}")
+    if compiled:
+        print(f"Fastest: {best} {unit}. Training uses every logical processor available to it "
+              f"({len(os.sched_getaffinity(0))} here) unless EC_RACING_THREADS sets a number; runs side by side share "
+              f"them (spec §3.3).")
+    else:
+        print(f"Fastest: {best} {unit} (current setting {config.N_JOBS}). Select it with:")
+        print(f"  export EC_RACING_JOBS={best}")
     return times
 
 

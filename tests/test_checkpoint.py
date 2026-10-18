@@ -170,3 +170,9 @@ def test_the_setup_settings_are_recorded():
     for name in ("SENSOR_LENGTH_LIMITS", "STEER_GAIN_LIMITS", "DEFAULT_SETUP", "SETUP_MUTATION_P", "SETUP_MUTATION_SD"):
         assert name in record
     assert not {"APP_GRIPS", "APP_CHAMPIONS_DIR", "N_JOBS"} & set(record)
+
+
+def test_the_machine_record_names_the_thread_setting_and_the_worker_count(monkeypatch):
+    monkeypatch.setattr(config, "THREADS", None)
+    record = checkpoint.machine_record()
+    assert record["threads"] == "all" and record["n_jobs"] == config.N_JOBS

@@ -195,3 +195,15 @@ def test_save_dense_champion_keeps_the_architecture(tmp_path):
     assert saved.dtype == np.float64 and np.array_equal(saved, weights[1])
     model, driver = nets.load_champion("es", 2, tmp_path)
     assert nets.dense_spec(model) == ((8, 4), "tanh") and driver.n_params == weights.shape[1]
+
+
+def test_compiled_time_trials_use_the_thread_count_not_the_worker_count(monkeypatch, fake_tracks):
+    from racing import fastsim
+    if not fastsim.available():
+        pytest.skip("the compiled simulator does not run here")
+    seen = []
+    real = fastsim.simulate
+    monkeypatch.setattr(fastsim, "simulate", lambda *a, **k: seen.append(k["threads"]) or real(*a, **k))
+    monkeypatch.setattr(config, "thread_count", lambda: 3)
+    population.evaluate_population(dense(4), [0, 1], 1, config.TARGET_FACTOR, n_jobs=7)
+    assert seen == [3]

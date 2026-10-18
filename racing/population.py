@@ -74,13 +74,13 @@ def _time_trial(population, seed, level, factor):
 
 def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="loky"):
     """Time trials of every car on every map (spec §9.2). Dense and NEAT populations run on the compiled simulator
-    when it is available, in one call with n_jobs threads (spec §5.7); otherwise the per-map tasks run on numpy
+    when it is available, in one call with config.thread_count() threads (spec §3.3, §5.7); otherwise the per-map tasks run on numpy
     in n_jobs worker processes. The per-map results are combined in map order, so the result depends on neither."""
     n = len(population)
     if fastsim.supports(population) and fastsim.available():
         tracks = [get_track(seed, level) for seed in seeds]
         results = fastsim.simulate(tracks, population, [sim.target_time(t, factor) for t in tracks],
-                                   laps=config.LAPS, threads=n_jobs)
+                                   laps=config.LAPS, threads=config.thread_count())
         tasks = [(k, seed, np.arange(n)) for k, seed in enumerate(seeds)]
         parts = [_trial_values(result) for result in results]
     else:

@@ -82,10 +82,10 @@ def processor():
 
 def machine_record():
     """The machine a run finished on: runs of one experiment may be trained on several machines (scripts/fleet.py),
-    so each run's summary says where, with how many threads of the compiled simulator or worker processes of the
-    numpy simulator (n_jobs), and which simulator ran its time trials (spec §5.7)."""
+    so each run's summary says where, with which thread setting of the compiled simulator and how many worker
+    processes (n_jobs), and which simulator ran its time trials (spec §3.3, §5.7)."""
     return {"host": platform.node() or "unknown", "processor": processor(), "logical_processors": os.cpu_count(),
-            "n_jobs": config.N_JOBS, "simulator": fastsim.description()}
+            "threads": config.thread_label(), "n_jobs": config.N_JOBS, "simulator": fastsim.description()}
 
 
 def check_settings(recorded):

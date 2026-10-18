@@ -78,7 +78,8 @@ def test_generation_main_times_the_compiled_simulator_when_it_runs(monkeypatch, 
     monkeypatch.setattr(bench, "generation_time", lambda *a, **k: pytest.fail("numpy timed"))
     assert bench.generation_main() == {1: 3.0, 4: 1.0}
     out = capsys.readouterr().out
-    assert "compiled (g++ 13.3.0)" in out and "thread" in out and "export EC_RACING_JOBS=4" in out
+    assert "compiled (g++ 13.3.0)" in out and "thread" in out
+    assert "EC_RACING_THREADS" in out and "export EC_RACING_JOBS" not in out     # training uses every processor
 
 
 def test_generation_main_names_the_expert_workload_without_a_trained_population(monkeypatch, capsys, tmp_path):

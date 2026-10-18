@@ -131,8 +131,8 @@ NEAT_STAGNATION = 20         # generations without improvement after which a spe
 
 # --- Parallelism ---
 def worker_count(environ=os.environ):
-    """Threads of the compiled simulator, or worker processes of the numpy simulator (spec §3.3, §5.7): EC_RACING_JOBS,
-    or 6 when it is not set. The best value for a machine is measured with `python -m racing.bench generation`."""
+    """Worker processes (spec §3.3): those of the numpy simulator, DAgger's driving, dataset collection and the final
+    evaluation. EC_RACING_JOBS, or 6 when it is not set. Each holds its own built maps, so their number is fixed."""
     value = environ.get("EC_RACING_JOBS", "").strip()
     if not value:
         return 6
@@ -142,6 +142,32 @@ def worker_count(environ=os.environ):
 
 
 N_JOBS = worker_count()      # results do not depend on it (spec §9.10); recorded in results/run_info.json
+
+
+def thread_setting(environ=os.environ):
+    """EC_RACING_THREADS (spec §3.3): a fixed number of threads for the compiled simulator, or None when it is not set,
+    for one thread per logical processor available to the process."""
+    value = environ.get("EC_RACING_THREADS", "").strip()
+    if not value:
+        return None
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError(f"EC_RACING_THREADS must be a whole number of at least 1, not {value!r}")
+    return int(value)
+
+
+THREADS = thread_setting()   # results do not depend on it (spec §9.10); recorded in results/run_info.json
+
+
+def thread_count():
+    """Threads of one call of the compiled simulator (spec §3.3, §5.7): THREADS when it is set, otherwise the logical
+    processors available to this process now, so runs that share a machine share its processors through the operating
+    system, and a run alone uses them all."""
+    return THREADS if THREADS is not None else len(os.sched_getaffinity(0))
+
+
+def thread_label():
+    """THREADS as the run records show it: the number, or "all"."""
+    return "all" if THREADS is None else THREADS
 
 
 def simulator_choice(environ=os.environ):

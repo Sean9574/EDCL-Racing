@@ -80,8 +80,9 @@ The library is built into `racing/_fastsim-<id>.so` the first time a run needs i
 source, the compiler flags and the processor, so a `git pull` that changes `fastsim.cpp` leads to a new build. When
 the library loads, it is checked against numpy on this machine (math functions and network outputs). Without g++, or
 if the check finds a difference, a run prints one warning and uses the numpy simulator, with the same results.
-`EC_RACING_SIM=numpy` forces numpy. `EC_RACING_JOBS` sets the compiled simulator's threads; measure the best value
-with `python -m racing.bench generation`.
+`EC_RACING_SIM=numpy` forces numpy. The compiled simulator uses every logical processor available to the run;
+runs side by side share them through the operating system at no cost (specification §3.3). `EC_RACING_THREADS=8`
+fixes the number, to keep processors free for other work.
 
 6. **Keep Windows awake and without restarts.** WSL pauses while Windows sleeps. Set Settings → System → Power →
    *Screen and sleep* → "When plugged in, put my device to sleep after" to *Never* (or run
@@ -100,20 +101,10 @@ with `python -m racing.bench generation`.
    sized for the machine (leave a few GB for Windows), then run `wsl --shutdown` in PowerShell and open Ubuntu again
    to apply it. Check the memory with `free -h` during the first hour at Extra hard (notebook 03 reaches it first);
    if *available* falls below about 2 GB, stop the run, lower `EC_RACING_JOBS` and resume.
-8. **Choose the number of threads of the compiled simulator (worker processes with numpy)** for this machine:
-
-   ```bash
-   python -m racing.bench generation
-   ```
-
-   It times one generation for each count up to the number of logical processors and ends with a line such as
-   `export EC_RACING_JOBS=16`. The recommendation measures speed only and does not check memory (step 7). Make it
-   permanent:
-
-   ```bash
-   echo 'export EC_RACING_JOBS=16' >> ~/.bashrc       # use the number the benchmark printed
-   source ~/.bashrc
-   ```
+8. **Worker processes.** The compiled simulator needs no setting: it uses every processor. `EC_RACING_JOBS` (default
+   6) is the number of worker processes of the numpy simulator, DAgger's driving, dataset collection and the final
+   evaluation; each holds its own maps (step 7). `python -m racing.bench generation` times both simulators on this
+   machine and, for numpy, ends with a line such as `export EC_RACING_JOBS=16`; add it to `~/.bashrc` to keep it.
 
 To update the code later: `git pull`, but never while a run is in progress (see below).
 
@@ -304,7 +295,7 @@ python scripts/fleet.py finish     # once all 24 runs have finished: collect, th
 
 ```bash
 python scripts/pilots.py ga es neat       # short runs from Easy: is the 90% requirement reachable?
-python -m racing.bench generation         # generation time per worker count; prints the EC_RACING_JOBS to use
+python -m racing.bench generation         # generation time per thread or worker count
 python -m racing.bench keras              # Keras epoch time per steps_per_execution and jit_compile (XLA stays
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```

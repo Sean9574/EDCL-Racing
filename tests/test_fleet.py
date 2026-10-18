@@ -511,7 +511,7 @@ def test_main_reports_a_failed_check_with_code_1(fake, capsys, monkeypatch):
 
 def test_runs_record_the_machine_they_finished_on():
     record = checkpoint.machine_record()
-    assert set(record) == {"host", "processor", "logical_processors", "n_jobs", "simulator"}
+    assert set(record) == {"host", "processor", "logical_processors", "threads", "n_jobs", "simulator"}
     assert record["n_jobs"] == config.N_JOBS and json.dumps(record)
     assert record["simulator"] == fastsim.description()
 

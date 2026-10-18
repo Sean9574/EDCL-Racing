@@ -266,7 +266,8 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
     version = code_version()
     warning = code_change(info, version)
-    info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
+    info.update({"processor": processor(), "logical_processors": os.cpu_count(),
+                 "threads": config.thread_label(), "n_jobs": config.N_JOBS,
                  "simulator": fastsim.description(),
                  "power_profile": power_profile(), "versions": versions(),
                  "settings": checkpoint.settings_record(), **version})
@@ -281,8 +282,8 @@ def run(notebook_dir=NOTEBOOK_DIR, start=None, log_path=config.RUN_LOG_PATH, inf
     if watcher is not None:
         watcher.start()
     try:
-        log(f"run started: {' '.join(names)} ({config.N_JOBS} workers, power profile {info['power_profile']})",
-            log_path)
+        log(f"run started: {' '.join(names)} ({config.N_JOBS} workers, threads {config.thread_label()}, power profile "
+            f"{info['power_profile']})", log_path)
         with tempfile.TemporaryDirectory() as kernels, open(Path(log_path).with_name(KERNEL_LOG), "a") as output:
             write_kernel(kernels)
             for name in names:
@@ -423,7 +424,8 @@ def run_side_by_side(job_list, at_once, log_path=config.RUN_LOG_PATH, info_path=
     info = checkpoint.read_record(info_path) if Path(info_path).exists() else {}
     version = code_version()
     warning = code_change(info, version)
-    info.update({"processor": processor(), "logical_processors": os.cpu_count(), "n_jobs": config.N_JOBS,
+    info.update({"processor": processor(), "logical_processors": os.cpu_count(),
+                 "threads": config.thread_label(), "n_jobs": config.N_JOBS,
                  "simulator": fastsim.description(),
                  "power_profile": power_profile(), "versions": versions(),
                  "settings": checkpoint.settings_record(), **version})
@@ -458,8 +460,8 @@ def run_side_by_side(job_list, at_once, log_path=config.RUN_LOG_PATH, info_path=
     if watcher is not None:
         watcher.start()
     try:
-        log(f"run started: {' '.join(names)}, {at_once} at a time ({config.N_JOBS} workers each, "
-            f"{platform.node()})", log_path)
+        log(f"run started: {' '.join(names)}, {at_once} at a time ({config.N_JOBS} workers each, threads "
+            f"{config.thread_label()}, {platform.node()})", log_path)
         while pending or active:
             for job in list(pending):
                 reason = blocked(job)
