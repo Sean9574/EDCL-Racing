@@ -136,7 +136,8 @@ def test_the_plan_names_each_machines_runs(fake):
 
 @pytest.mark.parametrize("text, message", [
     ('[machines.a]\nruns = ["ga:1"]\n[machines.b]\nhost = "x"\nruns = ["ga:1"]\n', "on both a and b"),
-    ('[machines.a]\nruns = ["nb:03"]\n', "notebook jobs are"),
+    ('[machines.a]\nruns = ["nb:03"]\n', "the notebook job is nb:01"),
+    ('[machines.a]\nruns = ["nb:02"]\n', "search:kt_random, search:kt_hyperband, search:kt_bayesian"),
     ('[machines.a]\nruns = ["ga:3"]\n', "seed must be one of"),
     ('[machines.a]\nhost = "x"\nruns = ["ga:1"]\n', "exactly one machine"),
     ('[machines.a]\nruns = []\n[machines.b]\nruns = []\n', "exactly one machine"),
@@ -153,7 +154,8 @@ def test_the_repository_plan_runs_the_whole_experiment_once_with_no_inputs_from_
     monkeypatch.setattr(fake.fleet, "PROJECT", SCRIPT.parent.parent)
     machines = fake.fleet.load_plan()
     labels = [job.label for machine in machines for job in machine.runs]
-    expected = {"nb:01", "nb:02"} | {f"{a}:{s}" for a in config.APPROACHES for s in config.RUN_SEEDS}
+    expected = ({"nb:01"} | {f"search:{a}" for a in config.TUNER_APPROACHES}
+                | {f"{a}:{s}" for a in config.APPROACHES for s in config.RUN_SEEDS})
     assert len(labels) == len(set(labels)) and set(labels) == expected
     assert sum(machine.local for machine in machines) == 1
     assert all(machine.workers % config.TRACKS_PER_GEN == 0 for machine in machines)
@@ -492,7 +494,7 @@ def test_finish_waits_for_every_run(fake):
     assert fake.session("desktop") is None
 
 
-def test_finish_needs_all_24_runs_and_runs_the_notebooks_from_03(fake):
+def test_finish_needs_all_24_runs_and_runs_the_notebooks_from_02(fake):
     fake.ready_server()
     on_server = {job.label for job in fake.machines()[1].runs}
     for approach in config.APPROACHES:
@@ -505,7 +507,7 @@ def test_finish_needs_all_24_runs_and_runs_the_notebooks_from_03(fake):
     finished_run(fake.desktop / "results", "kt_bayesian", 2)
     out = io.StringIO()
     assert fake.fleet.finish(fake.machines(), out=out) == 0
-    assert f"{sys.executable} scripts/run_notebooks.py --from 03" in fake.session("desktop")
+    assert f"{sys.executable} scripts/run_notebooks.py --from 02" in fake.session("desktop")
     assert fake.session("server") is None
     assert (fake.desktop / "results" / "runs" / "es_seeded" / "seed0" / "summary.json").exists()
 
@@ -524,7 +526,7 @@ def test_runs_record_the_machine_they_finished_on():
 
 
 def test_jobs_whose_inputs_the_machine_makes_itself_need_nothing_sent(fake):
-    desktop = fake.fleet.Machine("desktop", jobs.parse_jobs("nb:01,nb:02,baseline:0,es_seeded:0"), at_once=4)
+    desktop = fake.fleet.Machine("desktop", jobs.parse_jobs("nb:01,search:kt_random,baseline:0,es_seeded:0"), at_once=4)
     assert fake.fleet.external_inputs(desktop) == []
     server = fake.fleet.Machine("server", jobs.parse_jobs("es_seeded:1,ga:0"), host="me@h")
     assert [target for _, target in fake.fleet.external_inputs(server)] == [
@@ -537,10 +539,10 @@ def test_a_dagger_run_on_a_server_counts_as_finished_only_after_its_speed_push(f
 
 
 def test_the_plan_reads_jobs(fake):
-    plan = write_plan(fake.tmp, '[machines.here]\nruns = ["nb:01", "nb:02", "baseline:0", "es_seeded:0"]\n')
+    plan = write_plan(fake.tmp, '[machines.here]\nruns = ["nb:01", "search:kt_random", "baseline:0", "es_seeded:0"]\n')
     (here,) = fake.fleet.load_plan(plan)
-    assert [job.label for job in here.runs] == ["nb:01", "nb:02", "baseline:0", "es_seeded:0"]
-    assert fake.fleet.train_command(here).endswith("--runs nb:01,nb:02,baseline:0,es_seeded:0 --at-once 1")
+    assert [job.label for job in here.runs] == ["nb:01", "search:kt_random", "baseline:0", "es_seeded:0"]
+    assert fake.fleet.train_command(here).endswith("--runs nb:01,search:kt_random,baseline:0,es_seeded:0 --at-once 1")
 
 
 def test_start_refuses_a_machine_whose_earlier_results_have_other_settings(fake):

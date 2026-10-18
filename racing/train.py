@@ -2,8 +2,10 @@
 
 scripts/run_notebooks.py --runs starts several of these at once, on one or more machines (scripts/fleet.py). Each
 makes exactly the call of its notebook's loop (tests/test_train.py checks this), so a run trained here is the run the
-notebook would train; the notebook then finds it complete and only reports it. An imitation method's run is notebook
-03's DAgger refinement and speed push (spec §3.3), an evolutionary method's the run of notebooks 04 to 07.
+notebook would train; the notebook then finds it complete and only reports it. A run of an imitation method first
+trains its own imitation network, notebook 02's call for its seed, then refines and pushes it, notebook 03's call; an
+evolutionary method's run is the run of notebooks 04 to 07. A Keras Tuner search is notebook 02's search call:
+python -m racing.train search kt_random (spec §3.3).
 """
 import argparse
 import sys
@@ -16,10 +18,17 @@ NOTEBOOKS = {**{approach: "03_dagger.ipynb" for approach in config.IMITATION_APP
 
 
 def train(approach, seed):
-    """Train run `seed` of `approach` as its notebook does; returns the run's summary."""
+    """Train run `seed` of `approach` as its notebooks do; returns the run's summary. A run of an imitation method
+    first trains its own imitation network (notebook 02's call for its seed: the baseline's training, or the retraining
+    of its search's chosen architecture), then refines it by DAgger and pushes it (notebook 03's call); a step finished
+    before returns its record instead of training again (spec §3.3)."""
     if approach in config.IMITATION_APPROACHES:
         from racing import dagger, imitation
         data = imitation.load_dataset()
+        if approach == "baseline":
+            imitation.train_baseline(data, seed=seed)
+        else:
+            imitation.retrain(approach, data, seed=seed)
         return dagger.run(approach, seed, data, n_jobs=config.N_JOBS)
     if approach == "ga":
         from racing import ga
@@ -34,6 +43,15 @@ def train(approach, seed):
         from racing import neat
         return neat.run_neat(seed=seed, n_jobs=config.N_JOBS)
     raise ValueError(f"no training run for {approach!r}; choose one of {', '.join(NOTEBOOKS)}")
+
+
+def search(approach):
+    """The Keras Tuner search of `approach`, notebook 02's call (spec §3.3); returns its summary. A finished search
+    returns its record instead of searching again."""
+    if approach not in config.TUNER_APPROACHES:
+        raise ValueError(f"no search for {approach!r}; choose one of {', '.join(config.TUNER_APPROACHES)}")
+    from racing import imitation
+    return imitation.run_tuner(approach, imitation.load_dataset())
 
 
 def parse_run(text):
@@ -59,16 +77,26 @@ def parse_runs(text):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Train one run of the experiment.")
-    parser.add_argument("approach", choices=list(NOTEBOOKS))
-    parser.add_argument("seed", type=int, choices=list(config.RUN_SEEDS))
-    parser.add_argument("--status", default=None, help="this run's status file (default: results/status.json)")
+    argv = sys.argv[1:] if argv is None else list(argv)
+    searching = argv[:1] == ["search"]
+    parser = argparse.ArgumentParser(description="Train one run of the experiment (python -m racing.train ga 1) or run "
+                                                 "one Keras Tuner search (python -m racing.train search kt_random).")
+    if searching:
+        parser.add_argument("search", choices=["search"])
+        parser.add_argument("approach", choices=list(config.TUNER_APPROACHES))
+    else:
+        parser.add_argument("approach", choices=list(NOTEBOOKS))
+        parser.add_argument("seed", type=int, choices=list(config.RUN_SEEDS))
+    parser.add_argument("--status", default=None, help="this job's status file (default: results/status.json)")
     args = parser.parse_args(argv)
     if args.status is not None:
         config.STATUS_PATH = Path(args.status)          # progress.write_status reads it at every write
-    summary = train(args.approach, args.seed)
-    print({key: summary.get(key) for key in ("approach", "seed", "generations", "target_reduction",
-                                              "val_successes", "wall_time")}, flush=True)
+    if searching:
+        summary, keys = search(args.approach), ("approach", "trials", "chosen_params", "wall_time")
+    else:
+        summary, keys = train(args.approach, args.seed), ("approach", "seed", "generations", "target_reduction",
+                                                          "val_successes", "wall_time")
+    print({key: summary.get(key) for key in keys}, flush=True)
     return 0
 
 

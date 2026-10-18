@@ -567,23 +567,23 @@ def test_jobs_side_by_side_train_at_most_at_once_and_are_recorded(runner, tmp_pa
 
 def test_a_job_starts_only_when_its_input_exists_and_holds_no_slot_while_waiting(runner, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
-    listed = jobs.parse_jobs("nb:01,nb:02,ga:0")
+    listed = jobs.parse_jobs("nb:01,search:kt_random,ga:0")
     assert side_by_side(runner, tmp_path, listed, 2, fake_jobs(tmp_path)) == 0
-    assert started(tmp_path, "nb-02") >= ended(tmp_path, "nb-01")         # notebook 02 waited for the dataset
+    assert started(tmp_path, "search-kt_random") >= ended(tmp_path, "nb-01")  # the search waited for the dataset
     assert started(tmp_path, "ga-0") < ended(tmp_path, "nb-01")           # and ga:0 used the slot meanwhile
-    assert (tmp_path / "train_logs" / "nb-02.log").exists()
+    assert (tmp_path / "train_logs" / "search-kt_random.log").exists()
 
 
 def test_dependants_of_a_failed_job_are_reported_and_the_rest_go_on(runner, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "POLL_SECONDS", 0.05)
-    listed = jobs.parse_jobs("nb:01,nb:02,baseline:0,ga:0")
+    listed = jobs.parse_jobs("nb:01,search:kt_random,baseline:0,ga:0")
     assert side_by_side(runner, tmp_path, listed, 3, fake_jobs(tmp_path, fail={"nb:01"})) == 1
     log = (tmp_path / "log.txt").read_text()
     assert "FAILED nb:01: boom" in log and "done ga:0" in log
-    assert "SKIPPED nb:02: waits for dataset_info.json, which nb:01 did not make" in log
-    assert "SKIPPED baseline:0" in log and not (tmp_path / "nb-02.start").exists()
+    assert "SKIPPED search:kt_random: waits for dataset_info.json, which nb:01 did not make" in log
+    assert "SKIPPED baseline:0" in log and not (tmp_path / "search-kt_random.start").exists()
     info = json.loads((tmp_path / "info.json").read_text())
-    assert {e["run"] for e in info["trained"] if "skipped" in e} == {"nb:02", "baseline:0"}
+    assert {e["run"] for e in info["trained"] if "skipped" in e} == {"search:kt_random", "baseline:0"}
 
 
 def test_the_monitor_shows_a_line_per_run_side_by_side(runner, tmp_path, monkeypatch, order):
@@ -621,7 +621,7 @@ def test_stop_processes_ends_a_training_and_its_workers(runner):
         os.killpg(process.pid, 0)                                         # nothing of the group is left
 
 
-@pytest.mark.parametrize("argv", [["--runs", "nb:03"], ["--runs", "ga:3"], ["--runs", "ga:1,ga:1"],
+@pytest.mark.parametrize("argv", [["--runs", "nb:03"], ["--runs", "nb:02"], ["--runs", "ga:3"], ["--runs", "ga:1,ga:1"],
                                   ["--runs", "ga:1", "--from", "01"], ["--runs", "ga:1", "--fresh"],
                                   ["--runs", "ga:1", "--at-once", "0"]])
 def test_invalid_jobs_are_refused_before_anything_starts(runner, tmp_path, monkeypatch, capsys, argv):
@@ -648,7 +648,10 @@ def test_a_job_whose_input_nobody_makes_is_refused_before_anything_starts(runner
                         or 0)
     assert run_main(runner, tmp_path, ["--runs", "es_seeded:1,ga:0", "--at-once", "2"]) == 0
     assert started_with == [(["es_seeded:1", "ga:0"], 2)]
-    assert run_main(runner, tmp_path, ["--runs", "baseline:0,es_seeded:0,nb:01,nb:02"]) == 0   # made in the list
+    assert run_main(runner, tmp_path, ["--runs", "baseline:0,es_seeded:0,nb:01,search:kt_random,kt_random:0"]) == 0
+    assert run_main(runner, tmp_path, ["--runs", "nb:01,kt_random:0"]) == 2              # a run without its search
+    error = capsys.readouterr().err
+    assert "kt_random:0 needs" in error and "kt_random/search/summary.json" in error and "nb:01 needs" not in error
 
 
 def test_jobs_side_by_side_take_the_results_lock(runner, tmp_path, monkeypatch, capsys):
@@ -663,9 +666,9 @@ def test_fresh_also_removes_the_side_by_side_files(runner):
 
 
 def test_a_notebook_job_runs_this_script_and_writes_its_status_to_its_own_file(runner, tmp_path):
-    status = tmp_path / "status" / "nb-02.json"
-    command = runner.job_command(jobs.parse_job("nb:02"), status)
-    assert command[-2:] == ["--notebook-job", "02"] and command[1].endswith("run_notebooks.py")
+    status = tmp_path / "status" / "nb-01.json"
+    command = runner.job_command(jobs.parse_job("nb:01"), status)
+    assert command[-2:] == ["--notebook-job", "01"] and command[1].endswith("run_notebooks.py")
     env = runner.job_env(status)
     assert env["EC_RACING_STATUS"] == str(status) and env["CUDA_VISIBLE_DEVICES"] == "-1"
     seen = subprocess.run([sys.executable, "-c", "from racing import config; print(config.STATUS_PATH)"],
@@ -774,3 +777,10 @@ def test_check_reports_earlier_results_of_other_settings_without_running_anythin
     assert "GRIP" in capsys.readouterr().err
     with hold_lock(tmp_path / "results"):
         assert run_main(runner, tmp_path, ["--check"]) == 3              # read-only: no lock needed
+
+
+def test_a_search_job_runs_racing_train_search_with_its_own_status_file(runner, tmp_path):
+    job = jobs.parse_job("search:kt_hyperband")
+    assert runner.job_command(job, tmp_path / "s.json") == [sys.executable, "-m", "racing.train", "search",
+                                                            "kt_hyperband", "--status", str(tmp_path / "s.json")]
+    assert runner.job_stem(job) == "search-kt_hyperband" and runner.job_stem(jobs.parse_job("nb:01")) == "nb-01"

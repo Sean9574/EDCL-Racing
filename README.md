@@ -227,23 +227,26 @@ One run cannot use more than about 6 to 8 worker processes (`python -m racing.be
 more processors runs several jobs side by side, and several machines can share the experiment. The runs are independent
 and fixed by their seeds and settings, so where they train changes only their training times.
 
-**Side by side on one machine:** `python scripts/run_notebooks.py --runs nb:01,nb:02,baseline:0,ga:1 --at-once 4`
-runs these jobs: runs of any method, trained directly (`python -m racing.train <approach> <seed>`, the same call as
-their notebook), and the notebooks 01 (`nb:01`) and 02 (`nb:02`), executed with their outputs saved. Each job has its
+**Side by side on one machine:**
+`python scripts/run_notebooks.py --runs nb:01,search:kt_random,baseline:0,ga:1 --at-once 8` runs these jobs: runs of
+any method, trained directly (`python -m racing.train <approach> <seed>`, the same calls as their notebooks), the
+Keras Tuner searches (`search:kt_random`, `search:kt_hyperband`, `search:kt_bayesian`;
+`python -m racing.train search <method>`) and notebook 01 (`nb:01`), executed with its outputs saved. Each job has its
 own status line and output log in `results/train_logs/`, and starts, in the order listed, as soon as a slot is free and
 its inputs exist:
 
 | Job | Waits for |
 |---|---|
 | `nb:01` (dataset), `ga:k`, `es:k`, `neat:k` | nothing |
-| `nb:02` (imitation, searches) | the dataset (notebook 01) |
-| `baseline:k`, `kt_random:k`, `kt_hyperband:k`, `kt_bayesian:k` (DAgger, speed push) | the run's imitation network (notebook 02) |
+| `search:kt_random`, `search:kt_hyperband`, `search:kt_bayesian` | the dataset (notebook 01) |
+| `baseline:k` (imitation network, DAgger, speed push) | the dataset |
+| `kt_random:k`, `kt_hyperband:k`, `kt_bayesian:k` (retraining, DAgger, speed push) | the method's search |
 | `es_seeded:k` | the refined Baseline of seed k (its DAgger run) |
 
 A waiting job holds no slot. A job whose input nothing in the list makes is refused before anything starts; if a job
 fails, the jobs waiting for it are reported and the others go on. Ctrl+C stops the running jobs and lists the ones not
-started; the same command continues them. Afterwards, `python scripts/run_notebooks.py --from 03` finds the runs
-complete and only reports them.
+started; the same command continues them. Afterwards, `python scripts/run_notebooks.py --from 02` finds the networks,
+searches and runs complete and only reports them.
 
 **On several machines:** `scripts/fleet.py` starts, watches, stops and collects runs on the desktop and on servers
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
@@ -269,7 +272,7 @@ python scripts/fleet.py status     # one line per run in training on every machi
 python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
 python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
 python scripts/fleet.py archive revision3.1   # every machine moves its earlier results to results/archive/revision3.1/
-python scripts/fleet.py finish     # once all 24 runs have finished: collect, then notebooks 03 to 08 here
+python scripts/fleet.py finish     # once all 24 runs have finished: collect, then notebooks 02 to 08 here
 ```
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit

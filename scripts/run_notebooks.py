@@ -3,10 +3,10 @@
 Run with:        python scripts/run_notebooks.py               (continues where an earlier run stopped)
 Start over:      python scripts/run_notebooks.py --fresh       (removes the earlier results first)
 From a notebook: python scripts/run_notebooks.py --from 04
-Side by side:    python scripts/run_notebooks.py --runs nb:01,nb:02,baseline:0,ga:1 --at-once 3
-                 (trains these jobs, three at a time: runs of any method without their notebooks, and notebooks 01
-                 and 02; each starts as soon as its inputs exist. The notebooks find the runs complete later.
-                 scripts/fleet.py starts this on several machines.)
+Side by side:    python scripts/run_notebooks.py --runs nb:01,search:kt_random,baseline:0,ga:1 --at-once 8
+                 (trains these jobs, up to eight at a time: runs of any method without their notebooks, the Keras
+                 Tuner searches and notebook 01; each starts as soon as its inputs exist. The notebooks find the
+                 runs and searches complete later. scripts/fleet.py starts this on several machines.)
 Archive:         python scripts/run_notebooks.py --archive revision3.1
                  (moves the earlier results to results/archive/revision3.1/ and exits; the next start begins afresh)
 In background:   mkdir -p results
@@ -328,9 +328,12 @@ def train_command(approach, seed, status_file):
 
 
 def job_command(job, status_file):
-    """The process of one job: a notebook (this script with --notebook-job) or a training run (racing/train.py)."""
+    """The process of one job: notebook 01 (this script with --notebook-job), a Keras Tuner search or a training run
+    (racing/train.py)."""
     if job.is_notebook:
         return [sys.executable, str(Path(__file__).resolve()), "--notebook-job", job.notebook[:2]]
+    if job.is_search:
+        return [sys.executable, "-m", "racing.train", "search", job.search, "--status", str(status_file)]
     return train_command(job.approach, job.seed, status_file)
 
 
@@ -341,8 +344,12 @@ def job_env(status_file):
 
 
 def job_stem(job):
-    """File name stem of a job's status file and output log: ga-seed1, nb-02."""
-    return f"nb-{job.notebook[:2]}" if job.is_notebook else f"{job.approach}-seed{job.seed}"
+    """File name stem of a job's status file and output log: ga-seed1, nb-01, search-kt_random."""
+    if job.is_notebook:
+        return f"nb-{job.notebook[:2]}"
+    if job.is_search:
+        return f"search-{job.search}"
+    return f"{job.approach}-seed{job.seed}"
 
 
 def last_line(path):
@@ -557,7 +564,8 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
     parser.add_argument("--from", dest="start", help="number of the first notebook to run, for example 04")
     parser.add_argument("--fresh", action="store_true", help="remove the earlier results and start over")
     parser.add_argument("--runs", help="run these jobs side by side instead of the notebooks in order: runs of any "
-                                       "method and notebooks 01 and 02, for example nb:01,nb:02,baseline:0,ga:1")
+                                       "method, the Keras Tuner searches search:<method> and notebook 01, for example "
+                                       "nb:01,search:kt_random,baseline:0,ga:1")
     parser.add_argument("--at-once", type=int, default=1, help="with --runs: how many run at the same time")
     parser.add_argument("--archive", metavar="NAME", help="move the earlier results to results/archive/NAME/ and exit")
     parser.add_argument("--check", action="store_true",

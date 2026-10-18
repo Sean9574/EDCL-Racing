@@ -1,6 +1,7 @@
 # Which machine runs which jobs, for scripts/fleet.py (spec §3.3). A job is a run, approach:seed, or one of
-# the notebooks nb:01 (dataset) and nb:02 (imitation and Keras Tuner searches); each belongs to one machine. A job
-# starts as soon as a slot is free and its inputs exist, in the order listed, so the longest runs come first.
+# notebook nb:01 (dataset) and the Keras Tuner searches search:kt_random, search:kt_hyperband and search:kt_bayesian;
+# each belongs to one machine. A job starts as soon as a slot is free and its inputs exist, in the order listed, so
+# the longest runs come first.
 # The machine without a host is the one fleet.py runs on (the desktop); servers are reached from it with `ssh`.
 #   at_once: jobs run side by side; workers: worker processes of each run (EC_RACING_JOBS), best a multiple of 3, the
 #   maps of a generation (python -m racing.bench generation: one run gains little beyond 6 to 8).
@@ -11,7 +12,7 @@
 [machines.desktop]
 at_once = 4
 workers = 6
-runs = ["neat:0", "neat:1", "nb:01", "nb:02",
+runs = ["neat:0", "neat:1", "nb:01", "search:kt_hyperband", "search:kt_random", "search:kt_bayesian",
         "baseline:0", "baseline:1", "baseline:2", "kt_random:0", "kt_random:1", "kt_random:2",
         "kt_hyperband:0", "kt_hyperband:1", "kt_hyperband:2", "kt_bayesian:0", "kt_bayesian:1", "kt_bayesian:2",
         "es_seeded:0", "es_seeded:1", "es_seeded:2"]

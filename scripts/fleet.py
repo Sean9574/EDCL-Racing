@@ -11,7 +11,7 @@ with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through
                                     next start
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
   python scripts/fleet.py archive NAME   every machine moves its earlier results to results/archive/NAME/
-  python scripts/fleet.py finish    once all 24 runs have finished: collect, then notebooks 03 to 08 (they find
+  python scripts/fleet.py finish    once all 24 runs have finished: collect, then notebooks 02 to 08 (they find
                                     the runs complete and report them) and the evaluation, in the "fleet" session here
 
 Which machine trains which runs: scripts/fleet.toml. Watch a session with  tmux attach -t fleet  (detach with
@@ -550,7 +550,7 @@ def external_inputs(machine):
 
 def maker_of(path):
     """Labels of the experiment's jobs that make `path`."""
-    every = [*(f"nb:{n}" for n in jobs.NOTEBOOK_JOBS),
+    every = [*(f"nb:{n}" for n in jobs.NOTEBOOK_JOBS), *(f"search:{a}" for a in config.TUNER_APPROACHES),
              *(f"{a}:{s}" for a in config.APPROACHES for s in config.RUN_SEEDS)]
     return [label for label in every if path in jobs.makes(jobs.parse_job(label), PROJECT / "results")]
 
@@ -902,8 +902,8 @@ def unfinished(results=None):
 
 
 def finish(machines, out=sys.stdout):
-    """Collect, then, once all 24 runs are here, run notebooks 03 to 08 (they find the runs complete and report them,
-    spec §3.3) and the evaluation in this machine's fleet session."""
+    """Collect, then, once all 24 runs are here, run notebooks 02 to 08 (they find the networks, searches and runs
+    complete and report them, spec §3.3) and the evaluation in this machine's fleet session."""
     if collect(machines, out):
         raise FleetError("some runs could not be collected; see above")
     missing = unfinished()
@@ -913,10 +913,10 @@ def finish(machines, out=sys.stdout):
     readiness_problems = readiness(here, probe(here), local_commit())
     if readiness_problems:
         raise FleetError("\n".join(readiness_problems))
-    command = f"{here.python} scripts/run_notebooks.py --from 03"
+    command = f"{here.python} scripts/run_notebooks.py --from 02"
     if "started" not in shell(here, session_script(here, command)):
         raise FleetError(f"{here.where}: the tmux session did not start")
-    print(f"{here.where}: notebooks 03 to 08 run in tmux session '{SESSION}' (tmux attach -t {SESSION})", file=out)
+    print(f"{here.where}: notebooks 02 to 08 run in tmux session '{SESSION}' (tmux attach -t {SESSION})", file=out)
     return 0
 
 
