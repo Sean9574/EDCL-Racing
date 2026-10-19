@@ -172,6 +172,28 @@ def test_mutate_adds_structure_with_its_probabilities(monkeypatch):
     assert len(genome.node_ids) == neat.N_OUT + 1 and len(genome.innov) == 182
 
 
+@pytest.mark.parametrize("seed", range(5))
+def test_a_boost_triples_only_the_perturbation_of_connections_into_outputs(seed):
+    """Review focus 3 (spec §9.4): in a stall the perturbation of connections into output nodes is STALL_BOOST times
+    as strong; connections into hidden nodes and the biases mutate as usual, from the same draws."""
+    rng = np.random.default_rng(seed)
+    innovations = neat.Innovations()
+    genome = grown(rng, innovations)                           # connections into hidden nodes and into outputs
+    into_output = np.isin(genome.dst, list(neat.OUTPUT_IDS))
+    assert into_output.any() and (genome.dst >= neat.FIRST_HIDDEN).any()
+    plain_rng, boosted_rng = np.random.default_rng(seed + 50), np.random.default_rng(seed + 50)
+    plain = neat.mutate(plain_rng, genome, neat.Innovations.from_state(innovations.state()), 0.5)
+    boosted = neat.mutate(boosted_rng, genome, neat.Innovations.from_state(innovations.state()), 0.5, boost=True)
+    assert plain_rng.bit_generator.state == boosted_rng.bit_generator.state     # the same draws
+    assert np.array_equal(plain.innov, boosted.innov) and np.array_equal(plain.bias, boosted.bias)
+    perturbed = np.isin(plain.innov, genome.innov)             # the connections the weight mutation saw
+    a, b = plain.weight[perturbed], boosted.weight[perturbed]
+    differs = a != b
+    assert not differs[~into_output].any()                     # into hidden nodes: as usual
+    assert differs[into_output].mean() > 0.5                   # into outputs: perturbed with probability 0.8
+    assert np.allclose(b[differs] - genome.weight[differs], config.STALL_BOOST * (a[differs] - genome.weight[differs]))
+
+
 def test_crossover_aligns_genes_by_innovation():
     rng = np.random.default_rng(8)
     innovations = neat.Innovations()
@@ -611,3 +633,25 @@ def test_neat_champion_keeps_its_setup(tmp_path):
     method.save_champion(4, 0, tmp_path)
     saved = json.loads(paths.champion_path("neat", 0, ".setup.json", tmp_path).read_text())
     assert np.array_equal(setup.from_dict(saved), method.setup[4])
+
+
+def test_neat_passes_its_boost_to_the_genomes_and_the_setups():
+    """In a stall NEAT's children mutate their output connections and steering sensitivity harder (spec §9.4), with
+    the same draws: the same structure, the same sensor lengths."""
+    methods, rngs = [], []
+    for boost in (False, True):
+        rng = np.random.default_rng(45)
+        method = neat.NEAT(pop_size=30)
+        method.initialize(rng)
+        fitness = np.random.default_rng(46).random(30)
+        method.advance(rng, result_for(fitness, np.zeros(30)), np.array([3, 7]), None, boost=boost)
+        methods.append(method)
+        rngs.append(rng)
+    plain, boosted = methods
+    assert rngs[0].bit_generator.state == rngs[1].bit_generator.state
+    assert plain.innovations.state() == boosted.innovations.state()
+    assert [len(g.innov) for g in plain.population.genomes] == [len(g.innov) for g in boosted.population.genomes]
+    weights = [np.concatenate([g.weight for g in m.population.genomes]) for m in methods]
+    assert not np.array_equal(*weights)
+    assert np.array_equal(boosted.setup[:, 0], plain.setup[:, 0])               # the sensor length as usual
+    assert not np.array_equal(boosted.setup[:, 1], plain.setup[:, 1])           # the steering sensitivity boosted

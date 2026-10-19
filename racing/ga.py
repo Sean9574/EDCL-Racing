@@ -30,10 +30,11 @@ class GA(evolution.DenseMethod):
         self.is_kept = np.zeros(self.pop_size, dtype=bool)
         self.step_size = float("nan")                  # generation 0 is not produced by mutation
 
-    def advance(self, rng, result, kept, event):
+    def advance(self, rng, result, kept, event, boost=False):
         """Survivors first and unchanged, then children by tournament, uniform crossover and Gaussian mutation. A
         child takes each setup value from either parent, then the setup mutation applies (spec §9.11); these
-        draws come after the network's."""
+        draws come after the network's. With boost (a stall, spec §9.4) the noise of the decision layer is
+        STALL_BOOST times as strong and the setup mutation boosted, from the same draws."""
         weights, setups = self.population.weights, self.population.setup
         n, p = weights.shape
         child_success = evolution.children_success(result, self.is_kept)
@@ -43,8 +44,11 @@ class GA(evolution.DenseMethod):
         fathers = tournament(rng, result.fitness, n_new)
         children = np.where(rng.random((n_new, p)) < config.GA_CROSSOVER_P, weights[mothers], weights[fathers])
         mutate = rng.random((n_new, p)) < config.GA_MUTATION_P
-        children = children + mutate * rng.normal(0.0, self.step_size, (n_new, p))
-        children_setups = setup.mutate(rng, setup.crossover(rng, setups[mothers], setups[fathers]))
+        noise = rng.normal(0.0, self.step_size, (n_new, p))
+        if boost:
+            noise[:, nets.decision_mask(self.hidden, self.population.n_inputs)] *= config.STALL_BOOST
+        children = children + mutate * noise
+        children_setups = setup.mutate(rng, setup.crossover(rng, setups[mothers], setups[fathers]), boost=boost)
         self.assemble(weights[kept], children, setups[kept], children_setups)
 
     def state(self):

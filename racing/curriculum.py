@@ -82,6 +82,12 @@ class MasteryTracker:
         return self.outcome is not None
 
     @property
+    def stalled(self):
+        """The speed push has gone STALL_GENERATIONS generations without mastering its target (spec §9.4): the
+        stall boost is on until the next mastered target."""
+        return self.goal_reached and not self.done and self.since_mastered >= config.STALL_GENERATIONS
+
+    @property
     def target_reduction(self):
         """How much shorter the tightest mastered target is than the starting target; nan before the goal."""
         return 1.0 - self.mastered_factor / config.TARGET_FACTOR

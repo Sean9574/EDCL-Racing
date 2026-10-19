@@ -488,3 +488,70 @@ def test_a_stopped_run_1_resumes_on_its_own_path(evaluation, tmp_path):
     for name in ("run", "copy"):
         evolution.run(ga.GA(pop_size=20), 1, tmp_path / name, max_generations=5, champion_dir=None)
     assert comparable(tmp_path / "run" / "log.csv").equals(comparable(tmp_path / "copy" / "log.csv"))
+
+
+# ----- the stall boost (spec §9.4, version 3.6) -----
+
+def test_the_run_passes_the_stall_to_advance_and_logs_it(evaluation, tmp_path, monkeypatch):
+    seen = []
+    real = ga.GA.advance
+    monkeypatch.setattr(ga.GA, "advance", lambda self, rng, result, kept, event, boost=False:
+                        seen.append(boost) or real(self, rng, result, kept, event, boost=boost))
+    monkeypatch.setattr(config, "STALL_GENERATIONS", 2)
+    evaluation(1.0)                     # every car succeeds: the goal at generation 2, then a target every third
+    _, reports = train(tmp_path, 12, start_level=config.MAX_LEVEL)
+    log = pd.read_csv(tmp_path / "run" / "log.csv")
+    assert list(log.columns) == evolution.LOG_FIELDS and "boost" in log.columns
+    assert list(log["boost"]) == [0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]       # on after 2 generations, off when mastered
+    assert seen == list(log["boost"]) == [r["boost"] for r in reports]   # what advance got is what the log says
+
+
+def test_without_a_stall_the_boost_stays_off(evaluation, tmp_path):
+    evaluation(1.0)
+    train(tmp_path, 12, start_level=config.MAX_LEVEL)
+    assert set(pd.read_csv(tmp_path / "run" / "log.csv")["boost"]) == {0}
+
+
+def masters_only_the_first_target(cars, seeds, level, factor, n_jobs=1, backend="loky"):
+    """Every car succeeds until the goal, none in the speed push: the push stalls and stays stalled."""
+    return fake_evaluate(1.0 if factor >= config.TARGET_FACTOR else 0.0)(cars, seeds, level, factor)
+
+
+def test_a_resumed_run_0_in_a_stall_replays_exactly(monkeypatch, tmp_path):
+    """Review focus 2: a run 0 stopped in a stall resumes to exactly the uninterrupted run; the boost comes back from
+    the checkpoint's tracker (spec §9.4)."""
+    monkeypatch.setattr(config, "STALL_GENERATIONS", 2)
+    monkeypatch.setattr(population, "evaluate_population", masters_only_the_first_target)
+    evolution.run(ga.GA(pop_size=20), 0, tmp_path / "whole", champion_dir=None, max_generations=8,
+                  start_level=config.MAX_LEVEL)
+    with pytest.raises(Interrupt):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "cut", champion_dir=None, max_generations=8,
+                      start_level=config.MAX_LEVEL, on_generation=interrupt_at(6))
+    stopped = checkpoint.load(tmp_path / "cut" / checkpoint.CHECKPOINT_NAME)
+    assert stopped["generation"] == 6 and curriculum.MasteryTracker.from_state(stopped["tracker"]).stalled
+    evolution.run(ga.GA(pop_size=20), 0, tmp_path / "cut", champion_dir=None, max_generations=8,
+                  start_level=config.MAX_LEVEL)
+    whole, cut = comparable(tmp_path / "whole" / "log.csv"), comparable(tmp_path / "cut" / "log.csv")
+    assert list(whole["boost"]) == [0, 0, 0, 0, 1, 1, 1, 1]                  # boosted before and after the cut
+    pd.testing.assert_frame_equal(whole, cut)
+    ends = [checkpoint.load(tmp_path / name / checkpoint.CHECKPOINT_NAME) for name in ("whole", "cut")]
+    assert np.array_equal(ends[0]["method"]["weights"], ends[1]["method"]["weights"])
+    assert np.array_equal(ends[0]["method"]["setup"], ends[1]["method"]["setup"]) and ends[0]["rng"] == ends[1]["rng"]
+
+
+def test_a_log_without_the_boost_column_resumes_without_it(evaluation, tmp_path):
+    """A log started before version 3.6 keeps its columns; its rows simply do not record the boost."""
+    import csv
+    evaluation(0.5)
+    with pytest.raises(Interrupt):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=4,
+                      on_generation=interrupt_at(2))
+    path = tmp_path / "run" / "log.csv"
+    with path.open(newline="") as f:
+        rows = list(csv.reader(f))
+    column = rows[0].index("boost")
+    with path.open("w", newline="") as f:
+        csv.writer(f).writerows(row[:column] + row[column + 1:] for row in rows)    # the log of an older run
+    evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=4)
+    resumed = pd.read_csv(path)
+    assert "boost" not in resumed.columns and list(resumed["generation"]) == [0, 1, 2, 3]

@@ -59,9 +59,10 @@ class ES(evolution.DenseMethod):
         parents = [position[int(self.parent_ids[k])] for k in children]
         return success_fraction(fitness[children], fitness[parents])
 
-    def advance(self, rng, result, kept, event):
+    def advance(self, rng, result, kept, event, boost=False):
         """Adapt σ, then keep the survivors first and unchanged and add children of the ES_MU fittest cars; a child's
-        setup is its parent's, mutated after the network's draws (spec §9.11)."""
+        setup is its parent's, mutated after the network's draws (spec §9.11). With boost (a stall, spec §9.4) the
+        decision layer's noise is STALL_BOOST × σ and the setup mutation boosted, from the same draws."""
         weights, setups = self.population.weights, self.population.setup
         n, p = weights.shape
         top = np.argsort(-result.fitness, kind="stable")[:min(self.parents, n)]
@@ -71,8 +72,11 @@ class ES(evolution.DenseMethod):
             self.step.reset()                           # restart the step size on the harder maps
         n_new = n - len(kept)
         chosen = top[rng.integers(0, len(top), n_new)]
-        children = weights[chosen] + rng.normal(0.0, self.step.sigma, (n_new, p))
-        self.assemble(weights[kept], children, setups[kept], setup.mutate(rng, setups[chosen]))
+        noise = rng.normal(0.0, self.step.sigma, (n_new, p))
+        if boost:
+            noise[:, nets.decision_mask(self.hidden, self.population.n_inputs)] *= config.STALL_BOOST
+        children = weights[chosen] + noise
+        self.assemble(weights[kept], children, setups[kept], setup.mutate(rng, setups[chosen], boost=boost))
         self.parent_ids = np.concatenate([self.parent_ids[kept], self.ids[chosen]])
         self.ids = np.concatenate([self.ids[kept], np.arange(self.next_id, self.next_id + n_new)])
         self.next_id += n_new

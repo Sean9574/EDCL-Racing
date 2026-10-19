@@ -92,7 +92,7 @@ class Innovations:
 
 
 def initial_genome(rng, innovations):
-    """Every input connected to every output (150 connections), standard normal weights, zero biases."""
+    """Every input connected to every output (180 connections), standard normal weights, zero biases."""
     src = np.repeat(np.arange(N_IN, dtype=np.int64), N_OUT)
     dst = np.tile(np.arange(N_IN, N_IN + N_OUT, dtype=np.int64), N_IN)
     innov = np.array([innovations.conn(s, d) for s, d in zip(src.tolist(), dst.tolist())], dtype=np.int64)
@@ -171,22 +171,28 @@ def add_node(rng, genome, innovations):
                              [1.0, w])
 
 
-def _mutate_values(rng, values, sigma):
+def _mutate_values(rng, values, sigma, scale=None):
     """Each value replaced by a standard normal value with probability NEAT_REPLACE, otherwise perturbed by
-    N(0, σ²) with probability NEAT_PERTURB."""
+    N(0, σ²) with probability NEAT_PERTURB. `scale`, one factor per value, multiplies the perturbation drawn (the
+    stall boost, spec §9.4)."""
     u = rng.random(len(values))
     noise = rng.normal(0.0, sigma, len(values))
+    if scale is not None:
+        noise = noise * scale
     fresh = rng.standard_normal(len(values))
     replace = u < config.NEAT_REPLACE
     perturb = ~replace & (u < config.NEAT_REPLACE + config.NEAT_PERTURB)
     return np.where(replace, fresh, np.where(perturb, values + noise, values))
 
 
-def mutate(rng, genome, innovations, sigma):
+def mutate(rng, genome, innovations, sigma, boost=False):
     """A mutated copy (spec §9.9): weights and biases, then with their own probabilities a new connection, a
-    new node and one toggled connection."""
+    new node and one toggled connection. With boost (a stall, spec §9.4) the perturbation of the connections into
+    output nodes is STALL_BOOST times as strong, from the same draws; connections into hidden nodes and the biases
+    mutate as usual."""
     g = genome.copy()
-    g.weight = _mutate_values(rng, g.weight, sigma)
+    scale = np.where(np.isin(g.dst, OUTPUT_IDS), config.STALL_BOOST, 1.0) if boost else None
+    g.weight = _mutate_values(rng, g.weight, sigma, scale)
     g.bias = _mutate_values(rng, g.bias, sigma)
     if rng.random() < config.NEAT_ADD_CONN:
         g = add_connection(rng, g, innovations)
@@ -591,7 +597,9 @@ class NEAT:
         entrants = members[rng.integers(0, len(members), config.NEAT_TOURNAMENT)]
         return int(entrants[np.argmax(fitness[entrants])])
 
-    def advance(self, rng, result, kept, event):
+    def advance(self, rng, result, kept, event, boost=False):
+        """Kept cars first, then children within species; with boost (a stall, spec §9.4) the children's output
+        connections and setups mutate harder, from the same draws."""
         from racing import evolution                  # evolution imports nets, which imports neat lazily
         fitness, success = result.fitness, result.all_success
         genomes, setups = self.population.genomes, self.population.setup
@@ -616,11 +624,12 @@ class NEAT:
                     child = crossover(rng, genomes[fitter], genomes[other])
                 else:
                     fitter, child = a, genomes[a]
-                new_genomes.append(mutate(rng, child, self.innovations, self.steps.sigma))
+                new_genomes.append(mutate(rng, child, self.innovations, self.steps.sigma, boost=boost))
                 new_parents.append(int(self.ids[fitter]))
                 fitter_rows.append(fitter)
         kept = np.asarray(kept, dtype=np.int64)
-        children_setups = car_setup.mutate(rng, setups[np.asarray(fitter_rows, dtype=np.int64)])   # after the genomes
+        children_setups = car_setup.mutate(rng, setups[np.asarray(fitter_rows, dtype=np.int64)],   # after the genomes
+                                           boost=boost)
         self.population = NeatPopulation([genomes[i] for i in kept] + new_genomes,
                                          setup=np.concatenate([setups[kept], children_setups]))
         self.is_kept = np.arange(len(self.population)) < len(kept)

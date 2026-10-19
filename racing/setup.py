@@ -54,12 +54,18 @@ def crossover(rng, a, b):
     return np.where(rng.random(a.shape) < 0.5, a, b)
 
 
-def mutate(rng, values):
+def mutate(rng, values, boost=False):
     """Each value, with probability SETUP_MUTATION_P, multiplied by exp(N(0, SETUP_MUTATION_SD)), then clipped
-    (spec §9.11). Always draws two arrays of values.shape, the mask and then the noise."""
+    (spec §9.11). With boost (a stall, spec §9.4) the steering sensitivity mutates with probability STALL_STEER_P and
+    standard deviation STALL_STEER_SD; the sensor length as usual. Always draws the same two arrays of values.shape,
+    the uniforms and then the standard normals, so a boost changes no other draw."""
     values = np.asarray(values, dtype=float)
-    mask = rng.random(values.shape) < config.SETUP_MUTATION_P
-    noise = rng.normal(0.0, config.SETUP_MUTATION_SD, values.shape)
+    p = np.full(values.shape[-1], config.SETUP_MUTATION_P)
+    sd = np.full(values.shape[-1], config.SETUP_MUTATION_SD)
+    if boost:
+        p[1], sd[1] = config.STALL_STEER_P, config.STALL_STEER_SD
+    mask = rng.random(values.shape) < p
+    noise = rng.normal(0.0, 1.0, values.shape) * sd
     return clip(np.where(mask, values * np.exp(noise), values))
 
 

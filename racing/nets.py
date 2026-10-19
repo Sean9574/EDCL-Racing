@@ -20,6 +20,16 @@ def n_params(hidden=config.BASELINE_HIDDEN, n_inputs=config.N_INPUTS):
     return sum(a * b + b for a, b in zip(sizes[:-1], sizes[1:]))
 
 
+def decision_mask(hidden=config.BASELINE_HIDDEN, n_inputs=config.N_INPUTS):
+    """True for the flat weights and biases of the last layer, the decision layer into the N_ACTIONS outputs, which
+    the stall boost mutates harder (spec §9.4)."""
+    sizes = layer_sizes(hidden, n_inputs)
+    last = sizes[-2] * sizes[-1] + sizes[-1]
+    mask = np.zeros(n_params(hidden, n_inputs), dtype=bool)
+    mask[-last:] = True
+    return mask
+
+
 def inputs_of(n_weights, hidden=config.BASELINE_HIDDEN):
     """Inputs of a dense network with `n_weights` weights and biases: config.N_INPUTS for this revision's networks,
     fewer for an earlier revision's, which read only the first inputs (spec §6)."""

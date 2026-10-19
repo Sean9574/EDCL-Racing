@@ -250,7 +250,44 @@ def test_each_mastered_target_is_2_percent_shorter():
     assert event == "tightened" and math.isclose(tracker.factor, first * 0.98)
 
 
-def test_the_speed_push_ends_after_300_generations_without_a_mastery():
+def test_the_speed_push_ends_after_600_generations_without_a_mastery():
     tracker = at_goal()
-    events = [tracker.update(0.5) for _ in range(300)]
-    assert events[-1] == "end_speed" and events[:-1] == [None] * 299
+    events = [tracker.update(0.5) for _ in range(600)]
+    assert events[-1] == "end_speed" and events[:-1] == [None] * 599
+
+
+# ----- the stall boost (spec §9.4, version 3.6) -----
+
+def test_the_speed_push_is_stalled_after_stall_generations_without_a_mastered_target():
+    tracker = at_goal()
+    assert not tracker.stalled
+    for _ in range(config.STALL_GENERATIONS - 1):
+        tracker.update(0.0)
+    assert not tracker.stalled
+    tracker.update(0.0)
+    assert tracker.stalled                                    # 100 generations without a mastered target
+    events = [tracker.update(1.0) for _ in range(config.MASTERY_STREAK)]
+    assert not tracker.stalled and events[-1] == "tightened"   # a mastered target ends the stall
+    for _ in range(config.STALL_GENERATIONS):
+        tracker.update(0.0)
+    assert tracker.stalled                                    # and the next 100 start another
+
+
+def test_no_stall_before_the_goal_or_after_the_push_and_the_patience_is_600():
+    tracker = MasteryTracker()
+    for _ in range(config.STALL_GENERATIONS + 5):
+        tracker.update(0.0)
+    assert not tracker.goal_reached and not tracker.stalled
+    ended = at_goal()
+    events = [ended.update(0.0) for _ in range(config.SPEED_PATIENCE)]
+    assert events[-1] == "end_speed" and ended.done and not ended.stalled
+    assert config.SPEED_PATIENCE == 600 and config.STALL_GENERATIONS == 100 and config.STALL_BOOST == 3.0
+    assert (config.STALL_STEER_P, config.STALL_STEER_SD) == (0.5, 0.2)
+
+
+def test_the_stall_comes_back_from_the_trackers_state():
+    tracker = at_goal()
+    for _ in range(config.STALL_GENERATIONS):
+        tracker.update(0.0)
+    copy = MasteryTracker.from_state(pickle.loads(pickle.dumps(tracker.state())))
+    assert copy.stalled and "stalled" not in tracker.state()  # derived from the state, never stored

@@ -191,3 +191,37 @@ def test_setup_draws_come_after_the_network_draws():
     chosen = top[rng.integers(0, 4, 10)]
     children = weights[chosen] + rng.normal(0.0, method.step.sigma, (10, weights.shape[1]))
     assert np.array_equal(method.population.weights[10:], children)
+
+
+def test_a_boost_triples_only_the_decision_layers_step():
+    """Spec §9.4: in a stall the output layer's noise is STALL_BOOST × σ and the sensing layer's σ, from the same
+    draws. From zero weights every child is its noise alone."""
+    plain, boosted = started(parents=4), started(parents=4)
+    for method in (plain, boosted):
+        method.population.weights[:] = 0.0
+    trial = result(-np.arange(20.0), np.zeros(20))
+    plain_rng, boosted_rng = np.random.default_rng(5), np.random.default_rng(5)
+    plain.advance(plain_rng, trial, np.arange(10), None)
+    boosted.advance(boosted_rng, trial, np.arange(10), None, boost=True)
+    assert plain_rng.bit_generator.state == boosted_rng.bit_generator.state     # the same draws
+    assert plain.step_size == boosted.step_size                                 # σ itself is unchanged
+    mask = nets.decision_mask(plain.hidden)
+    a, b = plain.population.weights[10:], boosted.population.weights[10:]
+    assert np.array_equal(b[:, ~mask], a[:, ~mask]) and np.all(a[:, ~mask] != 0.0)    # the sensing layer as usual
+    assert np.array_equal(b[:, mask], config.STALL_BOOST * a[:, mask]) and np.all(a[:, mask] != 0.0)
+    assert np.array_equal(boosted.setup[:, 0], plain.setup[:, 0])               # the sensor length as usual
+    assert not np.array_equal(boosted.setup[:, 1], plain.setup[:, 1])           # the steering sensitivity boosted
+
+
+def test_a_boost_scales_the_last_layer_of_an_earlier_revisions_network():
+    """A speed push from a network that reads fewer inputs boosts its own last layer (spec §6, §9.4)."""
+    flat = nets.init_population(np.random.default_rng(1), 1, (16,), n_inputs=10)[0]
+    plain = started(parents=4, initial=flat, approach="es_seeded")
+    boosted = started(parents=4, initial=flat, approach="es_seeded")
+    trial = result(-np.arange(20.0), np.zeros(20))
+    plain.advance(np.random.default_rng(6), trial, np.arange(10), None)
+    boosted.advance(np.random.default_rng(6), trial, np.arange(10), None, boost=True)
+    mask = nets.decision_mask((16,), n_inputs=10)
+    a, b = plain.population.weights[10:], boosted.population.weights[10:]
+    assert a.shape[1] == len(mask) and np.array_equal(b[:, ~mask], a[:, ~mask])
+    assert not np.any(np.isclose(b[:, mask], a[:, mask]))

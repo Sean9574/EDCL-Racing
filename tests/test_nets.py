@@ -153,3 +153,16 @@ def test_a_weight_count_that_fits_no_network_is_refused():
     import pytest
     with pytest.raises(ValueError):
         nets.inputs_of(nets.n_params() + 1)
+
+
+def test_the_decision_mask_marks_the_last_layer():
+    """The output layer's weights and biases, which the stall boost mutates harder (spec §9.4)."""
+    last = 16 * config.N_ACTIONS + config.N_ACTIONS
+    mask = nets.decision_mask((16,))
+    assert mask.dtype == bool and mask.shape == (nets.n_params((16,)),) and mask.sum() == last
+    assert mask[-last:].all() and not mask[:-last].any()
+    assert nets.decision_mask((64, 64)).sum() == 64 * config.N_ACTIONS + config.N_ACTIONS
+    fewer = nets.decision_mask((16,), n_inputs=10)                     # an earlier revision's network
+    assert fewer.shape == (nets.n_params((16,), 10),) and fewer.sum() == last and fewer[-last:].all()
+    layers = nets.unflatten(np.where(mask, 1.0, 0.0)[None, :], (16,))   # the mask is exactly the last layer
+    assert all(np.all(part == (i == len(layers) - 1)) for i, layer in enumerate(layers) for part in layer)

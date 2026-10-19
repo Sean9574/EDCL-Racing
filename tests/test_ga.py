@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from racing import config, ga, paths, population
+from racing import config, ga, nets, paths, population
 from racing.curriculum import mutation_strength
 from racing.population import TrialResult
 
@@ -181,3 +181,22 @@ def test_state_round_trip_keeps_the_setups():
     first.advance(np.random.default_rng(7), trial, np.arange(6), None)
     second.advance(np.random.default_rng(7), trial, np.arange(6), None)
     assert np.array_equal(first.setup, second.setup)
+
+
+def test_a_boost_triples_only_the_decision_layers_mutation():
+    """Spec §9.4: in a stall the output layer mutates STALL_BOOST times as strongly and the sensing layer as usual,
+    from the same draws. From zero weights every child is its mutation alone."""
+    plain, boosted = started(pop_size=20), started(pop_size=20)
+    for method in (plain, boosted):
+        method.population.weights[:] = 0.0
+    trial = result(np.arange(20.0), np.zeros(20))
+    plain_rng, boosted_rng = np.random.default_rng(5), np.random.default_rng(5)
+    plain.advance(plain_rng, trial, np.arange(4), None)
+    boosted.advance(boosted_rng, trial, np.arange(4), None, boost=True)
+    assert plain_rng.bit_generator.state == boosted_rng.bit_generator.state     # the same draws
+    mask = nets.decision_mask(plain.hidden)
+    a, b = plain.population.weights[4:], boosted.population.weights[4:]
+    assert np.array_equal(b[:, ~mask], a[:, ~mask]) and np.any(a[:, ~mask] != 0.0)   # the sensing layer as usual
+    assert np.array_equal(b[:, mask], config.STALL_BOOST * a[:, mask]) and np.any(a[:, mask] != 0.0)
+    assert np.array_equal(boosted.setup[:, 0], plain.setup[:, 0])               # the sensor length as usual
+    assert not np.array_equal(boosted.setup[:, 1], plain.setup[:, 1])           # the steering sensitivity boosted

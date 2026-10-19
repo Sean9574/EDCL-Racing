@@ -18,20 +18,21 @@ LOG_NAME = "log.csv"
 SUMMARY_NAME = "summary.json"
 LOG_FIELDS = ["generation", "level", "factor", "evals", "best", "mean", "worst", "map_shares", "min_share", "n_kept",
               "kept_success", "child_success", "median_lap", "sensor_mean", "sensor_std", "steer_mean", "steer_std",
-              "step_size", "streak", "event", "seeds", "elapsed"]
+              "step_size", "boost", "streak", "event", "seeds", "elapsed"]
 
 
 class Method(Protocol):
     """What the loop needs from a method. `population` holds the cars carried over unchanged first; `is_kept`
     marks them; `population.setup` holds every car's setup (spec §9.11). `advance` must assign a new population
-    object (reports keep the evaluated one)."""
+    object (reports keep the evaluated one); with `boost` (a stall of the speed push, spec §9.4) it mutates the
+    decision layer and the steering sensitivity harder without changing its draws."""
     approach: str
     population: object
     is_kept: np.ndarray
     step_size: float
 
     def initialize(self, rng) -> None: ...
-    def advance(self, rng, result, kept, event) -> None: ...
+    def advance(self, rng, result, kept, event, boost=False) -> None: ...
     def state(self) -> dict: ...
     def load_state(self, state) -> None: ...
     def save_champion(self, index, seed, champion_dir) -> Path: ...
@@ -239,6 +240,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         kept = survivors(rng, result.fitness, result.all_success, result.lap_share, cap, config.ELITE_FLOOR)
         speed_push = tracker.goal_reached                   # the rule this generation is judged by (spec §9.4)
         event = tracker.update(result.min_share)
+        boost = tracker.stalled                             # the stall boost for the children (spec §9.4)
         now = active()
         report = {"approach": method.approach, "seed": seed, "generation": generation, "level": level,
                   "factor": factor, "target_reduction": tracker.target_reduction, "streak": tracker.streak,
@@ -247,7 +249,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                   "min_share": result.min_share, "speed_push": speed_push, "n_kept": len(kept),
                   "kept_success": share(result.all_success[method.is_kept]),
                   "child_success": children_success(result, method.is_kept), "median_lap": median_lap(result),
-                  "step_size": float(method.step_size), "best": float(result.fitness.max()),
+                  "step_size": float(method.step_size), "boost": int(boost), "best": float(result.fitness.max()),
                   "mean": float(result.fitness.mean()), "worst": float(result.fitness.min()), "evals": evals,
                   "elapsed": now, "event": event, **setup.summary(method.population.setup), **method.log_fields()}
         append_log(log_path, report, fields)
@@ -268,7 +270,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
             checkpoint.save(out_dir / paths.REPLAY_NAME, report)     # the viewer replays it (never read by training)
         if on_generation is not None:
             on_generation(report)
-        method.advance(rng, result, kept, event)
+        method.advance(rng, result, kept, event, boost=boost)
         generation += 1
         checkpoint.save(out_dir / checkpoint.CHECKPOINT_NAME, {
             "settings": checkpoint.settings_record(), "generation": generation, "evals": evals,

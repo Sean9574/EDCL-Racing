@@ -84,6 +84,37 @@ def test_mutation_stays_within_the_limits_and_always_draws_two_arrays():
     assert r1.bit_generator.state == r2.bit_generator.state
 
 
+def test_without_a_boost_the_mutation_is_bit_identical_to_the_old_draw():
+    """Review focus 1: the old code drew rng.normal(0, SETUP_MUTATION_SD); the new draws standard normals and scales
+    them per column. numpy computes normal(0, sd) as 0 + sd * z, so both give the same floats and the same draws."""
+    for seed in range(20):
+        z_old = np.random.default_rng(seed).normal(0.0, config.SETUP_MUTATION_SD, 100_000)
+        z_new = np.random.default_rng(seed).normal(0.0, 1.0, 100_000) * config.SETUP_MUTATION_SD
+        assert np.array_equal(z_old, z_new)
+        rows = setup.random(np.random.default_rng(seed + 100), 5000)
+        old_rng, new_rng = np.random.default_rng(seed), np.random.default_rng(seed)
+        mask = old_rng.random(rows.shape) < config.SETUP_MUTATION_P               # revision 3.1's mutation
+        old = setup.clip(np.where(mask, rows * np.exp(old_rng.normal(0.0, config.SETUP_MUTATION_SD, rows.shape)),
+                                  rows))
+        assert np.array_equal(setup.mutate(new_rng, rows), old)
+        assert new_rng.bit_generator.state == old_rng.bit_generator.state
+
+
+def test_a_boost_mutates_only_the_steering_sensitivity_harder_with_the_same_draws():
+    """Spec §9.4: in a stall the steering sensitivity mutates with probability 0.5 and standard deviation 0.2 on the
+    log scale; the sensor length as usual, from the same draws."""
+    values = np.tile([50.0, 1.0], (20000, 1))
+    plain_rng, boosted_rng = np.random.default_rng(3), np.random.default_rng(3)
+    plain = setup.mutate(plain_rng, values)
+    boosted = setup.mutate(boosted_rng, values, boost=True)
+    assert plain_rng.bit_generator.state == boosted_rng.bit_generator.state     # the same draws
+    assert np.array_equal(plain[:, 0], boosted[:, 0])                           # the sensor length as usual
+    changed = boosted[:, 1] != 1.0
+    assert abs(changed.mean() - config.STALL_STEER_P) < 0.01
+    assert abs(np.std(np.log(boosted[changed, 1])) - config.STALL_STEER_SD) < 0.005
+    assert np.all((boosted[:, 1] >= config.STEER_GAIN_LIMITS[0]) & (boosted[:, 1] <= config.STEER_GAIN_LIMITS[1]))
+
+
 def test_a_setup_round_trips_through_its_json_form():
     row = np.array([73.5, 0.62])
     d = setup.to_dict(row)
