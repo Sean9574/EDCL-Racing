@@ -80,3 +80,85 @@ def test_main_appends_a_summary_and_rejects_unknown_pilots(pilots, tmp_path, mon
     text = (tmp_path / "summary.md").read_text()
     assert "| ga | 5 |" in text and "| neat | 300 |" in text and text.count("## ") == 2
     assert pilots.main(["bogus"]) == 2 and "bogus" in capsys.readouterr().err
+
+
+BOOST_SCRIPT = SCRIPT.with_name("boost_pilot.py")
+
+
+@pytest.fixture
+def boost_pilot(pilots, monkeypatch):
+    """The stall-boost pilot script, with every map the small circle (the `pilots` fixture), one worker and no
+    simulation. The three settings its plain variant overrides are restored after the test."""
+    from tests.test_evolution import fake_evaluate
+    monkeypatch.setattr(config, "N_JOBS", 1)
+    for name in ("STALL_BOOST", "STALL_STEER_P", "STALL_STEER_SD"):
+        monkeypatch.setattr(config, name, getattr(config, name))
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluate(0.0))
+    spec = importlib.util.spec_from_file_location("boost_pilot", BOOST_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def finished_source(boost_pilot, tmp_path):
+    """A small finished ES run (population 20) whose speed push ended: its checkpoint's tracker is done."""
+    from racing import checkpoint, es, evolution
+    folder = tmp_path / "source"
+    evolution.run(es.ES(pop_size=20, hidden=(4,)), 0, folder, champion_dir=None, max_generations=3)
+    state = checkpoint.load(folder / checkpoint.CHECKPOINT_NAME)
+    state["tracker"].update(goal_reached=True, mastered_factor=0.9 * config.TARGET_FACTOR,
+                            factor=0.9 * config.TARGET_FACTOR * config.SPEED_STEP, outcome="speed_limit",
+                            since_mastered=config.SPEED_PATIENCE)
+    checkpoint.save(folder / checkpoint.CHECKPOINT_NAME, state)
+    return folder / checkpoint.CHECKPOINT_NAME, state
+
+
+def run_variants(boost_pilot, source, out, generations=3):
+    for variant in ("boost", "plain"):
+        assert boost_pilot.main([variant, "--source", str(source), "--out", str(out),
+                                 "--max-generations", str(generations)]) == 0
+
+
+def test_the_pilot_continues_a_finished_run_with_and_without_the_boost(boost_pilot, finished_source, tmp_path):
+    from racing import checkpoint
+    source, state = finished_source
+    run_variants(boost_pilot, source, tmp_path / "pilots")
+    for variant in ("boost", "plain"):
+        after = checkpoint.load(tmp_path / "pilots" / variant / checkpoint.CHECKPOINT_NAME)
+        assert after["generation"] == state["generation"] + 3
+        assert after["tracker"]["outcome"] is None          # stopped by max_generations, not by the push ending
+        assert after["tracker"]["since_mastered"] == 3 and after["tracker"]["goal_reached"]
+        assert after["tracker"]["mastered_factor"] == state["tracker"]["mastered_factor"]
+        assert after["start_level"] == state["start_level"]
+        log = pd.read_csv(tmp_path / "pilots" / variant / "log.csv")
+        assert list(log["generation"]) == [state["generation"] + k for k in range(3)]
+    summary = (tmp_path / "pilots" / "summary.md").read_text()
+    assert "boost" in summary and "plain" in summary and summary.count("## ") == 2
+
+
+def test_the_plain_variant_makes_the_draws_of_a_run_without_the_boost(boost_pilot, finished_source, tmp_path,
+                                                                      monkeypatch):
+    from racing import checkpoint
+    source, _ = finished_source
+    monkeypatch.setattr(config, "STALL_GENERATIONS", 1)       # every generation of the pilot is a stall
+    run_variants(boost_pilot, source, tmp_path / "pilots")
+    boosted = pd.read_csv(tmp_path / "pilots" / "boost" / "log.csv")
+    plain = pd.read_csv(tmp_path / "pilots" / "plain" / "log.csv")
+    assert boosted["boost"].tolist() == [1, 1, 1] and plain["boost"].tolist() == [1, 1, 1]
+    monkeypatch.setattr(config, "STALL_GENERATIONS", 10 ** 6)         # no stall, so the old code path
+    boost_pilot.main(["plain", "--source", str(source), "--out", str(tmp_path / "off"), "--max-generations", "3"])
+    a = checkpoint.load(tmp_path / "pilots" / "plain" / checkpoint.CHECKPOINT_NAME)["method"]
+    b = checkpoint.load(tmp_path / "off" / "plain" / checkpoint.CHECKPOINT_NAME)["method"]
+    assert np.array_equal(a["weights"], b["weights"]) and np.array_equal(a["setup"], b["setup"])
+    c = checkpoint.load(tmp_path / "pilots" / "boost" / checkpoint.CHECKPOINT_NAME)["method"]
+    assert not np.array_equal(a["weights"], c["weights"])           # the boost itself does change the children
+
+
+def test_the_pilot_names_a_missing_field_of_an_older_checkpoint(boost_pilot, finished_source, tmp_path):
+    from racing import checkpoint
+    source, state = finished_source
+    del state["start_level"]
+    checkpoint.save(source, state)
+    with pytest.raises(SystemExit, match="start_level"):
+        boost_pilot.main(["boost", "--source", str(source), "--out", str(tmp_path / "pilots")])
