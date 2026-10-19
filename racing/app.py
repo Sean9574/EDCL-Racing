@@ -67,6 +67,8 @@ def needs_outline(color, background=WHITE):
 
 UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (spec §10.6)
 UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
+SEEDED_RUN = getattr(config, "SEEDED_RUN", 0)   # run 0 is the seeded run; the fallback goes once config defines it
+RACE_RUNS = ("all", "seeded", "unseeded")       # the race control's choices, in cycling order (spec §10.3)
 
 
 def is_app(car):
@@ -379,11 +381,18 @@ def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=
 
 
 def leaderboard_line(position, approach, seed, laps, last, best, status, app=False):
-    """One leaderboard row: position, method and seed (app cars marked), laps completed, last/best lap time (s),
-    status."""
+    """One leaderboard row: position, method and run, laps completed, last/best lap time (s), status. Run 0 is
+    'GA (seeded)', run 1 'GA' and any other run (of an earlier revision) 'GA s2' (spec §10.3); an app car keeps
+    its seed, 'GA (app) s1' (spec §10.6)."""
     times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
-    label = config.LABELS[approach] + (" (app)" if app else "")
-    return f"{position}. {label} s{seed}  lap {laps}  {times}  {status}"
+    label = config.LABELS[approach]
+    if app:
+        label += f" (app) s{seed}"
+    elif seed == SEEDED_RUN:
+        label += " (seeded)"
+    elif seed != 1:
+        label += f" s{seed}"
+    return f"{position}. {label}  lap {laps}  {times}  {status}"
 
 
 def percent(value):
@@ -517,8 +526,8 @@ class App:
         self.race_index = 0                 # into config.TEST_SEEDS
         self.race_level = config.MAX_LEVEL
         self.race_available = {}            # approach -> run seeds with a saved controller
-        self.race_choice = {}               # approach -> "best", a run seed, or "off"
-        self.best = {}                      # approach -> best run seed recorded by the evaluation
+        self.race_runs = "all"              # the runs that race: "seeded", "unseeded" or "all" (spec §10.3)
+        self.race_on = {}                   # approach -> whether its runs race
         self.drivers = {}                   # (approach, seed) -> DenseNet
         self.lineup = []                    # (approach, seed) of the cars in the race
         self.race = None                    # Playback: the preview until the race starts
@@ -857,7 +866,7 @@ class App:
             driver = self.driver(*car)
         except Exception:
             self.drop_car(car)
-            self.status = f"Controller {car_method(car)} seed {car[1]} could not be loaded; skipped."
+            self.status = f"Controller {car_method(car)} run {car[1]} could not be loaded; skipped."
             return None
         return identity, driver, (f"{car_method(car)} · seed {car[1]} · {driver.n_params:,} parameters"
                                   f"{netwindow.netfig.setup_text(driver)}")
@@ -1062,27 +1071,14 @@ class App:
 
     # ----- race view -----
     def load_race(self):
-        """Find the saved final controllers and each approach's best run seed (spec §10.3)."""
+        """Find the saved final controllers and app cars (spec §10.3, §10.6). The runs control and the methods'
+        switches are kept while the view is open; a method seen for the first time is switched on."""
         self.race_available = nets.champion_seeds(self.champions_dir)
         self.app_available = nets.champion_seeds(self.app_champions_dir)
         self.drivers = {}
         self.failed = set()
-        self.best = {}
-        note = ""
-        best_path = paths.best_seeds_path(self.champions_dir)
-        if best_path.exists():
-            try:
-                for approach, seed in json.loads(best_path.read_text()).items():
-                    if isinstance(seed, int) and not isinstance(seed, bool):
-                        self.best[approach] = seed
-            except (ValueError, TypeError, AttributeError, OSError):
-                self.best = {}
-                note = f"{best_path.name} could not be read; using the lowest seeds."
-        kept = self.race_choice
-        self.race_choice = {}
-        for approach, seeds in self.race_available.items():
-            choice = kept.get(approach, "best")
-            self.race_choice[approach] = choice if choice in ("best", "off", *seeds) else "best"
+        for approach in self.race_available:
+            self.race_on.setdefault(approach, True)
         kept_app = self.app_choice
         self.app_choice = {approach: kept_app.get(approach) if kept_app.get(approach) in seeds else "off"
                            for approach, seeds in self.app_available.items()}     # app cars start switched off
@@ -1091,35 +1087,36 @@ class App:
         if not self.race_available and not self.app_available:
             self.status = f"No trained controllers found in {self.champions_dir}."
         else:
-            self.status = note or "Race view."
+            self.status = "Race view."
         self.reset_race()
 
-    def chosen_seed(self, approach):
-        """The run seed whose controller races for `approach`, or None if the approach is off. Without an
-        evaluation record, 'best' falls back to the lowest saved seed."""
-        choice = self.race_choice.get(approach, "best")
-        if choice == "off":
-            return None
-        seeds = self.race_available[approach]
-        if choice == "best":
-            best = self.best.get(approach)
-            return best if best in seeds else seeds[0]
-        return choice
+    def race_seeds(self, approach):
+        """The saved runs of `approach` that race (spec §10.3): run 0 for 'seeded', run 1 for 'unseeded', every
+        saved run for 'all'; none when the approach is switched off."""
+        if not self.race_on.get(approach, True):
+            return []
+        saved = self.race_available[approach]
+        if self.race_runs == "seeded":
+            return [seed for seed in saved if seed == SEEDED_RUN]
+        if self.race_runs == "unseeded":
+            return [seed for seed in saved if seed == 1]
+        return list(saved)
 
-    def choice_label(self, approach):
-        choice = self.race_choice.get(approach, "best")
-        if choice == "best":
-            return f"best (seed {self.chosen_seed(approach)})"
-        if choice == "off":
-            return "off"
-        return f"seed {choice}"
+    def race_runs_label(self):
+        return f"Runs: {self.race_runs} ▸"
 
-    def cycle_choice(self, approach):
+    def cycle_race_runs(self):
+        """Race all runs, the seeded runs or the unseeded runs (spec §10.3). Not during a race."""
         if self.racing:
             return
-        options = ["best", *self.race_available[approach], "off"]
-        current = self.race_choice.get(approach, "best")
-        self.race_choice[approach] = options[(options.index(current) + 1) % len(options)]
+        self.race_runs = RACE_RUNS[(RACE_RUNS.index(self.race_runs) + 1) % len(RACE_RUNS)]
+        self.reset_race()
+
+    def toggle_race(self, approach):
+        """Switch a method's runs on or off (spec §10.3). Not during a race."""
+        if self.racing:
+            return
+        self.race_on[approach] = not self.race_on.get(approach, True)
         self.reset_race()
 
     def app_choice_label(self, approach):
@@ -1160,11 +1157,8 @@ class App:
         self.race = None
         self.step_budget = 0.0
         selected = self.selected_car()
-        self.lineup = []
-        for approach in self.race_available:
-            seed = self.chosen_seed(approach)
-            if seed is not None and (approach, seed) not in self.failed:
-                self.lineup.append((approach, seed))
+        self.lineup = [(approach, seed) for approach in self.race_available for seed in self.race_seeds(approach)
+                       if (approach, seed) not in self.failed]
         self.app_lineup = [(approach, choice, "app") for approach, choice in self.app_choice.items()
                            if choice != "off" and (approach, choice, "app") not in self.failed]
         cars = self.race_cars()
@@ -1199,7 +1193,7 @@ class App:
                         drivers.append(self.driver(*car))
                     except Exception as error:
                         self.drop_car(car)
-                        self.status = f"{car_method(car)} seed {car[1]} left out: {error}."
+                        self.status = f"{car_method(car)} run {car[1]} left out: {error}."
                 if drivers:
                     self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS,
                                          setup=nets.drivers_setup(drivers), grip=self.grip)
@@ -1367,6 +1361,10 @@ class App:
             pygame.draw.polygon(self.screen, color, shape)
             if is_app(car):                                                # app cars: a white border
                 pygame.draw.polygon(self.screen, WHITE, shape, 3)
+            elif car[1] != SEEDED_RUN:                 # run 1 and up: a white stripe, rear to nose (spec §10.3)
+                (nose_x, nose_y), (left_x, left_y), (right_x, right_y) = shape
+                pygame.draw.line(self.screen, WHITE, ((left_x + right_x) / 2, (left_y + right_y) / 2),
+                                 (nose_x, nose_y), 2)
             pygame.draw.polygon(self.screen, INK, shape, 1)
 
     def text(self, string, x, y, font=None, color=INK):
@@ -1387,7 +1385,7 @@ class App:
         if color and not active:
             pygame.draw.rect(self.screen, hex_to_rgb(color), pygame.Rect(rect.left, rect.top, 5, rect.height),
                              border_top_left_radius=6, border_bottom_left_radius=6)
-        ink = ink_for(fill) if active else (INK if enabled else MUTED)
+        ink = ink_for(fill) if active and enabled else (INK if enabled else MUTED)     # disabled: the light fill
         label_surface = self.small.render(label, True, ink)
         self.screen.blit(label_surface, label_surface.get_rect(center=rect.center))
         if enabled:
@@ -1585,18 +1583,22 @@ class App:
         y = below
         if self.race_group == "app" and self.app_available:
             for approach in self.app_available:
-                self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
-                self.text(f"{config.LABELS[approach]} (app)", x + 16, y + 5, self.small)
-                self.button(pygame.Rect(x + 140, y, w - 140, 24), self.app_choice_label(approach),
+                self.swatch(approach, pygame.Rect(x, y + 6, 10, 10))
+                self.text(f"{config.LABELS[approach]} (app)", x + 16, y + 3, self.small)
+                self.button(pygame.Rect(x + 140, y, w - 140, 22), self.app_choice_label(approach),
                             lambda a=approach: self.cycle_app_choice(a), enabled=idle)
-                y += 28
-        else:
+                y += 24
+        else:                       # rows of 24 px: with the runs control, eight cars keep all eight leaderboard rows
+            self.button(pygame.Rect(x, y, w, 22), self.race_runs_label(), self.cycle_race_runs,
+                        self.race_runs != "all", enabled=idle)
+            y += 24
             for approach in self.race_available:
-                self.swatch(approach, pygame.Rect(x, y + 8, 10, 10))
-                self.text(config.LABELS[approach], x + 16, y + 5, self.small)
-                self.button(pygame.Rect(x + 140, y, w - 140, 24), self.choice_label(approach),
-                            lambda a=approach: self.cycle_choice(a), enabled=idle)
-                y += 28
+                on = self.race_on.get(approach, True)
+                self.swatch(approach, pygame.Rect(x, y + 6, 10, 10))
+                self.text(config.LABELS[approach], x + 16, y + 3, self.small)
+                self.button(pygame.Rect(x + 140, y, w - 140, 22), "on" if on else "off",
+                            lambda a=approach: self.toggle_race(a), on, enabled=idle, color=config.COLORS[approach])
+                y += 24
         y += 4
         y = self.draw_speed_buttons(x, y, w)
         y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)", x, y, self.small, MUTED)
