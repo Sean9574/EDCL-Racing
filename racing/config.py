@@ -181,6 +181,13 @@ def simulator_choice(environ=os.environ):
 
 SIMULATOR = simulator_choice()   # results do not depend on it (spec §5.7); recorded in results/run_info.json
 
+# A Keras job and the compiled runs beside it share the processors (spec §3.3). Measured on the development machine, one
+# training epoch of the baseline: alone 0.186 s with one TensorFlow thread per processor, 0.144 s with 4; beside three
+# compiled runs of 20 threads 1.13 s, and 0.48 s with 4 threads and the runs at the lowest priority.
+KERAS_THREADS = 4            # TensorFlow intra-op threads of every Keras job
+KERAS_INTER_THREADS = 2      # TensorFlow inter-op threads of every Keras job
+EVOLUTION_NICE = 19          # an evolution phase (and a speed push) runs at the lowest priority, so Keras jobs come first
+
 # --- Keras training (spec §8) ---
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 256

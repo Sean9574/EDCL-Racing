@@ -47,3 +47,11 @@ def numpy_simulator(monkeypatch):
     """Forces the numpy simulator, for tests that watch sim.simulate or the joblib task division (spec §5.7)."""
     from racing import config
     monkeypatch.setattr(config, "SIMULATOR", "numpy")
+
+
+@pytest.fixture(autouse=True)
+def normal_priority(monkeypatch):
+    """An evolution phase lowers its process's priority (spec §3.3); tests keep theirs, so the rest of the suite runs as
+    usual. tests/test_evolution.py checks the real function in a fresh process."""
+    from racing import evolution
+    monkeypatch.setattr(evolution, "lower_priority", lambda nice=None: None)

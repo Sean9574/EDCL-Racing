@@ -226,7 +226,9 @@ To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\resu
 
 A compiled run uses every processor and runs side by side share them, so several jobs side by side keep a machine
 busy through each run's map building and Keras phases, and several machines can share the experiment. The runs are independent
-and fixed by their seeds and settings, so where they train changes only their training times.
+and fixed by their seeds and settings, so where they train changes only their training times. Keras jobs come first:
+they train with 4 TensorFlow threads, and an evolution phase runs at the lowest priority (nice 19), using whatever
+processors the searches and DAgger refinements leave (specification §3.3).
 
 **Side by side on one machine:**
 `python scripts/run_notebooks.py --runs nb:01,search:kt_random,baseline:0,ga:1 --at-once 8` runs these jobs: runs of

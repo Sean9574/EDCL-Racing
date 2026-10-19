@@ -1,6 +1,8 @@
 import json
 import math
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -420,3 +422,47 @@ def test_resuming_with_another_setup_mutation_is_refused(evaluation, monkeypatch
     monkeypatch.setattr(config, "SETUP_MUTATION_P", 0.3)
     with pytest.raises(checkpoint.SettingsMismatch, match="SETUP_MUTATION_P"):
         evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=5)
+
+
+LOWER_IN_A_FRESH_PROCESS = """
+import os, threading
+from pathlib import Path
+from racing.evolution import lower_priority
+waiting = threading.Event()
+helper = threading.Thread(target=waiting.wait)            # a thread that exists before, like numpy's
+helper.start()
+start = os.getpriority(os.PRIO_PROCESS, 0)
+lower = min(start + 2, 19)
+
+
+def niceness():
+    return sorted({int(Path(f"/proc/self/task/{t}/stat").read_text().rsplit(")", 1)[1].split()[16])
+                   for t in os.listdir("/proc/self/task")})
+
+
+lower_priority(lower)
+first = niceness()
+lower_priority(start)                                     # never raised again
+child = threading.Thread(target=lambda: None)             # threads started later inherit it
+child.start()
+child.join()
+print(first == [lower], niceness() == [lower])
+waiting.set()
+"""
+
+
+def test_an_evolution_phase_lowers_the_priority_of_every_thread_and_never_raises_it():
+    """Linux keeps a priority per thread; every thread of the process is lowered, and later ones inherit it
+    (spec §3.3). Run in a fresh process, so the test process keeps its priority."""
+    env = {**os.environ, "PYTHONPATH": str(config.PROJECT_DIR)}
+    out = subprocess.run([sys.executable, "-c", LOWER_IN_A_FRESH_PROCESS], capture_output=True, text=True, check=True,
+                         env=env, cwd=config.PROJECT_DIR).stdout.split()
+    assert out == ["True", "True"]
+
+
+def test_a_run_lowers_its_priority_before_its_first_generation(evaluation, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(evolution, "lower_priority", lambda nice=config.EVOLUTION_NICE: calls.append(nice))
+    evaluation(0.0)
+    train(tmp_path, 1)
+    assert calls == [config.EVOLUTION_NICE] == [19]

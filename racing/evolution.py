@@ -166,6 +166,20 @@ def milestone_text(event, method, seed, generation, level, tracker):
     return f"{name}: stopped at generation {generation}, {config.DIFFICULTIES[level]} not mastered"
 
 
+def lower_priority(nice=config.EVOLUTION_NICE):
+    """Lower the priority of every thread of this process to `nice` (spec §3.3); Linux keeps one per thread, and
+    numpy's math library starts its threads at import. The compiled simulator's threads and the worker processes
+    started afterwards inherit it, so an evolution phase leaves the processors to the Keras jobs that share the machine
+    and uses whatever they leave. Raising a priority needs privileges, so it is only ever lowered."""
+    tasks = Path("/proc/self/task")
+    for thread in [int(task.name) for task in tasks.iterdir()] if tasks.is_dir() else [0]:
+        try:
+            if os.getpriority(os.PRIO_PROCESS, thread) < nice:
+                os.setpriority(os.PRIO_PROCESS, thread, nice)
+        except OSError:
+            pass                                        # a thread that ended meanwhile, or no permission
+
+
 def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_generation=None, start_level=1,
         max_generations=None, rng_seed=None):
     """Train `method` with run seed `seed` until the speed push ends or the safety stop (spec §9.4), or
@@ -178,6 +192,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
     if done is not None:
         return done
     reporting = champion_dir is not None
+    lower_priority()                                   # Keras jobs beside it come first (spec §3.3)
     population.fresh_workers(n_jobs)                   # every run builds its own tracks (spec §9.1)
     began = time.time()
     out_dir.mkdir(parents=True, exist_ok=True)

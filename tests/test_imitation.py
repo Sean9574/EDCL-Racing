@@ -337,3 +337,14 @@ def test_a_search_and_a_retraining_in_fresh_processes_equal_notebook_order(tmp_p
     for a, b in zip(load(tmp_path / "order" / "kt_random" / "imitation.keras").get_weights(),
                     load(tmp_path / "jobs" / "kt_random" / "imitation.keras").get_weights(), strict=True):
         assert np.array_equal(a, b)
+
+
+def test_every_keras_job_trains_with_the_configured_tensorflow_threads():
+    """A tiny network trains fastest on few threads, and few threads stall least beside compiled runs (spec §3.3)."""
+    code = ("from racing.backend import keras_cpu; keras_cpu(); import tensorflow as tf; "
+            "print(tf.config.threading.get_intra_op_parallelism_threads(), "
+            "tf.config.threading.get_inter_op_parallelism_threads())")
+    env = {**os.environ, "PYTHONPATH": str(config.PROJECT_DIR), "CUDA_VISIBLE_DEVICES": "-1", "TF_CPP_MIN_LOG_LEVEL": "3"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, env=env,
+                         cwd=config.PROJECT_DIR).stdout.split()
+    assert out == [str(config.KERAS_THREADS), str(config.KERAS_INTER_THREADS)] == ["4", "2"]
