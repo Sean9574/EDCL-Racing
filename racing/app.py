@@ -474,8 +474,8 @@ class App:
 
     def __init__(self, screen, background_tracks=True):
         self.screen = screen
-        self.font = pygame.font.SysFont("dejavusans", 15)
-        self.small = pygame.font.SysFont("dejavusans", 13)
+        self.font = pygame.font.Font(str(config.FONT_PATH), 15)         # shipped: the same widths on every machine
+        self.small = pygame.font.Font(str(config.FONT_PATH), 13)
         self.fullscreen = False
         self.layout()
         self.alive = True

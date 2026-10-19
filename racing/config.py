@@ -245,6 +245,8 @@ CAMERA_ZOOMS = (1, 2, 4, 8)  # the camera button's steps; above 1 the camera fol
 
 # --- Paths ---
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+FONT_PATH = PROJECT_DIR / "racing" / "fonts" / "DejaVuSansCondensed.ttf"   # the viewer's font, shipped with the project so
+                             # every text has the same width on every machine (racing/fonts/LICENSE)
 RESULTS_DIR = PROJECT_DIR / "results"
 DATASET_PATH = RESULTS_DIR / "dataset.npz"
 DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"

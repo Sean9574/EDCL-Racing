@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pygame
 
-from racing import netfig
+from racing import config, netfig
 
 START_SIZE = (900, 640)
 BACKGROUND = (255, 255, 255)
@@ -34,7 +34,7 @@ def window_main(messages, parent=None, on_draw=None):
     pygame.display.set_caption("EC Racing – network")
     size = START_SIZE
     screen = pygame.display.set_mode(size, pygame.RESIZABLE)
-    font = pygame.font.SysFont("dejavusans", 16)
+    font = pygame.font.Font(str(config.FONT_PATH), 16)                  # shipped: the same widths on every machine
     clock = pygame.time.Clock()
     message, dirty, running = None, True, True
     try:

@@ -2477,3 +2477,13 @@ def test_a_controller_of_another_input_count_is_left_out_of_the_race(window, tmp
     window.prepare_race()
     assert window.race_cars() and all(car[0] != "ga" for car in window.race_cars())
     assert "10 inputs" in window.status and window.race is not None
+
+
+def test_the_viewer_ships_its_font():
+    """The viewer's texts are measured against this font, so it travels with the project: a machine without DejaVu
+    Sans Condensed would otherwise draw every text about 12% wider (spec §10)."""
+    assert config.FONT_PATH.is_file() and config.FONT_PATH.with_name("LICENSE").is_file()
+    import pygame
+    pygame.font.init()
+    font = pygame.font.Font(str(config.FONT_PATH), 13)
+    assert font.size("16. KT Hyperband (seeded) lap 3 888.9/1000.0 finished")[0] <= 332 - 4
