@@ -80,14 +80,29 @@ def test_the_selected_neat_button_has_dark_text(window):
 
 
 def test_a_disabled_selected_button_keeps_legible_text(window):
-    """A method switched on is drawn disabled during a race: muted text on the disabled fill, never white."""
+    """A method switched on is drawn disabled during a race: muted text, never white."""
     rect = pygame.Rect(10, 10, 160, 28)
     window.screen.fill(viewer.PANEL_BG)
-    window.button(rect, "on", lambda: None, active=True, enabled=False, color=config.COLORS["baseline"])
+    window.button(rect, "Baseline", lambda: None, active=True, enabled=False, color=config.COLORS["baseline"])
     pixels = {tuple(window.screen.get_at((x, y)))[:3] for x in range(rect.left, rect.right)
               for y in range(rect.top, rect.bottom)}
     darkest = min(pixels, key=viewer.luminance)                             # the text's ink
     assert (255, 255, 255) not in pixels and viewer.contrast(darkest, viewer.MUTED) < 1.2
+
+
+def test_a_locked_method_switch_still_shows_whether_it_is_on(window):
+    """During a race the switches are locked: one switched on keeps a light tint of its color, one switched off the
+    plain disabled fill, and the muted text stays legible on both."""
+    for color in config.COLORS.values():
+        fills = []
+        for active in (True, False):
+            rect = pygame.Rect(10, 10, 110, 22)
+            window.screen.fill(viewer.PANEL_BG)
+            window.button(rect, "", lambda: None, active=active, enabled=False, color=color)
+            fills.append(tuple(window.screen.get_at((rect.left + 12, rect.top + 4)))[:3])
+        on, off = fills
+        assert off == viewer.DISABLED and on not in (viewer.DISABLED, viewer.hex_to_rgb(color)), color
+        assert viewer.contrast(on, viewer.MUTED) >= 3.0, color
 
 
 def test_select_indices_modes():
@@ -738,13 +753,14 @@ def race_window(window, tmp_path):
 def test_the_race_control_races_the_seeded_the_unseeded_or_all_runs(window, tmp_path):
     """spec §10.3: seeded races run 0, unseeded run 1, all every saved run; all is the default."""
     race_window(window, tmp_path)
-    assert window.race_runs == "all" and window.race_runs_label() == "Runs: all ▸"
+    assert window.race_runs == "all" and window.race_runs_label() == "Race: all runs ▸"
     assert window.lineup == [("es", 0), ("ga", 0), ("ga", 1)]              # approach order, then run
     window.cycle_race_runs()
     assert window.race_runs == "seeded" and window.lineup == [("es", 0), ("ga", 0)]
+    assert window.race_runs_label() == "Race: seeded runs ▸"
     window.cycle_race_runs()
     assert window.race_runs == "unseeded" and window.lineup == [("ga", 1)]
-    assert window.race_runs_label() == "Runs: unseeded ▸"
+    assert window.race_runs_label() == "Race: unseeded runs ▸"
     window.cycle_race_runs()
     assert window.race_runs == "all" and set(window.lineup) == {("ga", 0), ("ga", 1), ("es", 0)}
 
@@ -768,25 +784,36 @@ def test_the_runs_control_and_the_switches_are_kept_while_the_view_is_open(windo
     assert window.lineup == [("ga", 0)]
 
 
-def test_the_race_panel_has_the_runs_control_and_a_switch_per_method(window, tmp_path, monkeypatch):
-    race_window(window, tmp_path)
+def recording_buttons(window, monkeypatch):
+    """The buttons the window draws, as (label, action, active, color, rect)."""
     drawn, real = [], window.button
 
     def recording_button(rect, label, action, active=False, enabled=True, color=None):
-        drawn.append((label, action, color))
+        drawn.append((label, action, active, color, rect))
         return real(rect, label, action, active, enabled, color)
 
     monkeypatch.setattr(window, "button", recording_button)
+    return drawn
+
+
+def method_switches(drawn):
+    """The race view's method switches among drawn buttons, as (label, on, rect): a method's name in its color."""
+    colors = {config.LABELS[approach]: config.COLORS[approach] for approach in config.APPROACHES}
+    return [(label, active, rect) for label, _, active, color, rect in drawn
+            if color is not None and colors.get(label) == color]
+
+
+def test_the_race_panel_has_the_race_control_and_a_switch_per_method(window, tmp_path, monkeypatch):
+    race_window(window, tmp_path)
+    drawn = recording_buttons(window, monkeypatch)
     window.draw()
-    assert ("Runs: all ▸", window.cycle_race_runs, None) in drawn
-    switches = [(label, action, color) for label, action, color in drawn if label in ("on", "off")]
-    assert [(label, color) for label, _, color in switches] == [("on", config.COLORS["es"]),
-                                                                ("on", config.COLORS["ga"])]
-    switches[1][1]()                                                        # GA's switch
+    assert ("Race: all runs ▸", window.cycle_race_runs) in [(label, action) for label, action, *_ in drawn]
+    assert [(label, on) for label, on, _ in method_switches(drawn)] == [("ES", True), ("GA", True)]
+    next(action for label, action, *_ in drawn if label == "GA")()          # GA's switch
     assert window.race_on["ga"] is False and window.lineup == [("es", 0)]
     drawn.clear()
     window.draw()
-    assert ("off", config.COLORS["ga"]) in [(label, color) for label, _, color in drawn]
+    assert [(label, on) for label, on, _ in method_switches(drawn)] == [("ES", True), ("GA", False)]
 
 
 def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monkeypatch, circle_track):
@@ -1210,12 +1237,12 @@ def test_a_race_of_every_method_fits_the_panel(window, tmp_path, monkeypatch):
     assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
 
 
-@pytest.mark.parametrize("size", [None, (1920, 1080)])
+@pytest.mark.parametrize("size", [config.WINDOW_SIZE, (1920, 1080)])
 def test_a_race_of_both_runs_of_every_method_fits_the_panel(window, tmp_path, monkeypatch, size):
-    """16 cars (spec §10.3): the panel fits, and the leaderboard shows the rows that fit and how many more race."""
-    if size is not None:
-        window.screen = pygame.display.set_mode(size)
-        window.layout()
+    """16 cars, all runs being the default (spec §10.3): the panel fits and, from the default window up, the
+    leaderboard shows every car; the method switches form a grid of three columns."""
+    window.screen = pygame.display.set_mode(size)
+    window.layout()
     save_race_champions(tmp_path, approaches=[(approach, run) for approach in config.APPROACHES for run in (0, 1)])
     window.champions_dir = tmp_path
     window.set_mode("race")
@@ -1230,18 +1257,20 @@ def test_a_race_of_both_runs_of_every_method_fits_the_panel(window, tmp_path, mo
         return text(string, x, y, font, color)
 
     monkeypatch.setattr(window, "text", recording_text)
+    buttons = recording_buttons(window, monkeypatch)
     window.buttons = []
     window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
     for string, x, y, font in drawn:
         assert y + font.get_linesize() <= window.panel.bottom - 30, string
         assert x + font.size(string)[0] <= window.panel.right - 16, string
     assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
+    for label, *_, rect in buttons:
+        assert window.small.size(label)[0] <= rect.width - 10, label             # each label fits its button
     rows = [string for string, _, _, _ in drawn if string[:1].isdigit() and ". " in string]
-    more = [string for string, _, _, _ in drawn if string.startswith("… ")]
-    if size is None:                                        # the default window: some rows, then "… n more"
-        assert rows and more == [f"… {16 - len(rows)} more"]
-    else:                                                   # full HD: every car has its row
-        assert len(rows) == 16 and not more
+    assert len(rows) == 16 and not any(string.startswith("… ") for string, _, _, _ in drawn)
+    switches = method_switches(buttons)
+    assert [label for label, _, _ in switches] == [config.LABELS[approach] for approach in config.APPROACHES]
+    assert len({rect.left for _, _, rect in switches}) == 3 and len({rect.top for _, _, rect in switches}) == 3
 
 
 def test_settings_are_locked_while_training(window):
@@ -1606,8 +1635,8 @@ def test_the_race_cycle_button_walks_the_lineup_and_wraps(net, tmp_path):
     three_car_race(net, tmp_path)
     net.toggle_network_window()
     net.update(1 / 60)
-    assert len(sent(net)) == 1 and sent(net)[0]["title"].startswith(f"{config.LABELS['es']} · seed 0 · ")
-    assert "generation" not in sent(net)[0]["title"]
+    assert len(sent(net)) == 1 and sent(net)[0]["title"].startswith("ES (seeded) · ")
+    assert "generation" not in sent(net)[0]["title"] and "seed 0" not in sent(net)[0]["title"]
     net.update(1 / 60)
     assert len(sent(net)) == 1                                  # unchanged: nothing sent
     seen = []
@@ -1616,7 +1645,7 @@ def test_the_race_cycle_button_walks_the_lineup_and_wraps(net, tmp_path):
         seen.append(net.net_choice)
         net.update(1 / 60)
     assert seen == [1, 2, 0, 1] and len(sent(net)) == 5
-    assert sent(net)[-1]["title"].startswith(f"{config.LABELS['ga']} · seed 0")
+    assert sent(net)[-1]["title"].startswith("GA (seeded) · ")
 
 
 def test_the_selection_falls_back_to_the_first_car(net, tmp_path):
@@ -1652,8 +1681,24 @@ def test_the_network_buttons_fit_both_panels(net, tmp_path):
     actions = [action for _, action in net.buttons]
     assert net.toggle_network_window in actions and net.cycle_network_car in actions
     assert all(rect.bottom <= net.panel.bottom - 30 for rect, _ in net.buttons)
-    approach, seed = net.lineup[0]
-    assert net.network_car_label() == f"Network of: {config.LABELS[approach]} s{seed} ▸"
+    assert net.lineup[0] == ("baseline", 0) and net.network_car_label() == "Network of: Baseline (seeded) ▸"
+
+
+def test_the_network_window_names_race_cars_as_the_leaderboard_does(net, tmp_path):
+    """spec §10.3: one name per car in the leaderboard, the network selector and the window title."""
+    assert [viewer.car_name("ga", 0), viewer.car_name("ga", 1), viewer.car_name("ga", 2),
+            viewer.car_name("ga", 1, app=True)] == ["GA (seeded)", "GA", "GA s2", "GA (app) s1"]
+    assert viewer.leaderboard_line(5, "ga", 1, 0, float("nan"), float("nan"), "ready").startswith("5. GA  lap 0")
+    app_race_window(net, tmp_path)                          # reported: es 0, ga 0, ga 1; app cars: ga 2, neat 0
+    net.cycle_app_choice("ga")
+    net.toggle_network_window()
+    names = []
+    for _ in net.race_cars():
+        net.update(1 / 60)
+        names.append((net.network_car_label(), sent(net)[-1]["title"].split(" · ")[0]))
+        net.cycle_network_car()
+    assert names == [("Network of: ES (seeded) ▸", "ES (seeded)"), ("Network of: GA (seeded) ▸", "GA (seeded)"),
+                     ("Network of: GA ▸", "GA"), ("Network of: GA (app) s2 ▸", "GA (app) s2")]
 
 
 # ----- saved application runs (spec §10.6) -----
@@ -1916,12 +1961,15 @@ def test_the_race_group_button_switches_the_controller_list(window, tmp_path, mo
         return text(string, x, y, font, color)
 
     monkeypatch.setattr(window, "text", recording_text)
+    buttons = recording_buttons(window, monkeypatch)
     window.draw()
-    assert "Controllers: reported ▸" in window.race_group_label() and "ES" in drawn
+    assert "Controllers: reported ▸" in window.race_group_label() and ("ES", True) in [
+        (label, on) for label, on, _ in method_switches(buttons)]
     window.cycle_race_group()
     drawn.clear()
+    buttons.clear()
     window.draw()
-    assert window.race_group == "app" and "NEAT (app)" in drawn and "ES" not in drawn
+    assert window.race_group == "app" and "NEAT (app)" in drawn and not method_switches(buttons)
     window.cycle_race_group()
     assert window.race_group == "final"
 

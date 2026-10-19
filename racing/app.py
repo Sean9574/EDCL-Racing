@@ -31,6 +31,8 @@ INK = (29, 35, 48)
 MUTED = (91, 100, 116)
 BUTTON = (228, 232, 238)
 BUTTON_ACTIVE = (55, 62, 78)     # dark neutral: never mistaken for an approach (spec §10.1)
+DISABLED = (238, 240, 243)       # a locked button's fill
+LOCKED_TINT = 0.35               # a locked button that is on keeps this much of its color
 RAY = (255, 196, 0)
 WHITE = (255, 255, 255)
 MIN_LINE_CONTRAST = 3.0          # a plot line with less contrast against white gets a dark outline (WCAG 2)
@@ -380,19 +382,22 @@ def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=
         sys.exit(code)
 
 
-def leaderboard_line(position, approach, seed, laps, last, best, status, app=False):
-    """One leaderboard row: position, method and run, laps completed, last/best lap time (s), status. Run 0 is
-    'GA (seeded)', run 1 'GA' and any other run (of an earlier revision) 'GA s2' (spec §10.3); an app car keeps
-    its seed, 'GA (app) s1' (spec §10.6)."""
-    times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
+def car_name(approach, seed, app=False):
+    """A race car's name in the leaderboard, the network selector and the window title: run 0 'GA (seeded)', run 1
+    'GA', any other run (of an earlier revision) 'GA s2' (spec §10.3); an app car keeps its seed, 'GA (app) s1'
+    (spec §10.6)."""
     label = config.LABELS[approach]
     if app:
-        label += f" (app) s{seed}"
-    elif seed == SEEDED_RUN:
-        label += " (seeded)"
-    elif seed != 1:
-        label += f" s{seed}"
-    return f"{position}. {label}  lap {laps}  {times}  {status}"
+        return f"{label} (app) s{seed}"
+    if seed == SEEDED_RUN:
+        return f"{label} (seeded)"
+    return label if seed == 1 else f"{label} s{seed}"
+
+
+def leaderboard_line(position, approach, seed, laps, last, best, status, app=False):
+    """One leaderboard row: position, car name, laps completed, last/best lap time (s), status."""
+    times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
+    return f"{position}. {car_name(approach, seed, app)}  lap {laps}  {times}  {status}"
 
 
 def percent(value):
@@ -836,7 +841,7 @@ class App:
 
     def network_car_label(self):
         car = self.selected_car()
-        return "Network of: –" if car is None else f"Network of: {car_method(car)} s{car[1]} ▸"
+        return "Network of: –" if car is None else f"Network of: {car_name(car[0], car[1], is_app(car))} ▸"
 
     def shown_network(self):
         """(identity, driver, title) of the network the window should show now, or None."""
@@ -868,7 +873,7 @@ class App:
             self.drop_car(car)
             self.status = f"Controller {car_method(car)} run {car[1]} could not be loaded; skipped."
             return None
-        return identity, driver, (f"{car_method(car)} · seed {car[1]} · {driver.n_params:,} parameters"
+        return identity, driver, (f"{car_name(car[0], car[1], is_app(car))} · {driver.n_params:,} parameters"
                                   f"{netwindow.netfig.setup_text(driver)}")
 
     def poll_network_window(self):
@@ -1103,7 +1108,7 @@ class App:
         return list(saved)
 
     def race_runs_label(self):
-        return f"Runs: {self.race_runs} ▸"
+        return f"Race: {self.race_runs} runs ▸"
 
     def cycle_race_runs(self):
         """Race all runs, the seeded runs or the unseeded runs (spec §10.3). Not during a race."""
@@ -1381,7 +1386,10 @@ class App:
 
     def button(self, rect, label, action, active=False, enabled=True, color=None):
         fill = hex_to_rgb(color) if (color and active) else (BUTTON_ACTIVE if active else BUTTON)
-        pygame.draw.rect(self.screen, fill if enabled else (238, 240, 243), rect, border_radius=6)
+        if not enabled:                 # locked; a colored button that is on keeps a light tint of its color
+            fill = (tuple(round(LOCKED_TINT * c + (1 - LOCKED_TINT) * d) for c, d in zip(fill, DISABLED))
+                    if color and active else DISABLED)
+        pygame.draw.rect(self.screen, fill, rect, border_radius=6)
         if color and not active:
             pygame.draw.rect(self.screen, hex_to_rgb(color), pygame.Rect(rect.left, rect.top, 5, rect.height),
                              border_top_left_radius=6, border_bottom_left_radius=6)
@@ -1392,10 +1400,12 @@ class App:
             self.buttons.append((rect, action))
 
     def draw_speed_buttons(self, x, y, w):
-        y = self.text("Playback speed", x, y, self.small, MUTED)
-        quarter = (w - 24) // 4
+        """The playback speeds in one row, named on the left like the track and run seed rows. Returns the next
+        free y."""
+        self.text("Playback speed", x, y + 5, self.small, MUTED)
+        quarter = (w - 110 - 24) // 4
         for k, speed in enumerate(config.SPEEDS):
-            self.button(pygame.Rect(x + k * (quarter + 8), y, quarter, 28), f"{speed}×",
+            self.button(pygame.Rect(x + 110 + k * (quarter + 8), y, quarter, 28), f"{speed}×",
                         lambda s=speed: self.set_speed(s), self.speed == speed)
         return y + 36
 
@@ -1573,14 +1583,14 @@ class App:
         self.button(pygame.Rect(x, y - 6, w, 26), self.network_car_label(), self.cycle_network_car,
                     enabled=bool(self.race_cars()))
         y += 28
+        self.button(pygame.Rect(x, y, half, 22), self.race_runs_label(), self.cycle_race_runs,
+                    self.race_runs != "all", enabled=idle)
+        self.button(pygame.Rect(x + half + 8, y, half, 22), self.folder_label(), self.cycle_folder,
+                    self.folder_name != "current", enabled=idle)
+        y += 26
         if self.app_available:
             self.button(pygame.Rect(x, y, half, 22), self.race_group_label(), self.cycle_race_group)
-            below = y + 24
-        else:
-            below = self.text("Controllers", x, y, self.small, MUTED)
-        self.button(pygame.Rect(x + half + 8, y, half, below - y - 2), self.folder_label(), self.cycle_folder,
-                    self.folder_name != "current", enabled=idle)       # in the row's height: the leaderboard fits
-        y = below
+            y += 26
         if self.race_group == "app" and self.app_available:
             for approach in self.app_available:
                 self.swatch(approach, pygame.Rect(x, y + 6, 10, 10))
@@ -1588,17 +1598,13 @@ class App:
                 self.button(pygame.Rect(x + 140, y, w - 140, 22), self.app_choice_label(approach),
                             lambda a=approach: self.cycle_app_choice(a), enabled=idle)
                 y += 24
-        else:                       # rows of 24 px: with the runs control, eight cars keep all eight leaderboard rows
-            self.button(pygame.Rect(x, y, w, 22), self.race_runs_label(), self.cycle_race_runs,
-                        self.race_runs != "all", enabled=idle)
-            y += 24
-            for approach in self.race_available:
-                on = self.race_on.get(approach, True)
-                self.swatch(approach, pygame.Rect(x, y + 6, 10, 10))
-                self.text(config.LABELS[approach], x + 16, y + 3, self.small)
-                self.button(pygame.Rect(x + 140, y, w - 140, 22), "on" if on else "off",
-                            lambda a=approach: self.toggle_race(a), on, enabled=idle, color=config.COLORS[approach])
-                y += 24
+        else:           # each method's switch, filled when on, in a grid of three: a race of 16 runs keeps every row
+            third = (w - 16) // 3
+            for k, approach in enumerate(self.race_available):
+                self.button(pygame.Rect(x + (k % 3) * (third + 8), y + (k // 3) * 26, third, 22),
+                            config.LABELS[approach], lambda a=approach: self.toggle_race(a),
+                            self.race_on.get(approach, True), enabled=idle, color=config.COLORS[approach])
+            y += 26 * -(-len(self.race_available) // 3)
         y += 4
         y = self.draw_speed_buttons(x, y, w)
         y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)", x, y, self.small, MUTED)
