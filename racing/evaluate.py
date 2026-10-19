@@ -121,9 +121,8 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
 
 
 def best_seeds(validation):
-    """For each approach, its better run: the run whose controller succeeded on the most validation maps; ties go to
-    the higher mean validation fitness, then to run 0 (spec §11.1). The results table names it; the race view no longer
-    uses it (spec §10.3)."""
+    """For each approach, its best run: the run whose controller succeeded on the most validation maps; ties go to
+    the higher mean validation fitness, then to run 0 (spec §11.1). The results table names it."""
     best = {}
     for approach in config.APPROACHES:
         sub = validation[validation["approach"] == approach]
@@ -245,23 +244,36 @@ def per_run(frame, column, seeds=None):
 
 
 def runs_cell(values, digits, mean_digits=None):
-    """Per-run values in run order as 'run 0 · run 1 (mean)' (spec §11.3): a run without a value shows '–', and the
-    mean covers the runs that have one; the value once if every run has the same value; '–' if there is none. The
-    mean has mean_digits decimals (default: digits). A standard deviation of two runs is not reported."""
-    mean_digits = digits if mean_digits is None else mean_digits
+    """Per-run values in run order (spec §11.3): 'r0 · r1 · r2 · r3 (mean ± sd)', with '–' for a run without a
+    value; the mean and the sample standard deviation cover the runs that have one ('(mean)' alone for one); a
+    value shared by every run shows once; '–' if there is none. The mean has mean_digits decimals (default: digits)."""
     values = [float(v) for v in values]
     present = [v for v in values if not np.isnan(v)]
+    mean_digits = digits if mean_digits is None else mean_digits
     if not present:
         return "–"
-    if len(present) == len(values) and all(v == values[0] for v in values):
+    if len(values) == 1:
         return f"{values[0]:.{digits}f}"
+    if len(present) == len(values) and all(v == present[0] for v in present):
+        return f"{present[0]:.{digits}f}"
     shown = " · ".join("–" if np.isnan(v) else f"{v:.{digits}f}" for v in values)
-    return f"{shown} ({np.mean(present):.{mean_digits}f})"
+    if len(present) == 1:
+        return f"{shown} ({present[0]:.{mean_digits}f})"
+    return f"{shown} ({np.mean(present):.{mean_digits}f} ± {np.std(present, ddof=1):.{mean_digits}f})"
 
 
 def runs_list(values):
     """Per-run counts in run order joined by ' · ', as in runs_cell but without a mean; '–' for a run without one."""
     return " · ".join("–" if np.isnan(v) else str(int(v)) for v in values)
+
+
+def stalls_broken(log):
+    """Stalls one run broke out of (spec §9.4): the rows of its log whose event is 'tightened' and whose previous row
+    was boosted. NaN for a log without a 'boost' column (made before the stall boost)."""
+    if "boost" not in log:
+        return float("nan")
+    boosted = log["boost"].shift(1).fillna(0) == 1
+    return float(((log["event"] == "tightened") & boosted).sum())
 
 
 def hours(seconds):
@@ -311,8 +323,8 @@ def setup_cells(drivers, approach, seeds):
 def results_table(per_track, runs_dir, drivers=None, best=None):
     """Spec §11.3 table 1: test maps finished and succeeded (in total and per run), lap and race times,
     crashes, the final controllers' setups (drivers: {(approach, run seed): driver}) and the target
-    reduction of each run's speed push; per-run cells read 'run 0 · run 1 (mean)'. With best ({approach: run}, as
-    best_seeds returns), each method's better run is named (spec §11.1)."""
+    reduction of each run's speed push; per-run cells read 'r0 · r1 · r2 · r3 (mean ± sd)'. With best ({approach: run}, as
+    best_seeds returns), each method's best run is named (spec §11.1)."""
     runs = per_seed(per_track)
     rows = []
     for approach in config.APPROACHES:
@@ -325,7 +337,7 @@ def results_table(per_track, runs_dir, drivers=None, best=None):
         sensor, steer = setup_cells(drivers, approach, order)
         row = {"Method": config.LABELS[approach], "Runs": len(sub)}
         if best is not None:
-            row["Better run"] = best.get(approach, "–")
+            row["Best run"] = best.get(approach, "–")
         rows.append({**row,
                      "Finished": f"{int(sub['finished'].sum())} / {total}",
                      "Finished per run": runs_list(per_run(sub, "finished")),
@@ -397,7 +409,9 @@ def end_cell(summary):
 def training_cost_table(runs_dir):
     """Spec §11.3 table 3, one row per method and run: when each level was cleared and the mastery goal
     reached, how the run ended, evaluations, and the time of each training stage. Runs without any record are left
-    out; missing records show '–' and goals never reached show 'not reached'."""
+    out; missing records show '–' and goals never reached show 'not reached'. Stalls broken is the count for the
+    run, '–' for a run without a log or a boost column."""
+    logs = evolution_logs(runs_dir)
     rows = []
     for approach in config.APPROACHES:
         search = {}
@@ -423,6 +437,9 @@ def training_cost_table(runs_dir):
             row["DAgger (h)"] = hours(dagger.get("wall_time"))
             row["Evolution (h)"] = hours(summary.get("wall_time"))
             row["Total (h)"] = hours(training_seconds(approach, seed, runs_dir))
+            log = logs.get(approach, {}).get(seed)
+            stalls = float("nan") if log is None else stalls_broken(log)
+            row["Stalls broken"] = "–" if np.isnan(stalls) else str(int(stalls))
             rows.append(row)
     return pd.DataFrame(rows)
 

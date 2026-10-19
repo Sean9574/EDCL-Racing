@@ -87,8 +87,9 @@ NOTEBOOKS = {
     ],
     "08_evaluate.ipynb": [
         ("markdown", "# 8. Evaluation\nTest maps finished and succeeded, lap times, training cost, imitation "
-                     "stages and the course comparison, reported for run 0 and run 1 of each method and as their "
-                     "mean, written `run 0 · run 1 (mean)` (spec §11.3)."),
+                     "stages and the course comparison, reported for every run of each method and as their "
+                     "mean and standard deviation, written `r0 · r1 · r2 · r3 (mean ± sd)`, with each method's best "
+                     "run (spec §11.3)."),
         ("code", SETUP),
         ("code", "from IPython.display import display\n\nfrom racing import config, evaluate\n\n"
                  "results = evaluate.main(n_jobs=config.N_JOBS)\n"

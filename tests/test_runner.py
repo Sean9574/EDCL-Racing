@@ -117,11 +117,11 @@ def test_make_notebooks_archives_once_then_replaces_the_obsolete_notebooks(tmp_p
 
 
 def test_the_evaluation_notebook_reports_each_run_and_their_mean_and_shows_every_table():
-    """spec §11.3: notebook 08 reports run 0 and run 1 and their mean, 'run 0 · run 1 (mean)', and displays every
+    """spec §11.3: notebook 08 reports every run, their mean and sd, 'r0 · r1 · r2 · r3 (mean ± sd)', and displays every
     table the evaluation writes, the robustness table included."""
     module = load_make_notebooks()
     heading = module.NOTEBOOKS["08_evaluate.ipynb"][0][1]
-    assert "`run 0 · run 1 (mean)`" in heading and "standard deviation" not in heading
+    assert "`r0 · r1 · r2 · r3 (mean ± sd)`" in heading and "best run" in heading
     assert module.EVALUATION_TABLES == ("results", "head_to_head", "training_cost", "stages", "comparison",
                                         "search_cost", "driving_selected", "dataset", "robustness")
 
