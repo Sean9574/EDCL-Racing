@@ -1,6 +1,6 @@
 """Final evaluation (spec §11): three-lap time trials on held-out maps, test accuracy, size, speed and
-training cost, as tables and figures. Each method has one final controller per run seed; tables report the mean and
-standard deviation across seeds and lead with completion and lap times."""
+training cost, as tables and figures. Each method has one final controller per run; tables report each run and their
+mean as 'run 0 · run 1 (mean)' and lead with completion and lap times."""
 import json
 import time
 from pathlib import Path
@@ -99,7 +99,7 @@ def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, le
 
 
 def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
-    """Spec §11.3 table 7: per method and width, the maps finished (in total and per seed) and succeeded, and the mean
+    """Spec §11.3 table 7: per method and width, the maps finished (in total and per run) and succeeded, and the mean
     lap time on finished maps; each width's first column names how many maps it covers."""
     rows = []
     for approach in config.APPROACHES:
@@ -112,8 +112,8 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
             maps = frame.loc[frame["width"] == width, "track"].nunique()
             lap = cell.loc[cell["finished"].astype(bool), "lap_time"]
             row[f"{width:g} m finished ({maps} maps)"] = f"{int(cell['finished'].sum())} / {len(cell)}"
-            per_seed = cell.groupby("run_seed")["finished"].sum()
-            row[f"{width:g} m finished per seed"] = ", ".join(str(int(v)) for v in per_seed.sort_index())
+            per_run = cell.groupby("run_seed")["finished"].sum()
+            row[f"{width:g} m finished per run"] = ", ".join(str(int(v)) for v in per_run.sort_index())
             row[f"{width:g} m succeeded"] = f"{int(cell['success'].sum())} / {len(cell)}"
             row[f"{width:g} m mean lap (s)"] = "–" if lap.empty else f"{lap.mean():.2f}"
         rows.append(row)
@@ -121,8 +121,9 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
 
 
 def best_seeds(validation):
-    """For each approach, the run seed whose controller succeeded on the most validation maps; ties go to the higher
-    mean validation fitness, then to the lowest seed (spec §11.1)."""
+    """For each approach, its better run: the run whose controller succeeded on the most validation maps; ties go to
+    the higher mean validation fitness, then to run 0 (spec §11.1). The results table names it; the race view no longer
+    uses it (spec §10.3)."""
     best = {}
     for approach in config.APPROACHES:
         sub = validation[validation["approach"] == approach]
@@ -225,25 +226,18 @@ def metrics_per_seed(models, data, runs_dir, latency_calls=1000, drivers=None):
                                        "training_s", "search_s"])
 
 
-def mean_std(values, digits):
-    """'mean ± std' across seeds (sample standard deviation); the value alone if there is one value or all are
-    equal; '–' if there is none."""
-    values = [float(v) for v in values if not np.isnan(float(v))]
-    if not values:
-        return "–"
-    if len(values) == 1 or all(v == values[0] for v in values):
-        return f"{values[0]:.{digits}f}"
-    return f"{np.mean(values):.{digits}f} ± {np.std(values, ddof=1):.{digits}f}"
-
-
-def seeds_note(values, digits):
-    """mean_std of per-seed values, naming how many seeds it covers when some seeds have no value."""
+def runs_cell(values, digits):
+    """Per-run values in run order as 'run 0 · run 1 (mean)' (spec §11.3): a run without a value shows '–', and the
+    mean covers the runs that have one; a single value alone; '–' if there is none. A standard deviation of two runs
+    is not reported."""
     values = [float(v) for v in values]
-    cell = mean_std(values, digits)
-    covered = sum(1 for v in values if not np.isnan(v))
-    if 0 < covered < len(values):
-        cell += f" ({covered} of {len(values)} seeds)"
-    return cell
+    present = [v for v in values if not np.isnan(v)]
+    if not present:
+        return "–"
+    if len(values) == 1:
+        return f"{values[0]:.{digits}f}"
+    shown = " · ".join("–" if np.isnan(v) else f"{v:.{digits}f}" for v in values)
+    return f"{shown} ({np.mean(present):.{digits}f})"
 
 
 def hours(seconds):
@@ -280,46 +274,50 @@ def reduction_cell(summary):
 
 
 def setup_cells(drivers, approach, seeds):
-    """The final controllers' sensor length (m, no decimals) and steering sensitivity (two decimals) as 'mean ± std'
-    across seeds (spec §11.3); '–' for both without drivers for the method."""
-    rows = [np.asarray(drivers[(approach, int(s))].setup, dtype=float) for s in seeds
-            if drivers and (approach, int(s)) in drivers]
+    """The final controllers' sensor length (m, no decimals) and steering sensitivity (two decimals) of the runs
+    `seeds`, in that order, as runs_cell (spec §11.3); a run without a driver shows '–'."""
+    rows = [np.asarray(drivers[(approach, int(s))].setup, dtype=float)
+            if drivers and (approach, int(s)) in drivers else np.full(2, np.nan) for s in seeds]
     if not rows:
         return "–", "–"
     values = np.array(rows)
-    return mean_std(values[:, 0], 0), mean_std(values[:, 1], 2)
+    return runs_cell(values[:, 0], 0), runs_cell(values[:, 1], 2)
 
 
-def results_table(per_track, runs_dir, drivers=None):
-    """Spec §11.3 table 1: test maps finished and succeeded (in total and per seed), lap and race times,
-    crashes, the final controllers' setups (drivers: {(approach, seed): driver}) and the target
-    reduction of each seed's speed push."""
-    seeds = per_seed(per_track)
+def results_table(per_track, runs_dir, drivers=None, best=None):
+    """Spec §11.3 table 1: test maps finished and succeeded (in total and per run), lap and race times,
+    crashes, the final controllers' setups (drivers: {(approach, run seed): driver}) and the target
+    reduction of each run's speed push; per-run cells read 'run 0 · run 1 (mean)'. With best ({approach: run}, as
+    best_seeds returns), each method's better run is named (spec §11.1)."""
+    runs = per_seed(per_track)
     rows = []
     for approach in config.APPROACHES:
-        sub = seeds[seeds["approach"] == approach].sort_values("run_seed")
+        sub = runs[runs["approach"] == approach].sort_values("run_seed")
         if sub.empty:
             continue
         total = int(sub["maps"].sum())
         best_lap = "–" if sub["best_lap"].isna().all() else f"{sub['best_lap'].min():.2f}"
         sensor, steer = setup_cells(drivers, approach, sub["run_seed"])
-        rows.append({"Method": config.LABELS[approach], "Seeds": len(sub),
+        row = {"Method": config.LABELS[approach], "Runs": len(sub)}
+        if best is not None:
+            row["Better run"] = best.get(approach, "–")
+        rows.append({**row,
                      "Finished": f"{int(sub['finished'].sum())} / {total}",
-                     "Finished per seed": ", ".join(str(int(v)) for v in sub["finished"]),
+                     "Finished per run": ", ".join(str(int(v)) for v in sub["finished"]),
                      "Succeeded": f"{int(sub['success'].sum())} / {total}",
-                     "Succeeded per seed": ", ".join(str(int(v)) for v in sub["success"]),
-                     "Mean lap time (s)": seeds_note(sub["lap_time"], 2), "Best lap time (s)": best_lap,
-                     "Mean race time (s)": seeds_note(sub["race_time"], 1),
-                     "Crashes": mean_std(sub["crashes"], 1),
+                     "Succeeded per run": ", ".join(str(int(v)) for v in sub["success"]),
+                     "Mean lap time (s)": runs_cell(sub["lap_time"], 2), "Best lap time (s)": best_lap,
+                     "Mean race time (s)": runs_cell(sub["race_time"], 1),
+                     "Crashes": runs_cell(sub["crashes"], 1),
                      "Sensor length (m)": sensor, "Steering sensitivity": steer,
-                     "Target reduction (per seed)": ", ".join(
+                     "Target reduction (per run)": ", ".join(
                          reduction_cell(run_summary(approach, int(s), runs_dir)) for s in sub["run_seed"])})
     return pd.DataFrame(rows)
 
 
 def head_to_head_table(per_track):
-    """Spec §11.3 table 2: mean lap time on the test maps that every final controller finished, and on how many
-    of those maps each method had the lowest lap time (its mean over seeds)."""
+    """Spec §11.3 table 2: mean lap time on the test maps that every final controller finished, per run and their
+    mean, and on how many of those maps each method had the lowest lap time (its mean over runs)."""
     if per_track.empty:
         return pd.DataFrame()
     finished_all = per_track.groupby("track")["finished"].all()
@@ -337,9 +335,9 @@ def head_to_head_table(per_track):
         if sub.empty:
             continue
         mine = on_shared[on_shared["approach"] == approach]
-        laps = [float(runs["lap_time"].mean()) for _, runs in mine.groupby("run_seed")]
-        rows.append({"Method": config.LABELS[approach], "Seeds": int(sub["run_seed"].nunique()),
-                     column: mean_std(laps, 2), "Fastest on (maps)": fastest.get(approach, 0)})
+        laps = [float(runs["lap_time"].mean()) for _, runs in mine.groupby("run_seed")]    # groupby sorts by run
+        rows.append({"Method": config.LABELS[approach], "Runs": int(sub["run_seed"].nunique()),
+                     column: runs_cell(laps, 2), "Fastest on (maps)": fastest.get(approach, 0)})
     return pd.DataFrame(rows)
 
 
@@ -371,8 +369,8 @@ def end_cell(summary):
 
 
 def training_cost_table(runs_dir):
-    """Spec §11.3 table 3, one row per method and seed: when each level was cleared and the mastery goal
-    reached, how the run ended, evaluations, and the time of each training stage. Seeds without any record are left
+    """Spec §11.3 table 3, one row per method and run: when each level was cleared and the mastery goal
+    reached, how the run ended, evaluations, and the time of each training stage. Runs without any record are left
     out; missing records show '–' and goals never reached show 'not reached'."""
     rows = []
     for approach in config.APPROACHES:
@@ -387,7 +385,7 @@ def training_cost_table(runs_dir):
                 dagger = dagger_record(approach, seed, runs_dir)
             if not (summary or imitation or dagger):
                 continue
-            row = {"Method": config.LABELS[approach], "Seed": seed}
+            row = {"Method": config.LABELS[approach], "Run": seed}
             for level in range(1, config.MAX_LEVEL + 1):
                 row[LEVEL_NAMES[level]] = milestone_cell(summary, level)
             row["Run end"] = end_cell(summary)
@@ -428,37 +426,39 @@ def stage_results(runs_dir, per_track, test_seeds=config.TEST_SEEDS, n_jobs=1):
 
 
 def stages_table(results):
-    """Spec §11.3 table 4: the imitation methods' test results after each stage."""
+    """Spec §11.3 table 4: the imitation methods' test results after each stage, per run and their mean."""
     rows = []
     for approach in config.IMITATION_APPROACHES:
         for stage, name in STAGES:
             sub = results[(results["approach"] == approach) & (results["stage"] == stage)]
             if sub.empty:
                 continue
-            seeds = per_seed(sub)
-            total = int(seeds["maps"].sum())
-            rows.append({"Method": config.LABELS[approach], "Stage": name, "Seeds": len(seeds),
-                         "Finished": f"{int(seeds['finished'].sum())} / {total}",
-                         "Succeeded": f"{int(seeds['success'].sum())} / {total}",
-                         "Mean lap time (s)": seeds_note(seeds["lap_time"], 2),
-                         "Crashes": mean_std(seeds["crashes"], 1)})
+            runs = per_seed(sub)                                        # groupby sorts by run
+            total = int(runs["maps"].sum())
+            rows.append({"Method": config.LABELS[approach], "Stage": name, "Runs": len(runs),
+                         "Finished": f"{int(runs['finished'].sum())} / {total}",
+                         "Succeeded": f"{int(runs['success'].sum())} / {total}",
+                         "Mean lap time (s)": runs_cell(runs["lap_time"], 2),
+                         "Crashes": runs_cell(runs["crashes"], 1)})
     return pd.DataFrame(rows)
 
 
 def comparison_table(metrics):
-    """The course comparison (spec §11.3 table 5), measured as in spec §11.2."""
+    """The course comparison (spec §11.3 table 5), measured as in spec §11.2: per run and their mean, except the
+    search time, which a Keras Tuner method spends once for both runs (spec §8.2)."""
     rows = []
     for approach in config.APPROACHES:
-        sub = metrics[metrics["approach"] == approach]
+        sub = metrics[metrics["approach"] == approach].sort_values("run_seed")
         if sub.empty:
             continue
-        rows.append({"Method": config.LABELS[approach], "Seeds": len(sub),
-                     "Test accuracy": mean_std(sub["accuracy"], 4),
-                     "Parameters": mean_std(sub["params"], 0),
-                     "Batch inference (µs/sample)": mean_std(sub["batch_us"], 3),
-                     "Single-sample latency (ms)": mean_std(sub["single_ms"], 3),
-                     "Search time (s)": mean_std(sub["search_s"].iloc[:1], 1),
-                     "Training time (s)": mean_std(sub["training_s"], 1)})
+        search = float(sub["search_s"].iloc[0])
+        rows.append({"Method": config.LABELS[approach], "Runs": len(sub),
+                     "Test accuracy": runs_cell(sub["accuracy"], 4),
+                     "Parameters": runs_cell(sub["params"], 0),
+                     "Batch inference (µs/sample)": runs_cell(sub["batch_us"], 3),
+                     "Single-sample latency (ms)": runs_cell(sub["single_ms"], 3),
+                     "Search time (s)": "–" if np.isnan(search) else f"{search:.1f}",
+                     "Training time (s)": runs_cell(sub["training_s"], 1)})
     return pd.DataFrame(rows)
 
 
@@ -570,13 +570,13 @@ def _line_kwargs(color):
 
 
 def _plot_runs(ax, runs, column, approach):
-    """One line per seed of `column` (seeds told apart by line style), with level advancements and the mastery goal
+    """One line per run of `column` (runs told apart by line style), with level advancements and the mastery goal
     as solid and target reductions as dotted grey vertical lines."""
     for k, (seed, log) in enumerate(sorted(runs.items())):
         if column not in log:
             continue
         ax.plot(log["generation"], log[column], linewidth=1.2, linestyle=SEED_STYLES[k % len(SEED_STYLES)],
-                label=f"seed {seed}", **_line_kwargs(config.COLORS[approach]))
+                label=f"run {seed}", **_line_kwargs(config.COLORS[approach]))
         events = log["event"].fillna("").astype(str) if "event" in log else []
         for generation, event in zip(log["generation"], events):
             if event in EVENT_STYLES:
@@ -584,7 +584,7 @@ def _plot_runs(ax, runs, column, approach):
 
 
 def _panels(plt, logs, column, ylabel, threshold=None):
-    """Small multiples: one panel per method with data in `column`, one line per seed (told apart by line style),
+    """Small multiples: one panel per method with data in `column`, one line per run (told apart by line style),
     level advancements and the mastery goal as solid and target reductions as dotted grey vertical lines. None if no
     method has data."""
     from matplotlib.lines import Line2D
@@ -622,7 +622,7 @@ SETUP_PANELS = (("sensor_mean", "Sensor length (m)", config.SENSOR_LENGTH_LIMITS
 
 def _setup_figure(plt, logs):
     """Spec §11.4: for each method, the population's mean sensor length (upper panel) and mean steering
-    sensitivity (lower panel) per generation, one line per seed, with level advancements and target reductions
+    sensitivity (lower panel) per generation, one line per run, with level advancements and target reductions
     marked and the revision 3 setup as a dashed line. None if no log records setups."""
     from matplotlib.lines import Line2D
     from matplotlib.ticker import FuncFormatter, NullFormatter
@@ -663,7 +663,7 @@ def _setup_figure(plt, logs):
 
 def figures(runs_dir, out_dir):
     """Spec §11.4: the lowest map success share and the median lap time over training (one panel per method,
-    one line per seed), the population's mean setup over training, the step sizes, and the Keras
+    one line per run), the population's mean setup over training, the step sizes, and the Keras
     Tuner trials. Only figures with data are written."""
     import matplotlib
     matplotlib.use("Agg")
@@ -757,7 +757,8 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
     with np.load(data_path) as d:
         data = {key: d[key] for key in d.files}
     metrics = metrics_per_seed(models, data, runs_dir, latency_calls, drivers)   # timed after all parallel work
-    tables = {"results": results_table(per_track, runs_dir, drivers), "head_to_head": head_to_head_table(per_track),
+    tables = {"results": results_table(per_track, runs_dir, drivers, best),
+              "head_to_head": head_to_head_table(per_track),
               "training_cost": training_cost_table(runs_dir), "stages": stages_table(stages),
               "comparison": comparison_table(metrics), "search_cost": search_cost_table(runs_dir),
               "driving_selected": selected, "dataset": dataset_table(data_path),

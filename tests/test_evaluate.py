@@ -74,7 +74,7 @@ def test_success_means_three_laps_within_the_target(monkeypatch, fake_tracks):
     assert frame["lap_time"].iloc[1] == pytest.approx(30.0)
 
 
-def test_best_seeds_most_successes_then_fitness_then_lowest_seed():
+def test_best_seeds_most_successes_then_fitness_then_run_0():
     rows = [("ga", 0, True, 1.5), ("ga", 0, True, 1.5), ("ga", 1, True, 1.9), ("ga", 1, False, 1.9),
             ("es", 0, True, 1.2), ("es", 2, True, 1.2), ("neat", 1, False, 0.4), ("neat", 2, False, 0.6)]
     frame = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "fitness": f} for a, s, ok, f in rows])
@@ -148,11 +148,13 @@ def test_single_sample_latency_is_positive():
     assert 0 < evaluate.single_sample_latency(model, x, calls=20) < 1.0
 
 
-def test_mean_std_formats():
-    assert evaluate.mean_std([0.5, 0.7, 0.6], 2) == "0.60 ± 0.10"
-    assert evaluate.mean_std([431, 431, 431], 0) == "431"
-    assert evaluate.mean_std([1.24], 1) == "1.2"
-    assert evaluate.mean_std([float("nan")], 1) == "–" and evaluate.mean_std([], 1) == "–"
+def test_runs_cell_shows_each_run_and_their_mean():
+    assert evaluate.runs_cell([18, 16], 0) == "18 · 16 (17)"
+    assert evaluate.runs_cell([0.62, 0.60], 2) == "0.62 · 0.60 (0.61)"
+    assert evaluate.runs_cell([53.5, float("nan")], 2) == "53.50 · – (53.50)"
+    assert evaluate.runs_cell([1.24], 1) == "1.2"
+    assert evaluate.runs_cell([float("nan")], 1) == "–" and evaluate.runs_cell([], 1) == "–"
+    assert evaluate.runs_cell([1.0, 2.0, 3.0], 1) == "1.0 · 2.0 · 3.0 (2.0)"
 
 
 def metrics_frame():
@@ -168,9 +170,16 @@ def metrics_frame():
 
 def test_comparison_table():
     table = evaluate.comparison_table(metrics_frame())
-    assert list(table["Method"]) == ["KT Random", "GA"] and list(table["Seeds"]) == [3, 2]
-    assert table.loc[0, "Test accuracy"] == "0.6200 ± 0.0200" and table.loc[0, "Parameters"] == "447"
+    assert list(table["Method"]) == ["KT Random", "GA"] and list(table["Runs"]) == [3, 2]
+    assert table.loc[0, "Test accuracy"] == "0.6000 · 0.6200 · 0.6400 (0.6200)"
+    assert table.loc[0, "Parameters"] == "447 · 447 · 447 (447)"
+    assert table.loc[0, "Training time (s)"] == "30.0 · 31.0 · 32.0 (31.0)"
     assert table.loc[0, "Search time (s)"] == "900.0" and table.loc[1, "Search time (s)"] == "–"
+
+
+def test_comparison_table_lists_the_runs_in_run_order():
+    shuffled = metrics_frame().iloc[[2, 0, 4, 1, 3]].reset_index(drop=True)
+    pd.testing.assert_frame_equal(evaluate.comparison_table(shuffled), evaluate.comparison_table(metrics_frame()))
 
 
 def test_results_table_counts_finishes_successes_and_target_reduction(tmp_path):
@@ -183,12 +192,32 @@ def test_results_table_counts_finishes_successes_and_target_reduction(tmp_path):
     table = evaluate.results_table(per_track, tmp_path)
     assert list(table["Method"]) == ["ES", "GA"]
     ga = table.set_index("Method").loc["GA"]
-    assert ga["Seeds"] == 2 and ga["Finished"] == "3 / 4" and ga["Finished per seed"] == "1, 2"
-    assert ga["Succeeded"] == "2 / 4" and ga["Succeeded per seed"] == "1, 1"
-    assert ga["Mean lap time (s)"] == "53.50 ± 4.95" and ga["Best lap time (s)"] == "50.00"
-    assert ga["Mean race time (s)"] == "160.5 ± 14.8" and ga["Crashes"] == "0.5 ± 0.7"
-    assert ga["Target reduction (per seed)"] == "14.3%, not reached"
-    assert table.set_index("Method").loc["ES", "Target reduction (per seed)"] == "–"
+    assert ga["Runs"] == 2 and ga["Finished"] == "3 / 4" and ga["Finished per run"] == "1, 2"
+    assert ga["Succeeded"] == "2 / 4" and ga["Succeeded per run"] == "1, 1"
+    assert ga["Mean lap time (s)"] == "50.00 · 57.00 (53.50)" and ga["Best lap time (s)"] == "50.00"
+    assert ga["Mean race time (s)"] == "150.0 · 171.0 (160.5)" and ga["Crashes"] == "1.0 · 0.0 (0.5)"
+    assert ga["Target reduction (per run)"] == "14.3%, not reached"
+    assert table.set_index("Method").loc["ES", "Target reduction (per run)"] == "–"
+
+
+def test_results_table_shows_a_dash_for_a_run_that_finished_no_map(tmp_path):
+    nan = np.nan
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("ga", 0, 1001, True, False, False, 54.0),
+                            ("ga", 1, 1000, False, False, True, nan), ("ga", 1, 1001, False, False, True, nan)])
+    ga = evaluate.results_table(per_track, tmp_path).set_index("Method").loc["GA"]
+    assert ga["Mean lap time (s)"] == "52.00 · – (52.00)" and ga["Mean race time (s)"] == "156.0 · – (156.0)"
+    assert ga["Crashes"] == "0.0 · 2.0 (1.0)" and ga["Finished per run"] == "2, 0"
+
+
+def test_results_table_names_each_methods_better_run(tmp_path):
+    per_track = drive_rows([(a, s, 1000, True, True, False, 50.0) for a in ("ga", "es", "neat") for s in (0, 1)])
+    rows = [("ga", 0, True, 1.9), ("ga", 0, False, 1.9), ("ga", 1, True, 1.2), ("ga", 1, True, 1.2),
+            ("es", 0, True, 1.2), ("es", 0, False, 0.6), ("es", 1, True, 1.5), ("es", 1, False, 0.6),
+            ("neat", 0, True, 1.5), ("neat", 1, True, 1.5)]
+    validation = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "fitness": f} for a, s, ok, f in rows])
+    table = evaluate.results_table(per_track, tmp_path, best=evaluate.best_seeds(validation)).set_index("Method")
+    assert table["Better run"].to_dict() == {"ES": 1, "GA": 1, "NEAT": 0}
+    assert "Better run" not in evaluate.results_table(per_track, tmp_path).columns
 
 
 def test_results_table_reports_the_final_setups(tmp_path):
@@ -199,11 +228,12 @@ def test_results_table_reports_the_final_setups(tmp_path):
     finals[("ga", 1)].setup = np.array([60.0, 1.0])
     finals[("es", 0)] = nets.from_flat(nets.init_population(np.random.default_rng(9), 1)[0])   # revision 3 setup
     table = evaluate.results_table(per_track, tmp_path, finals).set_index("Method")
-    assert table.loc["GA", "Sensor length (m)"] == "50 ± 14" and table.loc["GA", "Steering sensitivity"] == "1.50 ± 0.71"
+    assert table.loc["GA", "Sensor length (m)"] == "40 · 60 (50)"
+    assert table.loc["GA", "Steering sensitivity"] == "2.00 · 1.00 (1.50)"
     assert table.loc["ES", "Sensor length (m)"] == "50" and table.loc["ES", "Steering sensitivity"] == "1.00"
     columns = list(table.columns)
     assert columns.index("Steering sensitivity") == columns.index("Sensor length (m)") + 1
-    assert columns.index("Steering sensitivity") + 1 == columns.index("Target reduction (per seed)")
+    assert columns.index("Steering sensitivity") + 1 == columns.index("Target reduction (per run)")
 
 
 def test_results_table_without_drivers_shows_no_setup(tmp_path):
@@ -221,7 +251,8 @@ def test_head_to_head_compares_the_maps_every_controller_finished():
                             ("es", 0, 1002, False, False, True, nan)])
     table = evaluate.head_to_head_table(per_track).set_index("Method")
     column = "Mean lap time on the 2 shared maps (s)"
-    assert table.loc["GA", column] == "55.50 ± 0.71" and table.loc["ES", column] == "56.50"
+    assert table.loc["GA", column] == "55.00 · 56.00 (55.50)" and table.loc["ES", column] == "56.50"
+    assert table.loc["GA", "Runs"] == 2 and table.loc["ES", "Runs"] == 1
     assert table.loc["GA", "Fastest on (maps)"] == 1 and table.loc["ES", "Fastest on (maps)"] == 1
 
 
@@ -251,7 +282,7 @@ def test_training_cost_table(tmp_path):
     write_json(paths.search_dir("kt_random", tmp_path) / "summary.json", {"wall_time": 914.2})
     write_json(paths.run_dir("kt_random", 0, tmp_path) / "summary.json", {"wall_time": 12.0})
     table = evaluate.training_cost_table(tmp_path)
-    assert list(table["Method"]) == ["Baseline", "KT Random", "GA", "GA"] and list(table["Seed"]) == [0, 0, 0, 1]
+    assert list(table["Method"]) == ["Baseline", "KT Random", "GA", "GA"] and list(table["Run"]) == [0, 0, 0, 1]
     base, kt, ga0, ga1 = (table.iloc[k] for k in range(4))
     assert ga0["Easy cleared"] == "gen 25 · 25,000 evals · 0.02 h"
     assert ga0["Mastery goal"] == "gen 300 · 300,000 evals · 2.00 h"
@@ -416,7 +447,7 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     assert set(results["robustness_per_track"]["width"]) <= set(config.ROBUSTNESS_WIDTHS)
     assert list(results["robustness"]["Method"]) == ["ES", "GA"]
     assert list(results["results"]["Method"]) == ["ES", "GA"] and list(results["comparison"]["Method"]) == ["ES", "GA"]
-    cost = results["training_cost"].set_index("Seed")
+    cost = results["training_cost"].set_index("Run")
     assert cost.loc[0, "Mastery goal"] == "not reached" and cost.loc[0, "Run end"] == "stalled on level 2 · gen 10"
     assert json.loads((champions / "best_seeds.json").read_text()).keys() == {"ga", "es"}
     for name in ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
@@ -424,7 +455,8 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
     assert (tmp_path / "out" / "tables" / "robustness_per_track.csv").exists()
     assert results["figures"][-1] == tmp_path / "out" / "figures" / "networks.png" and results["figures"][-1].exists()
-    assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "50"
+    assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "50 · 50 (50)"
+    assert list(results["results"]["Better run"]) == [results["best_seeds"]["es"], results["best_seeds"]["ga"]]
 
 
 # ----- spec §11.1: robustness table -----
@@ -467,9 +499,9 @@ def test_the_robustness_table_counts_finishes_per_method_and_width():
     assert es["18 m finished (1 maps)"] == "0 / 1" and es["18 m mean lap (s)"] == "–"
 
 
-def test_the_robustness_table_gives_finishes_per_seed():
+def test_the_robustness_table_gives_finishes_per_run():
     frame = drive_rows([("ga", 0, 1000, True, True, False, 20.0), ("ga", 1, 1000, False, False, True, np.nan),
                         ("ga", 2, 1000, True, False, False, 22.0)])
     frame["width"] = 14.0
     ga = evaluate.robustness_table(frame, (14.0,)).iloc[0]
-    assert ga["14 m finished per seed"] == "1, 0, 1" and ga["14 m finished (1 maps)"] == "2 / 3"
+    assert ga["14 m finished per run"] == "1, 0, 1" and ga["14 m finished (1 maps)"] == "2 / 3"
