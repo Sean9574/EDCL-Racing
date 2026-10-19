@@ -21,7 +21,8 @@ its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged
 Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
 road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
 they trained on. The evaluation adds a robustness table: the test maps rebuilt at 8, 10, 14 and 18 m, two of which no
-controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.3, which incorporates every revision).
+controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.5, which incorporates every
+revision).
 
 ## Setup on a Windows desktop (WSL 2)
 
