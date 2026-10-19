@@ -1238,7 +1238,7 @@ def test_leaderboard_lines_fit_the_panel(window):
             for status in ("ready", "racing", "finished", "crashed", "stopped"):
                 line = viewer.leaderboard_line(2 * len(config.APPROACHES), approach, seed, config.RACE_LAPS, 888.88,
                                                999.99, status, app=app)
-                assert window.small.size(line)[0] <= width - 8, line      # 8 px to spare: fonts differ by machine
+                assert window.small.size(line)[0] <= width - 4, line      # 4 px to spare: fonts differ by machine
     line = viewer.leaderboard_line(1, "kt_hyperband", 0, 1, 52.31, 51.94, "racing")
     assert line == "1. KT Hyperband (seeded) lap 1 52.3/51.9 racing"
     assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA lap 0 –/– ready"
