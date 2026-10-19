@@ -137,7 +137,7 @@ def test_interrupted_training_leaves_no_stale_results(monkeypatch, toy_data, tmp
 
 
 def test_train_baseline_is_reproducible_with_a_seed(toy_data, tmp_path):
-    runs = [imitation.train_baseline(toy_data, out_dir=tmp_path / f"run{i}", epochs=3, seed=3) for i in range(2)]
+    runs = [imitation.train_baseline(toy_data, out_dir=tmp_path / f"run{i}", epochs=3, seed=0) for i in range(2)]
     assert runs[0]["val_accuracy"] == runs[1]["val_accuracy"]
 
 
@@ -308,7 +308,7 @@ for step in sys.argv[3:]:
         imitation.run_tuner("kt_random", data, out_dir=search, max_trials=2, max_epochs=2, export_models=False,
                             report=False)
     else:
-        imitation.retrain("kt_random", data, seed=1, search=search, out_dir=out / "kt_random", epochs=2,
+        imitation.retrain("kt_random", data, seed=0, search=search, out_dir=out / "kt_random", epochs=2,
                           report=False)
 '''
 
@@ -348,3 +348,13 @@ def test_every_keras_job_trains_with_the_configured_tensorflow_threads():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, env=env,
                          cwd=config.PROJECT_DIR).stdout.split()
     assert out == [str(config.KERAS_THREADS), str(config.KERAS_INTER_THREADS)] == ["4", "2"]
+
+
+def test_run_1_trains_another_network_every_time_even_after_run_0(toy_data, tmp_path):
+    from racing.backend import keras_cpu
+    load = keras_cpu().models.load_model
+    for name, seed in (("a0", 0), ("a1", 1), ("b0", 0), ("b1", 1)):            # one process, run 0 then run 1
+        imitation.train_baseline(toy_data, out_dir=tmp_path / name, epochs=1, seed=seed, report=False)
+    w = {name: load(tmp_path / name / "imitation.keras").get_weights() for name in ("a0", "a1", "b0", "b1")}
+    assert all(np.array_equal(x, y) for x, y in zip(w["a0"], w["b0"]))
+    assert not all(np.array_equal(x, y) for x, y in zip(w["a1"], w["b1"]))

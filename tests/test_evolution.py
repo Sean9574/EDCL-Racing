@@ -466,3 +466,25 @@ def test_a_run_lowers_its_priority_before_its_first_generation(evaluation, tmp_p
     evaluation(0.0)
     train(tmp_path, 1)
     assert calls == [config.EVOLUTION_NICE] == [19]
+
+
+def test_two_starts_of_run_1_differ_and_run_0_replays(evaluation, tmp_path):
+    evaluation(0.0)
+    logs = {}
+    for name, seed in (("a0", 0), ("b0", 0), ("a1", 1), ("b1", 1)):
+        evolution.run(ga.GA(pop_size=20), seed, tmp_path / name, max_generations=2, champion_dir=None)
+        logs[name] = comparable(tmp_path / name / "log.csv")
+    assert logs["a0"].equals(logs["b0"])                         # run 0: the same seed, the same run
+    assert not logs["a1"].equals(logs["b1"])                     # run 1: no seed, another run every time
+
+
+def test_a_stopped_run_1_resumes_on_its_own_path(evaluation, tmp_path):
+    import shutil
+    evaluation(0.0)
+    with pytest.raises(Interrupt):
+        evolution.run(ga.GA(pop_size=20), 1, tmp_path / "run", max_generations=5, champion_dir=None,
+                      on_generation=interrupt_at(2))
+    shutil.copytree(tmp_path / "run", tmp_path / "copy")
+    for name in ("run", "copy"):
+        evolution.run(ga.GA(pop_size=20), 1, tmp_path / name, max_generations=5, champion_dir=None)
+    assert comparable(tmp_path / "run" / "log.csv").equals(comparable(tmp_path / "copy" / "log.csv"))

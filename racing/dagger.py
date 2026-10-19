@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import checkpoint, config, es, expert, imitation, nets, paths, progress, sim
+from racing import checkpoint, config, es, expert, imitation, nets, paths, progress, runs, sim
 from racing.actions import class_to_controls, controls_to_class
 from racing.backend import keras_cpu
 from racing.curriculum import SeedSource
@@ -70,7 +70,7 @@ def check(driver, seeds, factor=config.TARGET_FACTOR, level=config.MAX_LEVEL, n_
 
 
 def _rng_seed(approach, seed):
-    """Every method and run seed draws its own maps."""
+    """Every method and run draws its own maps; run 1's generator ignores this (spec §3.3)."""
     return [seed, config.IMITATION_APPROACHES.index(approach), config.DAGGER_SALT]
 
 
@@ -78,7 +78,7 @@ def _round_model(stage_file, weights, rate, seed, number):
     """The network with `weights`, freshly loaded and compiled after seeding Keras for round `number`: a round starts
     from the same state whether or not the refinement was interrupted before it."""
     keras = keras_cpu()
-    keras.utils.set_random_seed(seed * 1000 + number)
+    runs.seed_keras(seed, seed * 1000 + number)
     model = keras.models.load_model(stage_file, compile=False)
     model.set_weights(weights)
     return imitation.compile_model(model, rate)
@@ -164,7 +164,7 @@ def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rou
         initial = keras_cpu().models.load_model(imitation_stage, compile=False).get_weights()
         state = {"settings": checkpoint.settings_record(), "round": 0, "streak": 0, "best_checks": -1,
                  "since_best": 0, "n_rows": 0, "respawns": 0,
-                 "rng": np.random.default_rng(_rng_seed(approach, seed)).bit_generator.state, "used": [],
+                 "rng": runs.generator(seed, _rng_seed(approach, seed)).bit_generator.state, "used": [],
                  "weights": initial, "best_weights": initial, "history": [], "elapsed": 0.0, "outcome": None}
     else:
         checkpoint.check_settings(state["settings"])

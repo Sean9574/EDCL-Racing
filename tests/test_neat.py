@@ -553,16 +553,16 @@ def test_run_neat_reports_and_resumes_exactly(monkeypatch, tmp_path):
         return on_generation
 
     full = []
-    summary = neat.run_neat(seed=3, pop_size=40, out_dir=tmp_path / "full", champion_dir=None,
+    summary = neat.run_neat(seed=0, pop_size=40, out_dir=tmp_path / "full", champion_dir=None,
                             on_generation=record(full), max_generations=6)
     assert summary["approach"] == "neat" and summary["generations"] == 6 and summary["pop_size"] == 40
     assert [row[0] for row in full] == list(range(6))
     first = []
     with pytest.raises(Stop):
-        neat.run_neat(seed=3, pop_size=40, out_dir=tmp_path / "cut", champion_dir=None,
+        neat.run_neat(seed=0, pop_size=40, out_dir=tmp_path / "cut", champion_dir=None,
                       on_generation=record(first, stop_at=3), max_generations=6)
     resumed = []
-    neat.run_neat(seed=3, pop_size=40, out_dir=tmp_path / "cut", champion_dir=None,
+    neat.run_neat(seed=0, pop_size=40, out_dir=tmp_path / "cut", champion_dir=None,
                   on_generation=record(resumed), max_generations=6)
     assert first[:3] == full[:3]
     assert resumed == full[3:]                                  # generation 3 re-run from the checkpoint

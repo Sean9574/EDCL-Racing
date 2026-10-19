@@ -10,7 +10,7 @@ from typing import Protocol
 
 import numpy as np
 
-from racing import checkpoint, config, paths, population, progress, setup
+from racing import checkpoint, config, paths, population, progress, runs, setup
 from racing.curriculum import MasteryTracker, SeedSource, survivors
 from racing.nets import DensePopulation
 
@@ -199,7 +199,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
     log_path = out_dir / LOG_NAME
     state = checkpoint.load(out_dir / checkpoint.CHECKPOINT_NAME)
     if state is None:
-        rng = np.random.default_rng(seed if rng_seed is None else rng_seed)
+        rng = runs.generator(seed, seed) if rng_seed is None else np.random.default_rng(rng_seed)
         method.initialize(rng)
         seeds = SeedSource(rng)
         tracker = MasteryTracker(level=start_level)

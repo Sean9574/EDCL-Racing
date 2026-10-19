@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from racing import checkpoint, config, nets, paths, progress
+from racing import checkpoint, config, nets, paths, progress, runs
 from racing.backend import keras_cpu
 
 TUNER_CLASSES = {"kt_random": "RandomSearch", "kt_hyperband": "Hyperband", "kt_bayesian": "BayesianOptimization"}
@@ -155,7 +155,7 @@ def train_baseline(data, out_dir=None, on_epoch=None, epochs=config.MAX_EPOCHS, 
     if done is not None:
         return done
     start_run(out_dir)
-    keras_cpu().utils.set_random_seed(seed)
+    runs.seed_keras(seed, seed)
     model = build_baseline()
     history, wall_time = fit(model, data, epochs, epoch_status("baseline", seed, on_epoch) if report else on_epoch)
     return finish_run("baseline", seed, model, history, wall_time, out_dir,
@@ -309,7 +309,7 @@ def retrain(approach, data, seed, search=None, out_dir=None, epochs=config.MAX_E
         return done
     chosen = checkpoint.read_record(search / "summary.json")["chosen_hyperparameters"]
     start_run(out_dir)
-    keras_cpu().utils.set_random_seed(seed)
+    runs.seed_keras(seed, seed)
     model = build_network(architecture(chosen), chosen["activation"], float(chosen["dropout"]),
                           float(chosen["learning_rate"]))
     history, wall_time = fit(model, data, epochs, epoch_status(approach, seed) if report else None)
