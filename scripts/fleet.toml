@@ -3,24 +3,31 @@
 # each belongs to one machine. A job starts as soon as a slot is free and its inputs exist, in the order listed, so
 # the longest runs come first.
 # The machine without a host is the one fleet.py runs on (the desktop); servers are reached from it with `ssh`.
-#   at_once: jobs run side by side; workers: worker processes of each run (EC_RACING_JOBS), best a multiple of 3, the
-#   maps of a generation (python -m racing.bench generation: one run gains little beyond 6 to 8).
-# The split balances the expected work from revision 3.1's run lengths: the desktop two NEAT slots of about 13 h and
-# two slots for the notebooks, the 12 DAgger runs and the seeded ES runs, about 20 h; the server one NEAT slot of
-# about 20 h and two slots for GA and ES, about 23 h.
+#   at_once: jobs run side by side. Compiled runs share the processors through their threads and Keras jobs come
+#   first (spec §3.3), so at_once only protects memory. Peaks measured on the desktop on 19 October 2026: a GA or NEAT
+#   run 0.3 GB, a Keras Tuner search 1.0 GB, an imitation run with DAgger's 6 workers 2.0 GB. Every job of a machine
+#   fits at once: the desktop's 14 at most about 22 GB of 54, the server's 6 about 2 GB of 245.
+#   workers: worker processes of a job (EC_RACING_JOBS): DAgger's driving, the dataset and the numpy fallback.
+# The split follows measured generation times (python -m racing.bench generation, 1000 expert cars, every thread):
+# desktop 0.11 s on 24 threads, server 0.13 s on 16, so the server has about 85% of the desktop's speed. Work in
+# minutes of the whole desktop, from the generation counts of the 11-12 October runs at 1.03 s per generation of
+# 1000 trained cars (ES and speed pushes 550 cars; a NEAT generation about 1.35 times a GA generation):
+#   GA runs 0/1 32/28, NEAT 30/37, ES 12/9: 148 in all;
+#   speed pushes about 137 (KT Hyperband's larger network about 25 each), seeded ES 21, DAgger's driving about 36.
+# The server takes every GA, ES and NEAT run (148 / 0.85, about 2.9 h); the desktop the dataset, the searches, the
+# imitation runs and the seeded ES (about 194, about 3.2 h). A server may run only GA, ES, NEAT and seeded ES runs.
 
 [machines.desktop]
-at_once = 4
+at_once = 14
 workers = 6
-runs = ["neat:0", "neat:1", "nb:01", "search:kt_hyperband", "search:kt_random", "search:kt_bayesian",
-        "baseline:0", "baseline:1", "kt_random:0", "kt_random:1",
-        "kt_hyperband:0", "kt_hyperband:1", "kt_bayesian:0", "kt_bayesian:1",
-        "es_seeded:0", "es_seeded:1"]
+runs = ["nb:01", "search:kt_hyperband", "search:kt_bayesian", "search:kt_random",
+        "kt_hyperband:0", "kt_hyperband:1", "kt_bayesian:0", "kt_bayesian:1", "baseline:0", "kt_random:0",
+        "baseline:1", "kt_random:1", "es_seeded:0", "es_seeded:1"]
 
 [machines.server]
 host = "sbrainard@10.0.11.14"
 ssh = "ssh.exe"          # Windows' client: it reaches the school network through GlobalProtect, WSL's does not
 dir = "ec-racing"        # the project folder, in the home folder on the server
-at_once = 3
+at_once = 6
 workers = 6
-runs = ["ga:0", "ga:1", "es:0", "es:1"]
+runs = ["neat:1", "ga:0", "neat:0", "ga:1", "es:0", "es:1"]

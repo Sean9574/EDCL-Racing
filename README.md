@@ -255,9 +255,11 @@ searches and runs complete and only reports them.
 
 **On several machines:** `scripts/fleet.py` starts, watches, stops and collects runs on the desktop and on servers
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
-workers each). The plan of revision 3.2 runs everything at once: the desktop the notebooks 01 and 02, the 8 DAgger
-runs, the seeded ES runs and two NEAT runs; the server GA and ES. It runs on the desktop, in its Ubuntu shell with the `ec-racing` environment active. A server is reached
-with Windows' `ssh.exe`, which goes through the school VPN (GlobalProtect); WSL's own `ssh` does not.
+workers each). The plan follows measured generation times and memory (its comments show the arithmetic) and runs
+every job at once: the desktop the dataset, the three searches, the 8 imitation runs and the seeded ES runs, about
+3.2 h; the server every GA, ES and NEAT run, about 2.9 h. It runs on the desktop, in its Ubuntu shell with the
+`ec-racing` environment active. A server is reached with Windows' `ssh.exe`, which goes through the school VPN
+(GlobalProtect); WSL's own `ssh` does not.
 
 Once, connect GlobalProtect and give the server Windows' SSH key, so that fleet.py can log in without a password:
 
