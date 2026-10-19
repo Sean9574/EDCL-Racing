@@ -232,6 +232,11 @@ def run_order(seeds=()):
     return [*config.RUN_SEEDS, *sorted({int(s) for s in seeds} - set(config.RUN_SEEDS))]
 
 
+def runs_present(approach, runs_dir):
+    """run_order of the run folders of `approach` in runs_dir, so an evaluated archive lists its other runs too."""
+    return run_order(paths.run_seeds(approach, runs_dir))
+
+
 def per_run(frame, column, seeds=None):
     """`column` of a frame with one row per run, as one value for each run of run_order(seeds, by default the frame's
     run seeds): NaN for a run without a row."""
@@ -398,7 +403,7 @@ def training_cost_table(runs_dir):
         search = {}
         if approach in config.TUNER_APPROACHES:
             search = read_json(paths.search_dir(approach, runs_dir) / "summary.json")
-        for seed in config.RUN_SEEDS:
+        for seed in runs_present(approach, runs_dir):
             summary = run_summary(approach, seed, runs_dir)
             imitation, dagger = {}, {}
             if approach in config.IMITATION_APPROACHES:
@@ -432,7 +437,7 @@ def stage_results(runs_dir, per_track, test_seeds=config.TEST_SEEDS, n_jobs=1):
     for stage in ("imitation", "dagger"):
         drivers = {}
         for approach in config.IMITATION_APPROACHES:
-            for seed in config.RUN_SEEDS:
+            for seed in runs_present(approach, runs_dir):
                 path = paths.stage_path(approach, seed, stage, runs_dir)
                 if path.exists():
                     drivers[(approach, seed)] = nets.from_keras(keras.models.load_model(path))
@@ -562,7 +567,7 @@ def evolution_logs(runs_dir):
     logs = {}
     for approach in config.APPROACHES:
         found = {}
-        for seed in config.RUN_SEEDS:
+        for seed in runs_present(approach, runs_dir):
             if approach in config.IMITATION_APPROACHES:
                 path = paths.speed_dir(approach, seed, runs_dir) / "log.csv"
             else:

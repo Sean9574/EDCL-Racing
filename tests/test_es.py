@@ -137,8 +137,8 @@ def test_dagger_baseline_reads_the_refined_baseline(tmp_path):
 
 
 def test_dagger_baseline_missing(tmp_path):
-    with pytest.raises(FileNotFoundError, match="notebook 03"):
-        es.dagger_baseline(0, runs_dir=tmp_path)
+    with pytest.raises(FileNotFoundError, match="no refined baseline for run 1 at .*notebook 03"):
+        es.dagger_baseline(1, runs_dir=tmp_path)
 
 
 def test_random_start_setups_spread_but_a_trained_start_uses_the_default():

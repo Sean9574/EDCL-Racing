@@ -120,7 +120,7 @@ def accuracy(value):
 
 def format_status(status):
     """The one-line status, for example
-    '[run 14/16] GA run 1 · Hard · gen 412 · worst map 84% / 90% ███████████████▊     · streak 1/3 · 2h 13m'."""
+    '[run 10/16] GA run 1 · Hard · gen 412 · worst map 84% / 90% ███████████████▊     · streak 1/3 · 2h 13m'."""
     status = status or {}
     approach, seed = status.get("approach"), status.get("seed")
     name = config.LABELS.get(approach, approach or "?")

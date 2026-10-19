@@ -386,6 +386,25 @@ def test_setup_figure_follows_the_population_setups(tmp_path):
     assert (tmp_path / "figures" / "setup_over_training.png").read_bytes()[:4] == b"\x89PNG"
 
 
+def test_an_archives_other_runs_join_the_training_cost_the_stages_and_the_figures(fake_tracks, tmp_path):
+    """An evaluated archive of an earlier revision may hold run 2: the training cost, the imitation stages and the
+    training figures follow the runs present, as the results and comparison tables do (spec §11.3)."""
+    for seed in (2, 0):
+        write_json(paths.run_dir("ga", seed, tmp_path) / "summary.json", {
+            "start_level": 1, "goal_reached": False, "outcome": "stalled", "generations": 10 + seed, "evals": 100,
+            "wall_time": 60.0, "level_reached": 1, "levels": []})
+        write_log(paths.run_dir("ga", seed, tmp_path), [None, "level_up"], [0.5, 0.95], [np.nan, 40.0])
+    path = paths.stage_path("baseline", 2, "imitation", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nets.to_keras(nets.init_population(np.random.default_rng(3), 1)[0]).save(path)
+    table = evaluate.training_cost_table(tmp_path)
+    assert list(table["Run"]) == [0, 2] and list(table["Run end"]) == ["stalled on level 1 · gen 10",
+                                                                      "stalled on level 1 · gen 12"]
+    assert sorted(evaluate.evolution_logs(tmp_path)["ga"]) == [0, 2]
+    stages = evaluate.stage_results(tmp_path, drive_rows([]), test_seeds=[1000])
+    assert set(zip(stages["approach"], stages["run_seed"], stages["stage"])) == {("baseline", 2, "imitation")}
+
+
 def test_light_series_colors_get_an_outline():
     assert evaluate._outline(config.COLORS["neat"]) is not None
     assert evaluate._outline(config.COLORS["ga"]) is None and evaluate._outline(config.COLORS["es"]) is None

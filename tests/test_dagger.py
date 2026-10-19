@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -213,6 +214,47 @@ def test_a_round_limit_ends_the_refinement_with_the_best_network(monkeypatch, to
     scripted(monkeypatch, [4, 6])
     summary = dagger.refine("baseline", 0, toy_data, runs_dir=trained_runs, max_rounds=2)
     assert summary["outcome"] == "max_rounds" and summary["rounds"] == 2 and summary["best_checks"] == 6
+
+
+def test_run_0_refines_alike_twice_and_run_1_draws_its_own_maps_and_keras_seeds(monkeypatch, toy_data, tmp_path):
+    """spec §3.3, §12.1: two refinements of run 0 drive the same maps and seed Keras for round 1 with 0 * 1000 + 1;
+    two refinements of run 1 drive other maps and seed Keras with other numbers, since DAgger's generator and its
+    training in every round start without a seed."""
+    monkeypatch.setattr(config, "DAGGER_EPOCHS", 1)
+    drawn = []
+
+    def collect(driver, seeds, level=config.MAX_LEVEL, n_jobs=1):
+        drawn.append(("collect", list(seeds)))
+        rng = np.random.default_rng(seeds[0])
+        return rng.random((7, config.N_INPUTS)).astype(np.float32), rng.integers(0, config.N_ACTIONS, 7), 0
+
+    def check(driver, seeds, **kwargs):
+        drawn.append(("check", list(seeds)))
+        return 10
+
+    monkeypatch.setattr(dagger, "collect", collect)
+    monkeypatch.setattr(dagger, "check", check)
+    utils = keras_cpu().utils
+    seeded, real_seed = [], utils.set_random_seed
+    monkeypatch.setattr(utils, "set_random_seed", lambda value: seeded.append(value) or real_seed(value))
+    maps, keras_seeds = {}, {}
+    for run in (0, 1):
+        trained = tmp_path / f"run{run}"
+        imitation.train_baseline(toy_data, out_dir=paths.run_dir("baseline", run, trained), epochs=1, seed=run)
+        for attempt in ("first", "second"):
+            folder = tmp_path / f"run{run}-{attempt}"
+            shutil.copytree(trained, folder)
+            drawn.clear()
+            seeded.clear()
+            dagger.refine("baseline", run, toy_data, runs_dir=folder, max_rounds=1)
+            maps[run, attempt], keras_seeds[run, attempt] = list(drawn), list(seeded)
+    assert [step for step, _ in maps[0, "first"]] == ["collect", "check"]
+    assert maps[0, "first"] == maps[0, "second"]
+    assert keras_seeds[0, "first"] == keras_seeds[0, "second"] == [0 * 1000 + 1]
+    assert [step for step, _ in maps[1, "first"]] == ["collect", "check"]
+    assert maps[1, "first"][0] != maps[1, "second"][0] and maps[1, "first"][1] != maps[1, "second"][1]
+    assert len(keras_seeds[1, "first"]) == len(keras_seeds[1, "second"]) == 1
+    assert keras_seeds[1, "first"] != keras_seeds[1, "second"]
 
 
 def test_a_refinement_checkpoint_with_other_settings_is_refused(toy_data, trained_runs):

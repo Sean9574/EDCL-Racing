@@ -116,6 +116,16 @@ def test_make_notebooks_archives_once_then_replaces_the_obsolete_notebooks(tmp_p
     assert "01_dataset" in nbformat.read(archive / "01_dataset.ipynb", as_version=4).cells[0].source
 
 
+def test_the_evaluation_notebook_reports_each_run_and_their_mean_and_shows_every_table():
+    """spec §11.3: notebook 08 reports run 0 and run 1 and their mean, 'run 0 · run 1 (mean)', and displays every
+    table the evaluation writes, the robustness table included."""
+    module = load_make_notebooks()
+    heading = module.NOTEBOOKS["08_evaluate.ipynb"][0][1]
+    assert "`run 0 · run 1 (mean)`" in heading and "standard deviation" not in heading
+    assert module.EVALUATION_TABLES == ("results", "head_to_head", "training_cost", "stages", "comparison",
+                                        "search_cost", "driving_selected", "dataset", "robustness")
+
+
 def test_a_fresh_clone_without_revision_2_notebooks_archives_nothing(tmp_path, monkeypatch):
     module = load_make_notebooks()
     folder, archive = tmp_path / "notebooks", tmp_path / "archive"

@@ -10,6 +10,15 @@ def run_dir(approach, seed, runs_dir=None):
     return Path(config.RUNS_DIR if runs_dir is None else runs_dir) / approach / f"seed{seed}"
 
 
+def run_seeds(approach, runs_dir=None):
+    """The run seeds k of the folders <runs>/<approach>/seed<k> that exist, in order. An archive of an earlier
+    revision may hold runs other than config.RUN_SEEDS (spec §3.3)."""
+    folder = Path(config.RUNS_DIR if runs_dir is None else runs_dir) / approach
+    if not folder.is_dir():
+        return []
+    return sorted(int(path.name[4:]) for path in folder.glob("seed*") if path.is_dir() and path.name[4:].isdigit())
+
+
 def search_dir(approach, runs_dir=None):
     """The single Keras Tuner search of one method: <runs>/<approach>/search."""
     return Path(config.RUNS_DIR if runs_dir is None else runs_dir) / approach / "search"

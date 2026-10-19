@@ -26,7 +26,7 @@ BRIEF = (
     "    print({key: summary[key] for key in BRIEF_KEYS if key in summary}, flush=True)\n")
 
 EVALUATION_TABLES = ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
-                     "driving_selected", "dataset")
+                     "driving_selected", "dataset", "robustness")
 
 NOTEBOOKS = {
     "01_dataset.ipynb": [
@@ -87,8 +87,8 @@ NOTEBOOKS = {
     ],
     "08_evaluate.ipynb": [
         ("markdown", "# 8. Evaluation\nTest maps finished and succeeded, lap times, training cost, imitation "
-                     "stages and the course comparison, as mean ± standard deviation across run seeds "
-                     "(spec §11)."),
+                     "stages and the course comparison, reported for run 0 and run 1 of each method and as their "
+                     "mean, written `run 0 · run 1 (mean)` (spec §11.3)."),
         ("code", SETUP),
         ("code", "from IPython.display import display\n\nfrom racing import config, evaluate\n\n"
                  "results = evaluate.main(n_jobs=config.N_JOBS)\n"

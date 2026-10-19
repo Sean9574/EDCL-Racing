@@ -13,10 +13,10 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
 Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
 its population must complete three laps within the target time, three generations in a row, on each level from Easy
 to Extra hard. In the speed push that follows, the target time is shortened by 2% at a time whenever 75% of the
-population beats it three generations in a row, until 300 generations pass without that. Every method is trained twice: run 0 is seeded (seed 0) and replays exactly, run 1 sets
-no seed, so its random choices differ every time; results are reported for both runs and their mean. Every evolved
-car also evolves its own setup next to its network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and
-lap time.
+population beats it three generations in a row, until 300 generations pass without that. Every method is trained twice:
+run 0 is seeded (seed 0) and replays exactly, run 1 sets no seed, so its random choices differ every time; results are
+reported for both runs and their mean. Every evolved car also evolves its own setup next to its network: the length of
+its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and lap time.
 
 Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
 road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
@@ -159,11 +159,11 @@ From another terminal, watch the run with:
 python -m racing.progress                            # live status; Ctrl+C stops watching only
 ```
 
-- **Stopping and resuming:** stop with Ctrl+C, or from another terminal with `pkill -f scripts/run_notebooks.py`.
-  The runner ends the notebook's kernel (and its worker processes), notes the stop in the run log and exits with
-  code 130 within a few seconds. Start the same command again to continue: finished runs are skipped and an
-  interrupted run continues from its last checkpoint, losing at most one generation. A resumed run produces exactly
-  the results of an uninterrupted one.
+- **Stopping and resuming:** stop with Ctrl+C, or from another terminal with `pkill -f scripts/run_notebooks.py`. The
+  runner ends the notebook's kernel (and its worker processes), notes the stop in the run log and exits with code 130
+  within a few seconds. Start the same command again to continue: finished runs are skipped and an interrupted run
+  continues from its last checkpoint, losing at most one generation. A resumed run 0 produces exactly the same results
+  as an uninterrupted one; a resumed run 1 continues from the state of its random generator saved in the checkpoint.
 - **One runner at a time:** a second `run_notebooks.py` on the same `results/` stops at once with exit code 4 and
   names the process that holds `results/.runner.lock`.
 - **After a crash or power loss:** if a result file was cut short, the runner lists it and exits with code 3. Delete
@@ -210,7 +210,7 @@ Results are written to `results/`, which is not under version control:
 | `results/runs/<method>/seed<k>/` (imitation methods) | `imitation.keras`, `dagger.keras`, the DAgger rows, state and summary, and `speed/` for the speed push |
 | `results/runs/<method>/search/` | Keras Tuner search: trials, summary and exported models |
 | `results/champions/<method>/seed<k>.keras` | Final controllers (evolved dense networks also as `.npy`; NEAT genomes as `.json`) |
-| `results/champions/best_seeds.json` | Each method's best seed on the validation maps |
+| `results/champions/best_seeds.json` | Each method's better run on the validation maps, named in the report's tables |
 | `results/tables/`, `results/figures/` | Results tables (CSV and Markdown) and figures, including the network figure |
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
@@ -224,11 +224,12 @@ To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\resu
 
 ### Several machines
 
-A compiled run uses every processor and runs side by side share them, so several jobs side by side keep a machine
-busy through each run's map building and Keras phases, and several machines can share the experiment. The runs are independent
-and fixed by their seeds and settings, so where they train changes only their training times. Keras jobs come first:
-they train with 4 TensorFlow threads, and an evolution phase runs at the lowest priority (nice 19), using whatever
-processors the searches and DAgger refinements leave (specification §3.3).
+A compiled run uses every processor and runs side by side share them, so several jobs side by side keep a machine busy
+through each run's map building and Keras phases, and several machines can share the experiment. The runs are
+independent: run 0's results depend only on its seed and the settings, so where it trains changes only its training
+time, while run 1's also depend on chance. Keras jobs come first: they train with 4 TensorFlow threads, and an evolution
+phase runs at the lowest priority (nice 19), using whatever processors the searches and DAgger refinements leave
+(specification §3.3).
 
 **Side by side on one machine:**
 `python scripts/run_notebooks.py --runs nb:01,search:kt_random,baseline:0,ga:1 --at-once 8` runs these jobs: runs of
@@ -322,36 +323,39 @@ python -m racing.app
 
 On Windows 11 the window opens through WSLg.
 
-- **Training view:** choose an approach, run seed, difficulty and population size, then press Play (or Space).
-  Training follows the mastery rules and continues until Stop, which freezes the cars where they are. Training runs in
-  step with the replay: each generation is replayed once, then the next one trains, so the generation on screen is the
-  one just trained. The playback speed sets the pace; Pause freezes both. In the race view training runs at full
-  speed. The panel shows
-  the level, each map's success share against 90%, the streak, the target reduction and the population's mean sensor
-  length and steering sensitivity.
+- **Training view:** choose an approach, run (*0 (seeded)* or *1*), difficulty and population size, then press Play (or
+  Space). Training follows the mastery rules and continues until Stop, which freezes the cars where they are. Training
+  runs in step with the replay: each generation is replayed once, then the next one trains, so the generation on screen
+  is the one just trained. The playback speed sets the pace; Pause freezes both. In the race view training runs at full
+  speed. The panel shows the level, each map's success share against 90%, the streak, the target reduction and the
+  population's mean sensor length and steering sensitivity.
 - **Saved viewer training:** training started here is kept in `results/app_runs/<method>/seed<k>/`, separate from the
-  reported results. For GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and seed where
-  it stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a
-  saved run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New
-  run. Baseline and Keras Tuner training always start afresh.
+  reported results. For GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and run where it
+  stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a saved
+  run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New run.
+  Baseline and Keras Tuner training always start afresh.
 - **Watching a notebook run:** **Source: Notebook run** replays the latest generation of the reported run of the
-  selected method and seed (`scripts/run_notebooks.py`), with the same panel, plot and Show selector, so you can watch
-  the whole population or just the best car (Best, 1 car). When a replay ends, the newest generation is loaded, so a
-  run in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline
-  and Keras Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars
-  instead.
-- **Earlier revisions' runs:** the **Runs** button (beside Source, and in the race view beside Controllers) switches
-  between the current results and each archive in `results/archive/` (for example `revision3.1`). An archived run is
-  replayed, and its controllers race, on its own revision's maps (revision 3.1: one road width per level, 16, 14, 12
-  and 10 m, read from the archive's `run_info.json`), and its networks read only the inputs they were trained with
-  (revision 3.1: the nine rays and the speed). A run whose networks do not match the selected folder is named in the
-  status line instead. Training started in the viewer always uses the current results.
-- **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
-  line. For each method, choose its best seed, a specific seed, or off, then press Start race; Stop returns to the
-  start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training
-  run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*.
-  App cars start switched off, race next to the reported controllers when switched on (drawn with a white border),
-  and are never part of the reported results. When many cars race, the leaderboard lists as many as fit.
+  selected method and run (`scripts/run_notebooks.py`), with the same panel, plot and Show selector, so you can watch
+  the whole population or just the best car (Best, 1 car). When a replay ends, the newest generation is loaded, so a run
+  in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline and Keras
+  Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars instead.
+- **Earlier revisions' runs:** the **Runs** button (beside Source, and in the race view beside the Race control)
+  switches between the current results and each archive in `results/archive/` (for example `revision3.1`). An archived
+  run is replayed, and its controllers race, on its own revision's maps (revision 3.1: one road width per level, 16, 14,
+  12 and 10 m, read from the archive's `run_info.json`), and its networks read only the inputs they were trained with
+  (revision 3.1: the nine rays and the speed). Every run of an archive was seeded: the Run control reaches each of its
+  runs (an earlier revision may also hold run 2), and its cars are named by their seeds (*GA s0*, *GA s1*, …) and carry
+  no stripe. A run whose networks do not match the selected folder is named in the status line instead. Training started
+  in the viewer always uses the current results.
+- **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start line.
+  The **Race: all runs ▸** control chooses the runs that race: *all runs* (both runs of every method, up to 16 cars; the
+  default), *seeded runs* (run 0 of every method) or *unseeded runs* (run 1), and each method's button below it switches
+  that method on or off; both are kept while the viewer is open. Both runs of a method drive in its color; run 1 cars
+  carry a white stripe, and the leaderboard names run 0 *GA (seeded)* and run 1 *GA*. Press Start race; Stop returns to
+  the start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training
+  run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App
+  cars start switched off, race next to the reported controllers when switched on (drawn with a white border), and are
+  never part of the reported results. When many cars race, the leaderboard lists as many as fit.
 - **Grip:** *Normal* (12 m/s², the training grip) or *Unlimited* (120 m/s²) sets the grip of the cars you watch in
   both views. It never affects training or results.
 - **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.

@@ -8,6 +8,7 @@ import multiprocessing as mp
 import os
 import pickle
 import queue
+import secrets
 import signal
 import sys
 import threading
@@ -19,7 +20,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import numpy as np
 import pygame
 
-from racing import checkpoint, config, curriculum, netwindow, nets, paths, population, sim
+from racing import checkpoint, config, curriculum, netwindow, nets, paths, population, runs, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -356,8 +357,9 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
     if approach == "baseline":                         # resume=False: always train live, never skip (spec §10.6)
         imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False, report=False,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
-    else:
-        imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add, seed=seed, export_models=False,
+    else:                       # the search of the unseeded run takes a number from the operating system (spec §3.3)
+        imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add,
+                            seed=seed if runs.seeded(seed) else secrets.randbits(31), export_models=False,
                             resume=False, report=False)
     return 0
 
@@ -382,22 +384,24 @@ def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=
         sys.exit(code)
 
 
-def car_name(approach, seed, app=False):
+def car_name(approach, seed, app=False, archived=False):
     """A race car's name in the leaderboard, the network selector and the window title: run 0 'GA (seeded)', run 1
-    'GA', any other run (of an earlier revision) 'GA s2' (spec §10.3); an app car keeps its seed, 'GA (app) s1'
-    (spec §10.6)."""
+    'GA', any other run 'GA s2' (spec §10.3). Every run of an archive of an earlier revision was seeded, so there
+    each is named by its seed, 'GA s0', 'GA s1'; an app car keeps its seed, 'GA (app) s1' (spec §10.6)."""
     label = config.LABELS[approach]
     if app:
         return f"{label} (app) s{seed}"
+    if archived:
+        return f"{label} s{seed}"
     if seed == SEEDED_RUN:
         return f"{label} (seeded)"
     return label if seed == 1 else f"{label} s{seed}"
 
 
-def leaderboard_line(position, approach, seed, laps, last, best, status, app=False):
+def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False):
     """One leaderboard row: position, car name, laps completed, last/best lap time (s), status."""
     times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
-    return f"{position}. {car_name(approach, seed, app)}  lap {laps}  {times}  {status}"
+    return f"{position}. {car_name(approach, seed, app, archived)}  lap {laps}  {times}  {status}"
 
 
 def percent(value):
@@ -594,7 +598,7 @@ class App:
         self.halted = False
         self.latest, self.history, self.playback, self.playback_generation = None, self.saved_history(), None, None
         self.net_sent = None                                 # a new run's first report goes to the window
-        self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
+        self.status = f"Training {config.LABELS[self.approach]}, run {self.run_seed}."
 
     def toggle_play(self):
         if self.source == "notebook":                       # pauses only the replay of the notebook run
@@ -670,6 +674,8 @@ class App:
         if self.process is not None:
             return
         self.source = "notebook" if self.source == "app" else "app"
+        if self.run_seed not in self.run_choices():         # an archive's other run: training here has runs 0 and 1
+            self.run_seed = config.RUN_SEEDS[0]
         self.halted = False
         self.clear_view()
         self.status = "Looking for the notebook run." if self.source == "notebook" else "Press Play to start training."
@@ -683,6 +689,11 @@ class App:
 
     def folder_label(self):
         return f"Runs: {self.folder_name} ▸"
+
+    def archived(self):
+        """Whether the shown runs and controllers are an archive of an earlier revision, whose runs were all
+        seeded."""
+        return self.folder_name != "current"
 
     def cycle_folder(self):
         """Show the next results folder's notebook runs and controllers: the current results, then each archive of an
@@ -714,7 +725,7 @@ class App:
             return
         self.replay_polled = now
         path = self.replay_file()
-        name = f"{config.LABELS[self.approach]} seed {self.run_seed}"
+        name = f"{config.LABELS[self.approach]} run {self.run_seed}"
         try:
             stamp = path.stat().st_mtime_ns
         except OSError:
@@ -841,7 +852,9 @@ class App:
 
     def network_car_label(self):
         car = self.selected_car()
-        return "Network of: –" if car is None else f"Network of: {car_name(car[0], car[1], is_app(car))} ▸"
+        if car is None:
+            return "Network of: –"
+        return f"Network of: {car_name(car[0], car[1], is_app(car), self.archived())} ▸"
 
     def shown_network(self):
         """(identity, driver, title) of the network the window should show now, or None."""
@@ -858,7 +871,7 @@ class App:
                 driver, unit = report["population"].driver(int(np.argmax(report["fitness"]))), "generation"
             else:
                 driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
-            title = (f"{config.LABELS[approach]} · seed {seed} · {unit} {generation} · "
+            title = (f"{config.LABELS[approach]} · run {seed} · {unit} {generation} · "
                      f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
             return identity, driver, title
         car = self.selected_car()
@@ -873,8 +886,8 @@ class App:
             self.drop_car(car)
             self.status = f"Controller {car_method(car)} run {car[1]} could not be loaded; skipped."
             return None
-        return identity, driver, (f"{car_name(car[0], car[1], is_app(car))} · {driver.n_params:,} parameters"
-                                  f"{netwindow.netfig.setup_text(driver)}")
+        return identity, driver, (f"{car_name(car[0], car[1], is_app(car), self.archived())} · "
+                                  f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
 
     def poll_network_window(self):
         """Forget a window the user closed; send the shown network when it changed."""
@@ -906,11 +919,22 @@ class App:
         position = presets.index(current) if current in presets else 0
         self.population[self.approach] = presets[min(max(position + direction, 0), len(presets) - 1)]
 
+    def run_choices(self):
+        """The runs the run control cycles through: runs 0 and 1 for training here; for a notebook run also any other
+        run in the shown folder, such as an archive's run 2 (spec §10.2)."""
+        if self.source != "notebook":
+            return list(config.RUN_SEEDS)
+        return sorted({*config.RUN_SEEDS, *paths.run_seeds(self.approach, self.runs_dir)})
+
     def change_run_seed(self, direction):
         if self.process is not None:
             return
-        seeds = list(config.RUN_SEEDS)
-        self.run_seed = seeds[(seeds.index(self.run_seed) + direction) % len(seeds)]
+        seeds = self.run_choices()
+        if self.run_seed in seeds:
+            here = seeds.index(self.run_seed)
+        else:                                       # a run the shown folder does not hold: start at either end
+            here = -1 if direction > 0 else 0
+        self.run_seed = seeds[(here + direction) % len(seeds)]
         if self.source == "notebook":
             self.clear_view()
 
@@ -1039,7 +1063,7 @@ class App:
                                  setup=report_setup(report, self.indices), grip=self.grip)
         self.best_slot = int(np.argmax(fitness[self.indices]))
         if report is not self.playback_report and self.process is not None:
-            self.status = f"Training {config.LABELS[self.approach]}, seed {self.run_seed}."
+            self.status = f"Training {config.LABELS[self.approach]}, run {self.run_seed}."
         self.playback_report = report
         self.playback_generation = report["generation"]
         self.step_budget = 0.0
@@ -1358,6 +1382,7 @@ class App:
                                               cars.y[i] + np.sin(angles) * lengths[row])
                     for k in range(config.N_RAYS):
                         pygame.draw.line(self.screen, RAY, (sx[i], sy[i]), (ex[k], ey[k]), 1)
+        archived = self.archived()                      # every run of an archive was seeded: no stripe
         for i, car in enumerate(self.race_cars()):
             color = hex_to_rgb(config.COLORS[car[0]])
             if cars.crashed[i]:
@@ -1366,7 +1391,7 @@ class App:
             pygame.draw.polygon(self.screen, color, shape)
             if is_app(car):                                                # app cars: a white border
                 pygame.draw.polygon(self.screen, WHITE, shape, 3)
-            elif car[1] != SEEDED_RUN:                 # run 1 and up: a white stripe, rear to nose (spec §10.3)
+            elif car[1] != SEEDED_RUN and not archived:     # run 1 and up: a white stripe, rear to nose (§10.3)
                 (nose_x, nose_y), (left_x, left_y), (right_x, right_y) = shape
                 pygame.draw.line(self.screen, WHITE, ((left_x + right_x) / 2, (left_y + right_y) / 2),
                                  (nose_x, nose_y), 2)
@@ -1400,8 +1425,8 @@ class App:
             self.buttons.append((rect, action))
 
     def draw_speed_buttons(self, x, y, w):
-        """The playback speeds in one row, named on the left like the track and run seed rows. Returns the next
-        free y."""
+        """The playback speeds in one row, named on the left like the track and run rows. Returns the next free
+        y."""
         self.text("Playback speed", x, y + 5, self.small, MUTED)
         quarter = (w - 110 - 24) // 4
         for k, speed in enumerate(config.SPEEDS):
@@ -1450,10 +1475,11 @@ class App:
         self.button(pygame.Rect(x + half + 8, y, half, 26), self.folder_label(), self.cycle_folder,
                     self.folder_name != "current", enabled=idle and notebook)
         y += 34
-        self.text("Run seed", x, y + 5, self.small, MUTED)
+        self.text("Run", x, y + 5, self.small, MUTED)               # run 0 is the seeded run (spec §10.2)
         self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_run_seed(-1), enabled=idle)
-        self.text(str(self.run_seed), x + 152, y + 5)
-        self.button(pygame.Rect(x + 180, y, 30, 28), ">", lambda: self.change_run_seed(1), enabled=idle)
+        seeded = self.run_seed == SEEDED_RUN and not (notebook and self.archived())
+        self.text(f"{self.run_seed} (seeded)" if seeded else str(self.run_seed), x + 150, y + 5)
+        self.button(pygame.Rect(x + 240, y, 30, 28), ">", lambda: self.change_run_seed(1), enabled=idle)
         y += 36
         y = self.draw_difficulty(x, y, w, self.difficulty, self.set_difficulty, idle and not notebook)
         if self.approach in self.population and not notebook:
@@ -1615,8 +1641,8 @@ class App:
         for position, i, laps, last, best, status in shown:
             car = cars[i]
             self.swatch(car[0], pygame.Rect(x, y + 3, 10, 10))
-            y = self.text(leaderboard_line(position, car[0], car[1], laps, last, best, status, app=is_app(car)),
-                          x + 16, y, self.small)
+            y = self.text(leaderboard_line(position, car[0], car[1], laps, last, best, status, app=is_app(car),
+                                           archived=self.archived()), x + 16, y, self.small)
         if len(shown) < len(rows):
             self.text(f"… {len(rows) - len(shown)} more", x + 16, y, self.small, MUTED)
 

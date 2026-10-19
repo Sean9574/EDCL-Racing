@@ -817,8 +817,8 @@ def test_the_race_panel_has_the_race_control_and_a_switch_per_method(window, tmp
 
 
 def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monkeypatch, circle_track):
-    """An archive of an earlier revision may hold runs 0, 1 and 2; 'all' races every one, and the leaderboard
-    names run 2 'GA s2' (spec §10.3)."""
+    """An archive of an earlier revision may hold runs 0, 1 and 2; 'all' races every one. Every run of an archive
+    was seeded, so the leaderboard names each by its seed, 'GA s0' to 'GA s2' (spec §10.3)."""
     monkeypatch.setattr(viewer, "get_track", lambda seed, level, width=None: circle_track)
     folder = archive_folder(tmp_path, inputs=config.N_INPUTS)
     save_race_champions(folder / "champions", approaches=[("ga", 0), ("ga", 1), ("ga", 2)])
@@ -840,7 +840,7 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
     monkeypatch.setattr(window, "text", recording_text)
     window.draw()
     rows = [string for string in drawn if string[:1].isdigit() and ". " in string]
-    assert sorted(row.split("  lap")[0].split(". ", 1)[1] for row in rows) == ["GA", "GA (seeded)", "GA s2"]
+    assert sorted(row.split("  lap")[0].split(". ", 1)[1] for row in rows) == ["GA s0", "GA s1", "GA s2"]
     window.stop_race()
     window.cycle_race_runs()
     assert window.lineup == [("ga", 0)]
@@ -876,6 +876,37 @@ def test_run_1_cars_carry_a_white_stripe(window, tmp_path, monkeypatch):
     _, color, start, end, width = calls[stripes[0]]
     assert color == viewer.WHITE and width == 2 and end == nose
     assert start == pytest.approx(((left[0] + right[0]) / 2, (left[1] + right[1]) / 2))
+
+
+def test_an_archives_runs_are_named_by_their_seeds_and_carry_no_stripe(window, tmp_path, monkeypatch, circle_track):
+    """Every run of an archive of an earlier revision was seeded: its cars are named 'GA s0' and 'GA s1' and none
+    carries the run 1 stripe; the race control still races run 0, run 1 or all (spec §10.3)."""
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level, width=None: circle_track)
+    assert [viewer.car_name("ga", 0, archived=True), viewer.car_name("ga", 1, archived=True),
+            viewer.car_name("ga", 1, app=True, archived=True)] == ["GA s0", "GA s1", "GA (app) s1"]
+    folder = archive_folder(tmp_path, inputs=config.N_INPUTS)
+    save_race_champions(folder / "champions", approaches=[("ga", 0), ("ga", 1)])
+    save_race_champions(tmp_path / "champions", approaches=[("ga", 1)])
+    window.results_dir = tmp_path
+    window.set_mode("race")
+    window.cycle_folder()
+    window.update(1 / 60)
+    assert window.race_cars() == [("ga", 0), ("ga", 1)] and window.network_car_label() == "Network of: GA s0 ▸"
+    camera = window.view_camera(window.race.track, window.race)
+    lines = []
+    monkeypatch.setattr(viewer.pygame.draw, "line",
+                        lambda surface, color, start, end, width=1: lines.append((start, end)))
+    window.draw_racers(window.race, camera)
+    assert lines == []
+    window.cycle_race_runs()
+    assert window.lineup == [("ga", 0)]
+    window.cycle_race_runs()
+    assert window.lineup == [("ga", 1)]
+    window.cycle_folder()                                   # the current results: run 1 carries its stripe again
+    window.update(1 / 60)
+    assert window.race_cars() == [("ga", 1)]
+    window.draw_racers(window.race, window.view_camera(window.race.track, window.race))
+    assert len(lines) == 1 and window.network_car_label() == "Network of: GA ▸"
 
 
 def test_preview_waits_on_the_start_line_until_started(window, tmp_path):
@@ -1103,6 +1134,22 @@ def test_trainer_main_passes_seed_level_and_seeded_start(monkeypatch, tmp_path):
     assert calls["es"]["out_dir"] == tmp_path / "es_seeded" / "seed1" and calls["es"]["start_level"] == 2
 
 
+def test_the_viewers_search_of_run_0_is_seeded_and_of_run_1_is_not(monkeypatch, tmp_path):
+    """spec §3.3, §10.2: the viewer's own Keras Tuner search of run 0 is seeded with 0; run 1's takes a number from
+    the operating system each time, so it never replays."""
+    from racing import imitation
+    fake_imitation(monkeypatch, tmp_path)
+    seeds, drawn, real = [], [], viewer.secrets.randbits
+    monkeypatch.setattr(imitation, "run_tuner", lambda approach, data, **kwargs: seeds.append(kwargs["seed"]))
+    monkeypatch.setattr(viewer.secrets, "randbits", lambda bits: drawn.append((bits, real(bits))) or drawn[-1][1])
+    running = threading.Event()
+    running.set()
+    for run in (0, 1, 1):
+        viewer.trainer_main("kt_random", 0, run, 1, queue.Queue(), running)
+    assert seeds[0] == 0 and [bits for bits, _ in drawn] == [31, 31]
+    assert seeds[1:] == [value for _, value in drawn] and seeds[1] != seeds[2]
+
+
 def test_training_process_is_not_a_daemon(window, monkeypatch):
     created = {}
 
@@ -1133,6 +1180,7 @@ def test_training_process_is_not_a_daemon(window, monkeypatch):
     assert created["daemon"] is False and created["target"] is viewer.trainer_process
     assert created["args"][:4] == ("ga", config.GA_POP, config.RUN_SEEDS[1], 2)
     assert window.acks is not None and created["args"][-1] is window.acks     # the trainer waits for the replays
+    assert window.status == "Training GA, run 1."
 
 
 def test_stop_ends_the_trainer_process_group(window, monkeypatch):
@@ -1290,6 +1338,35 @@ def test_settings_are_locked_while_training(window):
     window.change_population(1)
     assert window.approach == "ga" and window.run_seed == config.RUN_SEEDS[0] and window.difficulty == 1
     assert window.population["ga"] == config.GA_POP
+
+
+def test_the_run_control_names_the_seeded_run(window, monkeypatch):
+    """spec §10.2: the training view's control reads 'Run', its value '0 (seeded)' for run 0 and '1' for run 1."""
+    drawn, text = [], window.text
+
+    def recording_text(string, x, y, font=None, color=viewer.INK):
+        drawn.append((string, x, font or window.font))
+        return text(string, x, y, font, color)
+
+    monkeypatch.setattr(window, "text", recording_text)
+    buttons = recording_buttons(window, monkeypatch)
+    window.draw()
+    strings = [string for string, _, _ in drawn]
+    assert "Run" in strings and "Run seed" not in strings
+    value, x, font = next(item for item in drawn if item[0] == "0 (seeded)")
+    later = next(rect for label, *_, rect in buttons if label == ">")
+    assert x + font.size(value)[0] < later.left                         # the value fits before the > button
+    drawn.clear()
+    window.change_run_seed(1)
+    window.draw()
+    assert "1" in [string for string, _, _ in drawn] and "0 (seeded)" not in [string for string, _, _ in drawn]
+
+
+def test_the_training_status_names_the_run(window, circle_track):
+    window.run_seed = 1
+    window.process = object()                           # a training process, never started
+    window.start_playback(ga_report(0), circle_track)
+    assert window.status == "Training GA, run 1."
 
 
 def test_seeded_es_without_the_dagger_baseline_shows_a_message(window, tmp_path):
@@ -1561,7 +1638,7 @@ def test_a_new_report_sends_exactly_one_message(net):
     assert len(sent(net)) == 1
     best = int(np.argmax(report["fitness"]))
     assert sent(net)[0]["graph"] == viewer.netwindow.netfig.network_graph(report["population"].driver(best))
-    assert sent(net)[0]["title"] == (f"GA · seed {net.run_seed} · generation 0 · "
+    assert sent(net)[0]["title"] == (f"GA · run {net.run_seed} · generation 0 · "
                                      f"{report['population'].driver(best).n_params:,} parameters · 50 m · ×1.00")
     net.receive(ga_report(1))
     net.update(1 / 60)
@@ -1597,7 +1674,7 @@ def test_an_unchanged_report_builds_no_driver_and_the_title_uses_the_report_seed
     net.run_seed = 99                                           # the selector changed after the run started
     for _ in range(5):
         net.update(1 / 60)
-    assert len(calls) == 1 and len(sent(net)) == 1 and " · seed 7 · " in sent(net)[0]["title"]
+    assert len(calls) == 1 and len(sent(net)) == 1 and " · run 7 · " in sent(net)[0]["title"]
 
 
 def test_network_window_titles_name_the_setup(net, tmp_path):
@@ -2204,6 +2281,46 @@ def test_the_notebook_view_replays_an_archived_run_on_its_revisions_maps(window,
     assert window.latest["generation"] == 5 and built == [10.0] and window.playback.cars.time > 0
     window.cycle_folder()                                                   # back to the current results
     assert window.runs_dir == tmp_path / "runs" and window.latest is None
+
+
+def test_the_notebook_view_replays_every_run_of_an_archive(window, tmp_path, monkeypatch, circle_track):
+    """An archive of an earlier revision may hold runs 0, 1 and 2: the run control of the notebook view cycles
+    through every run in the selected folder, while training started here keeps runs 0 and 1 (spec §10.2)."""
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level, width=None: circle_track)
+    archive_folder(tmp_path, inputs=config.N_INPUTS)
+    window.results_dir = tmp_path
+    notebook_view(window, tmp_path)
+    window.cycle_folder()
+    for run in (0, 1, 2):
+        save_replay(window, ga_report(4 + run), seed=run)
+    window.update(1 / 60)
+    assert window.latest["generation"] == 4
+    drawn, text = [], window.text
+    monkeypatch.setattr(window, "text", lambda string, *args: drawn.append(string) or text(string, *args))
+    window.draw()
+    assert "0" in drawn and "0 (seeded)" not in drawn                  # every run of an archive was seeded
+    window.change_run_seed(1)
+    window.change_run_seed(1)
+    window.update(1 / 60)
+    assert window.run_seed == 2 and window.latest["generation"] == 6
+    assert window.status == "Replaying the notebook run GA run 2."
+    window.change_run_seed(1)
+    assert window.run_seed == 0
+    window.change_run_seed(-1)
+    assert window.run_seed == 2
+    window.cycle_folder()                                   # the current results hold no run 2
+    window.update(1 / 60)
+    assert window.status == "Nothing to replay yet for GA run 2."
+    window.change_run_seed(-1)
+    assert window.run_seed == 1
+    window.cycle_folder()                                   # the archive again
+    window.change_run_seed(1)
+    assert window.run_seed == 2
+    window.toggle_source()                                  # training here: runs 0 and 1 only
+    assert window.source == "app" and window.run_seed == config.RUN_SEEDS[0]
+    window.change_run_seed(1)
+    window.change_run_seed(1)
+    assert window.run_seed == config.RUN_SEEDS[0]
 
 
 def test_an_archived_neat_run_of_other_inputs_is_named(window, tmp_path):

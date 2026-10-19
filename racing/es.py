@@ -95,7 +95,7 @@ def dagger_baseline(seed, runs_dir=None):
     from racing.backend import keras_cpu
     path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"     # paths.stage_path(..., "dagger")
     if not path.exists():
-        raise FileNotFoundError(f"no refined baseline for seed {seed} at {path}; run notebook 03 first")
+        raise FileNotFoundError(f"no refined baseline for run {seed} at {path}; run notebook 03 first")
     return nets.to_flat(keras_cpu().models.load_model(path))
 
 

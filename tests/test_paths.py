@@ -8,6 +8,13 @@ def test_run_and_search_directories(tmp_path):
     assert paths.search_dir("kt_random", tmp_path) == tmp_path / "kt_random" / "search"
 
 
+def test_run_seeds_are_the_run_folders_that_exist(tmp_path):
+    for name in ("seed2", "seed0", "seed10", "search", "seedx"):
+        (tmp_path / "ga" / name).mkdir(parents=True)
+    (tmp_path / "ga" / "seed3").write_text("not a folder")
+    assert paths.run_seeds("ga", tmp_path) == [0, 2, 10] and paths.run_seeds("es", tmp_path) == []
+
+
 def test_default_directories_follow_config(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
     monkeypatch.setattr(config, "CHAMPIONS_DIR", tmp_path / "champions")
