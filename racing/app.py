@@ -69,7 +69,7 @@ def needs_outline(color, background=WHITE):
 
 UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (spec §10.6)
 UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
-SEEDED_RUN = getattr(config, "SEEDED_RUN", 0)   # run 0 is the seeded run; the fallback goes once config defines it
+SEEDED_RUN = config.SEEDED_RUN               # run 0 is the seeded run (spec §3.3)
 RACE_RUNS = ("all", "seeded", "unseeded")       # the race control's choices, in cycling order (spec §10.3)
 
 
