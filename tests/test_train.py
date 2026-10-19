@@ -105,11 +105,11 @@ def test_every_approach_has_its_notebook():
 
 def test_runs_are_read_as_approach_and_seed():
     assert train.parse_runs("ga:1,neat:0") == [("ga", 1), ("neat", 0)]
-    assert train.parse_runs(" es_seeded:2 , es:0 ,") == [("es_seeded", 2), ("es", 0)]
+    assert train.parse_runs(" es_seeded:1 , es:0 ,") == [("es_seeded", 1), ("es", 0)]
 
 
 def test_imitation_runs_are_accepted():
-    assert train.parse_runs("baseline:0,kt_bayesian:2") == [("baseline", 0), ("kt_bayesian", 2)]
+    assert train.parse_runs("baseline:0,kt_bayesian:1") == [("baseline", 0), ("kt_bayesian", 1)]
 
 
 @pytest.mark.parametrize("text", ["nb:01", "ga:3", "ga", "ga:x", "ga:1,ga:1", "", " , "])
@@ -122,6 +122,16 @@ def test_main_trains_one_run_with_its_own_status_file(monkeypatch, tmp_path, cap
     seen = []
     monkeypatch.setattr(train, "train", lambda approach, seed: seen.append((approach, seed, config.STATUS_PATH)) or {
         "approach": approach, "seed": seed, "generations": 5})
-    assert train.main(["neat", "2", "--status", str(tmp_path / "neat-seed2.json")]) == 0
-    assert seen == [("neat", 2, tmp_path / "neat-seed2.json")]
+    assert train.main(["neat", "1", "--status", str(tmp_path / "neat-seed1.json")]) == 0
+    assert seen == [("neat", 1, tmp_path / "neat-seed1.json")]
     assert "'generations': 5" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("text", ["ga:2", "es_seeded:2", "kt_random:2"])
+def test_seed_2_is_no_run_any_more(text):
+    with pytest.raises(ValueError, match="0, 1"):
+        train.parse_run(text)
+
+
+def test_every_method_runs_twice():
+    assert config.RUN_SEEDS == (0, 1) and len(config.RUN_ORDER) == 2 * len(config.APPROACHES) == 16

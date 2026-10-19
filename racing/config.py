@@ -79,7 +79,7 @@ DATASET_SEED_RANGE = (1_000_000, 2_000_000)   # the imitation dataset's maps are
 DATASET_TRACKS = {1: 1, 2: 20, 3: 20, 4: 80}  # dataset maps per level (spec §7.3)
 TRAIN_SEED_START = 2_000_000                  # evolutionary and DAgger maps are drawn from here on (spec §4.6)
 SEEDED_RUN = 0               # run 0 uses seed 0 and replays exactly; every other run sets no seed (spec §3.3)
-RUN_SEEDS = (0, 1, 2)       # every method is run once per seed (spec §11)
+RUN_SEEDS = (0, 1)        # run 0 uses seed 0, run 1 sets no seed (spec §3.3, §11)
 SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 
 # --- Time trial, survival and levels (spec §9.2-9.4) ---

@@ -7,12 +7,6 @@ import pytest
 from racing import config, evaluate, nets, paths, population, sim
 
 
-@pytest.fixture(autouse=True)
-def runs_0_and_1(monkeypatch):
-    """The tables list the runs of config.RUN_SEEDS, which are runs 0 and 1 from specification 3.5 on (spec §3.3)."""
-    monkeypatch.setattr(config, "RUN_SEEDS", (0, 1))
-
-
 @pytest.fixture
 def fake_tracks(monkeypatch, circle_track):
     monkeypatch.setattr(evaluate, "get_track", lambda seed, level: circle_track)

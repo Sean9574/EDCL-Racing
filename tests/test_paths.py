@@ -36,7 +36,7 @@ def test_seeded_es_is_an_approach_with_its_own_color():
 
 def test_revision_parameters():
     assert config.MAX_EPOCHS == 150 and config.HYPERBAND_ITERATIONS == 1 and config.KT_BAYES_INITIAL == 10
-    assert config.RUN_SEEDS == (0, 1, 2) and config.SEARCH_SEED == 0
+    assert config.RUN_SEEDS == (0, 1) and config.SEARCH_SEED == 0
     assert config.GA_S_MIN == config.GA_S_MAX / 100
     assert list(config.DIFFICULTIES) == [1, 2, 3, 4] and config.PLAYBACK_BASE == 2.0
     assert config.DATASET_INFO_PATH == config.DATASET_PATH.with_name(f"{config.DATASET_PATH.stem}_info.json")

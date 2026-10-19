@@ -595,7 +595,7 @@ def test_the_monitor_shows_a_line_per_run_side_by_side(runner, tmp_path, monkeyp
     assert side_by_side(runner, tmp_path, jobs.parse_jobs("ga:0,es:0"), 2, fake_jobs(tmp_path, 1.5),
                         monitor=True, out=out) == 0
     text = out.getvalue()
-    assert "GA seed 0" in text and "ES seed 0" in text and "start ga:0" in text
+    assert "GA run 0" in text and "ES run 0" in text and "start ga:0" in text
 
 
 def wrap_monitor(init):

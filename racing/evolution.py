@@ -148,7 +148,7 @@ def truncate_log(path, generation, fields=LOG_FIELDS):
 
 
 def label(method, seed):
-    return f"{config.LABELS.get(method.approach, method.approach)} seed {seed}"
+    return f"{config.LABELS.get(method.approach, method.approach)} run {seed}"
 
 
 def milestone_text(event, method, seed, generation, level, tracker):

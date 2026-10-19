@@ -13,9 +13,9 @@
 at_once = 4
 workers = 6
 runs = ["neat:0", "neat:1", "nb:01", "search:kt_hyperband", "search:kt_random", "search:kt_bayesian",
-        "baseline:0", "baseline:1", "baseline:2", "kt_random:0", "kt_random:1", "kt_random:2",
-        "kt_hyperband:0", "kt_hyperband:1", "kt_hyperband:2", "kt_bayesian:0", "kt_bayesian:1", "kt_bayesian:2",
-        "es_seeded:0", "es_seeded:1", "es_seeded:2"]
+        "baseline:0", "baseline:1", "kt_random:0", "kt_random:1",
+        "kt_hyperband:0", "kt_hyperband:1", "kt_bayesian:0", "kt_bayesian:1",
+        "es_seeded:0", "es_seeded:1"]
 
 [machines.server]
 host = "sbrainard@10.0.11.14"
@@ -23,4 +23,4 @@ ssh = "ssh.exe"          # Windows' client: it reaches the school network throug
 dir = "ec-racing"        # the project folder, in the home folder on the server
 at_once = 3
 workers = 6
-runs = ["neat:2", "ga:0", "ga:1", "ga:2", "es:0", "es:1", "es:2"]
+runs = ["ga:0", "ga:1", "es:0", "es:1"]

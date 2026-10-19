@@ -80,7 +80,7 @@ class Fake:
 
     def machines(self):
         return [self.fleet.Machine("desktop", jobs.parse_jobs("ga:1,neat:0"), at_once=2, workers=6),
-                self.fleet.Machine("server", jobs.parse_jobs("ga:2,es_seeded:0"), at_once=3, workers=6, host="me@server",
+                self.fleet.Machine("server", jobs.parse_jobs("ga:0,es_seeded:0"), at_once=3, workers=6, host="me@server",
                                    ssh="ssh")]
 
     def server_project(self):
@@ -127,11 +127,11 @@ def write_plan(tmp_path, text):
 
 def test_the_plan_names_each_machines_runs(fake):
     plan = write_plan(fake.tmp, '[machines.here]\nat_once = 2\nruns = ["ga:1"]\n'
-                                '[machines.far]\nhost = "me@far"\nssh = "ssh.exe"\nworkers = 3\nruns = ["es:0", "neat:2"]\n')
+                                '[machines.far]\nhost = "me@far"\nssh = "ssh.exe"\nworkers = 3\nruns = ["es:0", "neat:1"]\n')
     here, far = fake.fleet.load_plan(plan)
     assert (here.local, here.runs, here.at_once, here.workers) == (True, jobs.parse_jobs("ga:1"), 2, 6)
     assert (far.local, far.host, far.ssh, far.dir, far.runs, far.at_once) == (False, "me@far", "ssh.exe", "ec-racing",
-                                                                              jobs.parse_jobs("es:0,neat:2"), 1)
+                                                                              jobs.parse_jobs("es:0,neat:1"), 1)
 
 
 @pytest.mark.parametrize("text, message", [
@@ -362,10 +362,10 @@ def test_start_opens_a_detached_session_on_every_machine(fake):
     assert fake.fleet.start(fake.machines(), out=out) == 0
     desktop, server = fake.session("desktop"), fake.session("server")
     assert f"EC_RACING_JOBS=6 {sys.executable} scripts/run_notebooks.py --runs ga:1,neat:0 --at-once 2" in desktop
-    assert ('"$HOME"/miniforge3/envs/ec-racing/bin/python scripts/run_notebooks.py --runs ga:2,es_seeded:0 '
+    assert ('"$HOME"/miniforge3/envs/ec-racing/bin/python scripts/run_notebooks.py --runs ga:0,es_seeded:0 '
             "--at-once 3") in server
     assert "-d -s fleet" in (fake.home("server") / ".tmux" / "calls").read_text()
-    assert "ga:2, es_seeded:0" in out.getvalue()
+    assert "ga:0, es_seeded:0" in out.getvalue()
 
 
 def test_a_session_runs_in_the_project_folder_and_stays_open(fake):
@@ -388,11 +388,11 @@ def test_an_ended_session_is_replaced_at_the_next_start(fake):
 # ----- status and stop -----
 
 def test_status_shows_every_run_in_training_and_the_latest_milestones(fake, monkeypatch):
-    monkeypatch.setattr(config, "RUN_ORDER", (("ga", 1), ("ga", 2), ("neat", 0), ("es_seeded", 0)))
+    monkeypatch.setattr(config, "RUN_ORDER", (("ga", 1), ("ga", 0), ("neat", 0), ("es_seeded", 0)))
     fake.ready_server()
     results = fake.server_project() / "results"
-    progress.write_status({"approach": "ga", "seed": 2, "level": 2, "generation": 40, "min_share": 0.5},
-                          results / "status" / "ga-seed2.json")
+    progress.write_status({"approach": "ga", "seed": 0, "level": 2, "generation": 40, "min_share": 0.5},
+                          results / "status" / "ga-seed0.json")
     progress.write_status({"approach": "es_seeded", "seed": 0, "level": 1, "generation": 9, "min_share": 0.1},
                           results / "status" / "es_seeded-seed0.json")
     (results / "run_log.txt").write_text("".join(f"milestone {k}\n" for k in range(10)))
@@ -400,7 +400,7 @@ def test_status_shows_every_run_in_training_and_the_latest_milestones(fake, monk
     assert fake.fleet.status(fake.machines(), out=out) == 0
     text = out.getvalue()
     assert "== desktop" in text and "== server (me@server)" in text and "runner: not running" in text
-    assert text.index("GA seed 2") < text.index("Seeded ES seed 0")
+    assert text.index("GA run 0") < text.index("Seeded ES run 0")
     assert "milestone 9" in text and "milestone 3" not in text
 
 
@@ -445,7 +445,7 @@ def finished_run(results, approach, seed, settings=None, champion=b"weights"):
 def test_collect_copies_the_servers_finished_runs_only(fake):
     fake.ready_server()
     server = fake.server_project() / "results"
-    finished_run(server, "ga", 2)
+    finished_run(server, "ga", 0)
     unfinished = server / "runs" / "es_seeded" / "seed0"
     unfinished.mkdir(parents=True)
     (unfinished / "checkpoint.pkl").write_bytes(b"state")
@@ -453,33 +453,33 @@ def test_collect_copies_the_servers_finished_runs_only(fake):
     out = io.StringIO()
     assert fake.fleet.collect(fake.machines(), out=out) == 0
     here = fake.desktop / "results"
-    assert (here / "runs" / "ga" / "seed2" / "log.csv").exists()
-    assert (here / "champions" / "ga" / "seed2.npy").read_bytes() == b"weights"
+    assert (here / "runs" / "ga" / "seed0" / "log.csv").exists()
+    assert (here / "champions" / "ga" / "seed0.npy").read_bytes() == b"weights"
     assert not (here / "runs" / "es_seeded").exists()
     assert (here / "machines" / "server" / "run_log.txt").read_text() == "server milestones\n"
-    assert "ga:2 copied" in out.getvalue() and "not finished yet: es_seeded:0" in out.getvalue()
+    assert "ga:0 copied" in out.getvalue() and "not finished yet: es_seeded:0" in out.getvalue()
     assert not (here / fake.fleet.INCOMING).exists() or not any((here / fake.fleet.INCOMING).iterdir())
     again = io.StringIO()
     assert fake.fleet.collect(fake.machines(), out=again) == 0
-    assert "ga:2 already here" in again.getvalue()
+    assert "ga:0 already here" in again.getvalue()
 
 
 def test_collect_never_replaces_a_different_run(fake):
     fake.ready_server()
-    finished_run(fake.server_project() / "results", "ga", 2)
+    finished_run(fake.server_project() / "results", "ga", 0)
     here = fake.desktop / "results"
-    finished_run(here, "ga", 2, champion=b"other weights")
-    (here / "runs" / "ga" / "seed2" / "summary.json").write_text('{"settings": {}, "other": 1}')
+    finished_run(here, "ga", 0, champion=b"other weights")
+    (here / "runs" / "ga" / "seed0" / "summary.json").write_text('{"settings": {}, "other": 1}')
     out = io.StringIO()
     assert fake.fleet.collect(fake.machines(), out=out) == 1
     assert "a different finished run is already" in out.getvalue()
-    assert (here / "champions" / "ga" / "seed2.npy").read_bytes() == b"other weights"
+    assert (here / "champions" / "ga" / "seed0.npy").read_bytes() == b"other weights"
 
 
 def test_collect_never_replaces_an_unfinished_copy(fake):
     fake.ready_server()
-    finished_run(fake.server_project() / "results", "ga", 2)
-    partial = fake.desktop / "results" / "runs" / "ga" / "seed2"
+    finished_run(fake.server_project() / "results", "ga", 0)
+    partial = fake.desktop / "results" / "runs" / "ga" / "seed0"
     partial.mkdir(parents=True)
     (partial / "checkpoint.pkl").write_bytes(b"mine")
     out = io.StringIO()
@@ -490,7 +490,7 @@ def test_collect_never_replaces_an_unfinished_copy(fake):
 
 def test_collect_refuses_a_run_made_with_other_settings(fake):
     fake.ready_server()
-    finished_run(fake.server_project() / "results", "ga", 2, settings={**checkpoint.settings_record(), "GRIP": 99.0})
+    finished_run(fake.server_project() / "results", "ga", 0, settings={**checkpoint.settings_record(), "GRIP": 99.0})
     out = io.StringIO()
     assert fake.fleet.collect(fake.machines(), out=out) == 1
     assert "GRIP" in out.getvalue() and not (fake.desktop / "results" / "runs" / "ga").exists()
@@ -503,17 +503,17 @@ def test_finish_waits_for_every_run(fake):
     assert fake.session("desktop") is None
 
 
-def test_finish_needs_all_24_runs_and_runs_the_notebooks_from_02(fake):
+def test_finish_needs_all_16_runs_and_runs_the_notebooks_from_02(fake):
     fake.ready_server()
     on_server = {job.label for job in fake.machines()[1].runs}
     for approach in config.APPROACHES:
         for seed in config.RUN_SEEDS:
             target = fake.server_project() if f"{approach}:{seed}" in on_server else fake.desktop
-            if (approach, seed) != ("kt_bayesian", 2):
+            if (approach, seed) != ("kt_bayesian", 1):
                 finished_run(target / "results", approach, seed)
-    with pytest.raises(fake.fleet.FleetError, match="kt_bayesian:2"):
+    with pytest.raises(fake.fleet.FleetError, match="kt_bayesian:1"):
         fake.fleet.finish(fake.machines(), out=io.StringIO())
-    finished_run(fake.desktop / "results", "kt_bayesian", 2)
+    finished_run(fake.desktop / "results", "kt_bayesian", 1)
     out = io.StringIO()
     assert fake.fleet.finish(fake.machines(), out=out) == 0
     assert f"{sys.executable} scripts/run_notebooks.py --from 02" in fake.session("desktop")
@@ -616,7 +616,7 @@ def test_a_dagger_run_from_a_server_joins_its_imitation_files_here(fake):
 # ----- the environment installs detached on the server -----
 
 def ga_server(fake):
-    return fake.fleet.Machine("server", jobs.parse_jobs("ga:2"), host="me@server", ssh="ssh")
+    return fake.fleet.Machine("server", jobs.parse_jobs("ga:0"), host="me@server", ssh="ssh")
 
 
 def git_repo(fake, monkeypatch):

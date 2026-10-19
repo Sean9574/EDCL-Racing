@@ -82,27 +82,27 @@ def test_duration():
 
 def test_evolution_line(order):
     line = progress.format_status(status())
-    assert line.startswith("[run 5/6] GA seed 1 · Hard · gen 412 · worst map 84% / 90% ")
+    assert line.startswith("[run 5/6] GA run 1 · Hard · gen 412 · worst map 84% / 90% ")
     assert progress.bar(0.84 / config.MASTERY_FRACTION) in line
     assert line.endswith(" · streak 1/3 · 2h 13m")
 
 
 def test_speed_push_line(order):
     line = progress.format_status(status(stage="speed push", level=4, target_reduction=0.143, elapsed=90061))
-    assert "GA seed 1 · Extra hard · speed push −14.3% · gen 412 · worst map" in line
+    assert "GA run 1 · Extra hard · speed push −14.3% · gen 412 · worst map" in line
     assert line.endswith("1d 1h 01m")
 
 
 def test_dagger_line(order):
     line = progress.format_status({"approach": "baseline", "seed": 1, "stage": "dagger", "level": 4, "round": 7,
                                    "checks": 16, "streak": 1, "elapsed": 2520})
-    assert line == "[run 2/6] Baseline seed 1 · DAgger round 7 · checks 16/20 · streak 1/3 · 0h 42m"
+    assert line == "[run 2/6] Baseline run 1 · DAgger round 7 · checks 16/20 · streak 1/3 · 0h 42m"
 
 
 def test_imitation_line(order):
     line = progress.format_status({"approach": "baseline", "seed": 1, "stage": "imitation", "epoch": 12,
                                    "val_accuracy": 0.9123, "best": 0.9156, "elapsed": 190})
-    assert line == "[run 2/6] Baseline seed 1 · imitation epoch 12 · val acc 91.2% (best 91.6%) · 0h 03m"
+    assert line == "[run 2/6] Baseline run 1 · imitation epoch 12 · val acc 91.2% (best 91.6%) · 0h 03m"
 
 
 def test_search_line(order):
@@ -114,7 +114,7 @@ def test_search_line(order):
 
 
 def test_incomplete_status_still_formats(order):
-    assert progress.format_status({"approach": "ga"}).startswith("[run –/6] GA seed ?")
+    assert progress.format_status({"approach": "ga"}).startswith("[run –/6] GA run ?")
     assert progress.format_status({"approach": "ga", "seed": 0, "min_share": None, "level": None})
     assert progress.format_status({})
 

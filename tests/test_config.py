@@ -16,10 +16,10 @@ def test_worker_count_rejects_values_that_are_not_a_positive_whole_number(value)
         config.worker_count({"EC_RACING_JOBS": value})
 
 
-def test_run_order_lists_the_24_counted_runs():
-    assert len(config.RUN_ORDER) == 24
-    assert config.RUN_ORDER[0] == ("baseline", 0) and config.RUN_ORDER[-1] == ("neat", 2)
-    assert config.RUN_ORDER.index(("ga", 1)) == 13
+def test_run_order_lists_the_16_counted_runs():
+    assert len(config.RUN_ORDER) == 16
+    assert config.RUN_ORDER[0] == ("baseline", 0) and config.RUN_ORDER[-1] == ("neat", 1)
+    assert config.RUN_ORDER.index(("ga", 1)) == 9
     assert config.STATUS_PATH.name == "status.json"      # the test fixture redirects the folder to a temporary one
 
 

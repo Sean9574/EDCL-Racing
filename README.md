@@ -13,9 +13,9 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
 Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
 its population must complete three laps within the target time, three generations in a row, on each level from Easy
 to Extra hard. In the speed push that follows, the target time is shortened by 2% at a time whenever 75% of the
-population beats it three generations in a row, until 300 generations pass without that. Every method runs with three
-seeds; results are reported as mean ± standard deviation. Every evolved car also evolves its own setup next to its
-network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and
+population beats it three generations in a row, until 300 generations pass without that. Every method is trained twice: run 0 is seeded (seed 0) and replays exactly, run 1 sets
+no seed, so its random choices differ every time; results are reported for both runs and their mean. Every evolved
+car also evolves its own setup next to its network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and
 lap time.
 
 Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
@@ -187,12 +187,12 @@ python -m racing.progress                            # live status; Ctrl+C stops
 | Notebook | Purpose |
 |---|---|
 | `01_dataset` | Expert dataset on freshly generated maps |
-| `02_imitation` | Baseline, Keras Tuner searches, training with each seed |
-| `03_dagger` | DAgger refinement and speed push of the four imitation methods, three seeds each |
-| `04_ga` | Genetic algorithm, three seeds |
-| `05_es` | Evolution strategy, three seeds |
-| `06_es_seeded` | Seeded evolution strategy, three seeds |
-| `07_neat` | NEAT, three seeds |
+| `02_imitation` | Baseline, Keras Tuner searches, training of runs 0 and 1 |
+| `03_dagger` | DAgger refinement and speed push of the four imitation methods, runs 0 and 1 each |
+| `04_ga` | Genetic algorithm, runs 0 and 1 |
+| `05_es` | Evolution strategy, runs 0 and 1 |
+| `06_es_seeded` | Seeded evolution strategy, runs 0 and 1 |
+| `07_neat` | NEAT, runs 0 and 1 |
 | `08_evaluate` | Tables and figures |
 
 The processor, worker count and thread setting, package versions, settings, code version (git commit) and notebook times are recorded
@@ -253,8 +253,8 @@ searches and runs complete and only reports them.
 
 **On several machines:** `scripts/fleet.py` starts, watches, stops and collects runs on the desktop and on servers
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
-workers each). The plan of revision 3.2 runs everything at once: the desktop the notebooks 01 and 02, the 12 DAgger
-runs, the seeded ES runs and two NEAT runs; the server one NEAT run, GA and ES. It runs on the desktop, in its Ubuntu shell with the `ec-racing` environment active. A server is reached
+workers each). The plan of revision 3.2 runs everything at once: the desktop the notebooks 01 and 02, the 8 DAgger
+runs, the seeded ES runs and two NEAT runs; the server GA and ES. It runs on the desktop, in its Ubuntu shell with the `ec-racing` environment active. A server is reached
 with Windows' `ssh.exe`, which goes through the school VPN (GlobalProtect); WSL's own `ssh` does not.
 
 Once, connect GlobalProtect and give the server Windows' SSH key, so that fleet.py can log in without a password:
@@ -275,7 +275,7 @@ python scripts/fleet.py status     # one line per run in training on every machi
 python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
 python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
 python scripts/fleet.py archive revision3.1   # every machine moves its earlier results to results/archive/revision3.1/
-python scripts/fleet.py finish     # once all 24 runs have finished: collect, then notebooks 02 to 08 here
+python scripts/fleet.py finish     # once all 16 runs have finished: collect, then notebooks 02 to 08 here
 ```
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit

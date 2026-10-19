@@ -87,7 +87,7 @@ def test_reported_training_shows_its_progress_and_logs_its_end(toy_data, tmp_pat
     status = progress.read_status()
     assert status["approach"] == "baseline" and status["seed"] == 1 and status["stage"] == "imitation"
     assert status["epoch"] == summary["epochs"] and status["best"] == pytest.approx(summary["val_accuracy"])
-    assert "Baseline seed 1: imitation trained" in config.RUN_LOG_PATH.read_text()
+    assert "Baseline run 1: imitation trained" in config.RUN_LOG_PATH.read_text()
 
 
 def test_viewer_training_reports_nothing(toy_data, tmp_path):
@@ -103,7 +103,7 @@ def test_a_retrained_network_shows_its_progress(monkeypatch, toy_data, tmp_path)
     imitation.retrain("kt_random", toy_data, seed=2, search=search, out_dir=tmp_path / "run", epochs=1)
     status = progress.read_status()
     assert status["approach"] == "kt_random" and status["seed"] == 2 and status["stage"] == "imitation"
-    assert "KT Random seed 2: imitation trained" in config.RUN_LOG_PATH.read_text()
+    assert "KT Random run 2: imitation trained" in config.RUN_LOG_PATH.read_text()
 
 
 def test_the_training_summary_is_synced_to_disk(monkeypatch, toy_data, tmp_path):

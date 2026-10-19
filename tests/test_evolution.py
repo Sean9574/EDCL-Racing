@@ -130,7 +130,7 @@ def test_a_stalled_run_still_saves_a_final_controller(evaluation, monkeypatch, t
     assert chosen == [config.TARGET_FACTOR] and summary["val_successes"] == 3
     assert summary["champion_path"] == str(paths.champion_path("ga", 0, champion_dir=tmp_path / "champions"))
     assert paths.champion_path("ga", 0, ".npy", tmp_path / "champions").exists()
-    assert "GA seed 0: stopped at generation 0" in config.RUN_LOG_PATH.read_text()
+    assert "GA run 0: stopped at generation 0" in config.RUN_LOG_PATH.read_text()
 
 
 def test_the_final_controller_comes_from_the_kept_cars_at_the_tightest_mastered_target(evaluation, monkeypatch,
@@ -228,8 +228,8 @@ def test_experiment_runs_report_status_and_milestones(evaluation, monkeypatch, t
     assert status["approach"] == "ga" and status["seed"] == 2 and status["stage"] == "evolution"
     assert status["level"] == 2 and status["generation"] == 3 and status["min_share"] == 1.0
     log = config.RUN_LOG_PATH.read_text()
-    assert "GA seed 2: started" in log and "Easy mastered at generation 2, now Medium" in log
-    assert "GA seed 2: finished" in log
+    assert "GA run 2: started" in log and "Easy mastered at generation 2, now Medium" in log
+    assert "GA run 2: finished" in log
 
 
 def test_viewer_and_pilot_runs_report_nothing(evaluation, tmp_path):

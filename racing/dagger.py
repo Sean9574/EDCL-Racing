@@ -134,12 +134,12 @@ def _save_model(model, path):
 def _finished_message(label, seed, state):
     rounds, best = state["round"], state["best_checks"]
     if state["outcome"] == "goal":
-        return (f"{label} seed {seed}: DAgger goal reached in round {rounds} "
+        return (f"{label} run {seed}: DAgger goal reached in round {rounds} "
                 f"({state['history'][-1]['checks']}/{config.DAGGER_MAPS} checks)")
     if state["outcome"] == "stalled":
-        return (f"{label} seed {seed}: DAgger stopped after {rounds} rounds without a new best "
+        return (f"{label} run {seed}: DAgger stopped after {rounds} rounds without a new best "
                 f"(best {best}/{config.DAGGER_MAPS} checks); the speed push starts from the best network")
-    return f"{label} seed {seed}: DAgger stopped at the round limit ({rounds} rounds, best {best}/{config.DAGGER_MAPS})"
+    return f"{label} run {seed}: DAgger stopped at the round limit ({rounds} rounds, best {best}/{config.DAGGER_MAPS})"
 
 
 def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rounds=None):

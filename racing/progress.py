@@ -120,7 +120,7 @@ def accuracy(value):
 
 def format_status(status):
     """The one-line status, for example
-    '[run 14/24] GA seed 1 · Hard · gen 412 · worst map 84% / 90% ███████████████▊     · streak 1/3 · 2h 13m'."""
+    '[run 14/16] GA run 1 · Hard · gen 412 · worst map 84% / 90% ███████████████▊     · streak 1/3 · 2h 13m'."""
     status = status or {}
     approach, seed = status.get("approach"), status.get("seed")
     name = config.LABELS.get(approach, approach or "?")
@@ -131,7 +131,7 @@ def format_status(status):
         return " · ".join([f"[search] {name}", trials, f"best val acc {accuracy(status.get('best'))}",
                            duration(status.get("elapsed"))])
     position, total = run_number(approach, seed)
-    parts = [f"[run {position or '–'}/{total}] {name} seed {'?' if seed is None else seed}"]
+    parts = [f"[run {position or '–'}/{total}] {name} run {'?' if seed is None else seed}"]
     streak = status.get("streak", 0)
     if stage == "imitation":
         parts += [f"imitation epoch {status.get('epoch', '?')}",

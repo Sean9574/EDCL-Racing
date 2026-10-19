@@ -124,7 +124,7 @@ def finish_run(approach, seed, model, history, wall_time, out_dir, extra=None, r
                "settings": checkpoint.settings_record()}
     checkpoint.write_json(Path(out_dir) / "summary.json", summary)
     if report:
-        progress.milestone(f"{config.LABELS[approach]} seed {seed}: imitation trained, {summary['epochs']} epochs, "
+        progress.milestone(f"{config.LABELS[approach]} run {seed}: imitation trained, {summary['epochs']} epochs, "
                            f"val accuracy {progress.accuracy(summary['val_accuracy'])}")
     return summary
 
