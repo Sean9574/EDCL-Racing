@@ -71,7 +71,7 @@ def needs_outline(color, background=WHITE):
 UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (spec §10.6)
 UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
 SEEDED_RUN = config.SEEDED_RUN               # run 0 is the seeded run (spec §3.3)
-RACE_RUNS = ("all", "seeded", "unseeded")       # the race control's choices, in cycling order (spec §10.3)
+RACE_RUNS = ("best", "all", "seeded", "unseeded")       # the race control's choices, in cycling order (spec §10.3)
 
 
 def is_app(car):
@@ -385,8 +385,8 @@ def trainer_process(approach, size, seed, level, reports, running, app_runs_dir=
 
 
 def car_name(approach, seed, app=False, archived=False):
-    """A race car's name in the leaderboard, the network selector and the window title: run 0 'GA (seeded)', run 1
-    'GA', any other run 'GA s2' (spec §10.3). Every run of an archive of an earlier revision was seeded, so there
+    """A race car's name in the leaderboard, the network selector and the window title: run 0 'GA (seeded)', runs 1
+    to 3 'GA r1' to 'GA r3' (spec §10.3). Every run of an archive of an earlier revision was seeded, so there
     each is named by its seed, 'GA s0', 'GA s1'; an app car keeps its seed, 'GA (app) s1' (spec §10.6)."""
     label = config.LABELS[approach]
     if app:
@@ -395,7 +395,7 @@ def car_name(approach, seed, app=False, archived=False):
         return f"{label} s{seed}"
     if seed == SEEDED_RUN:
         return f"{label} (seeded)"
-    return label if seed == 1 else f"{label} s{seed}"
+    return f"{label} r{seed}"
 
 
 def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False):
@@ -535,7 +535,8 @@ class App:
         self.race_index = 0                 # into config.TEST_SEEDS
         self.race_level = config.MAX_LEVEL
         self.race_available = {}            # approach -> run seeds with a saved controller
-        self.race_runs = "all"              # the runs that race: "seeded", "unseeded" or "all" (spec §10.3)
+        self.race_runs = "best"             # the runs that race: "best", "all", "seeded" or "unseeded" (spec §10.3)
+        self.best = {}                      # approach -> best run seed recorded by the evaluation (spec §11.1)
         self.race_on = {}                   # approach -> whether its runs race
         self.drivers = {}                   # (approach, seed) -> DenseNet
         self.lineup = []                    # (approach, seed) of the cars in the race
@@ -1100,12 +1101,24 @@ class App:
 
     # ----- race view -----
     def load_race(self):
-        """Find the saved final controllers and app cars (spec §10.3, §10.6). The runs control and the methods'
-        switches are kept while the view is open; a method seen for the first time is switched on."""
+        """Find the saved final controllers, each method's best run and the app cars (spec §10.3, §10.6). The runs
+        control and the methods' switches are kept while the view is open; a method seen for the first time is
+        switched on. Without a readable best-run record, best races run 0."""
         self.race_available = nets.champion_seeds(self.champions_dir)
         self.app_available = nets.champion_seeds(self.app_champions_dir)
         self.drivers = {}
         self.failed = set()
+        self.best = {}
+        note = ""
+        best_path = paths.best_seeds_path(self.champions_dir)
+        if best_path.exists():
+            try:
+                for approach, seed in json.loads(best_path.read_text()).items():
+                    if isinstance(seed, int) and not isinstance(seed, bool):
+                        self.best[approach] = seed
+            except (ValueError, TypeError, AttributeError, OSError):
+                self.best = {}
+                note = f"{best_path.name} could not be read; best races run {SEEDED_RUN}."
         for approach in self.race_available:
             self.race_on.setdefault(approach, True)
         kept_app = self.app_choice
@@ -1116,26 +1129,29 @@ class App:
         if not self.race_available and not self.app_available:
             self.status = f"No trained controllers found in {self.champions_dir}."
         else:
-            self.status = "Race view."
+            self.status = note or "Race view."
         self.reset_race()
 
     def race_seeds(self, approach):
-        """The saved runs of `approach` that race (spec §10.3): run 0 for 'seeded', run 1 for 'unseeded', every
-        saved run for 'all'; none when the approach is switched off."""
+        """The saved runs of `approach` that race (spec §10.3): its best run for 'best' (run 0 without a record),
+        run 0 for 'seeded', runs 1 to 3 for 'unseeded', every saved run for 'all'; none when it is switched off."""
         if not self.race_on.get(approach, True):
             return []
         saved = self.race_available[approach]
+        if self.race_runs == "best":
+            choice = self.best.get(approach, SEEDED_RUN)
+            return [choice] if choice in saved else saved[:1]
         if self.race_runs == "seeded":
             return [seed for seed in saved if seed == SEEDED_RUN]
         if self.race_runs == "unseeded":
-            return [seed for seed in saved if seed == 1]
+            return [seed for seed in saved if seed != SEEDED_RUN]
         return list(saved)
 
     def race_runs_label(self):
         return f"Race: {self.race_runs} runs ▸"
 
     def cycle_race_runs(self):
-        """Race all runs, the seeded runs or the unseeded runs (spec §10.3). Not during a race."""
+        """Race the best runs, all runs, the seeded runs or the unseeded runs (spec §10.3). Not during a race."""
         if self.racing:
             return
         self.race_runs = RACE_RUNS[(RACE_RUNS.index(self.race_runs) + 1) % len(RACE_RUNS)]
@@ -1610,7 +1626,7 @@ class App:
                     enabled=bool(self.race_cars()))
         y += 28
         self.button(pygame.Rect(x, y, half, 22), self.race_runs_label(), self.cycle_race_runs,
-                    self.race_runs != "all", enabled=idle)
+                    self.race_runs != "best", enabled=idle)
         self.button(pygame.Rect(x + half + 8, y, half, 22), self.folder_label(), self.cycle_folder,
                     self.folder_name != "current", enabled=idle)
         y += 26

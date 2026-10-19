@@ -746,23 +746,63 @@ def save_race_champions(directory, approaches=(("es", 0), ("ga", 0), ("ga", 1)))
 def race_window(window, tmp_path):
     save_race_champions(tmp_path)                                           # es run 0, ga runs 0 and 1
     window.champions_dir = tmp_path
+    window.race_runs = "all"                                                # the default best races one run each
     window.set_mode("race")
     return window
 
 
-def test_the_race_control_races_the_seeded_the_unseeded_or_all_runs(window, tmp_path):
-    """spec §10.3: seeded races run 0, unseeded run 1, all every saved run; all is the default."""
-    race_window(window, tmp_path)
+def champions_0_to_3(window, tmp_path, best=None):
+    """Controllers: ga runs 0-3 and es runs 0-1, and optionally the evaluation's best-run record."""
+    save_race_champions(tmp_path, approaches=[("es", 0), ("es", 1)] + [("ga", run) for run in range(4)])
+    if best is not None:
+        paths.best_seeds_path(tmp_path).write_text(best)
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+
+
+def test_best_races_each_methods_best_run_and_is_the_default(window, tmp_path):
+    """spec §10.3: best races the run the evaluation recorded as each method's best; best is the default."""
+    champions_0_to_3(window, tmp_path, best='{"ga": 2, "es": 0}')
+    assert window.race_runs == "best" and window.race_runs_label() == "Race: best runs ▸"
+    assert window.best == {"ga": 2, "es": 0}
+    assert window.lineup == [("es", 0), ("ga", 2)]
+    assert window.status == "Race view."
+
+
+@pytest.mark.parametrize("record", [None, '{"ga": ', '[1, 2]', '{"ga": "2", "es": true, "neat": 3}'])
+def test_best_falls_back_to_run_0_without_a_readable_record(window, tmp_path, record):
+    """No record, a corrupt one, non-integer values, or a run that was not saved: run 0 of each method."""
+    champions_0_to_3(window, tmp_path, best=record)
+    assert window.lineup == [("es", 0), ("ga", 0)]
+    if record in ('{"ga": ', '[1, 2]'):
+        assert window.best == {} and "best_seeds.json could not be read" in window.status
+    else:
+        assert "could not be read" not in window.status
+
+
+def test_best_without_the_recorded_run_saved_races_the_lowest_saved_run(window, tmp_path):
+    save_race_champions(tmp_path, approaches=[("ga", 1), ("ga", 2), ("es", 0)])
+    paths.best_seeds_path(tmp_path).write_text('{"ga": 3}')
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+    assert window.lineup == [("es", 0), ("ga", 1)]
+
+
+def test_unseeded_races_runs_1_to_3_and_all_races_every_run(window, tmp_path):
+    """spec §10.3: the control cycles best, all, seeded, unseeded."""
+    champions_0_to_3(window, tmp_path, best='{"ga": 2, "es": 0}')
+    assert window.lineup == [("es", 0), ("ga", 2)]
+    window.cycle_race_runs()
     assert window.race_runs == "all" and window.race_runs_label() == "Race: all runs ▸"
-    assert window.lineup == [("es", 0), ("ga", 0), ("ga", 1)]              # approach order, then run
+    assert window.lineup == [("es", 0), ("es", 1)] + [("ga", run) for run in range(4)]
     window.cycle_race_runs()
     assert window.race_runs == "seeded" and window.lineup == [("es", 0), ("ga", 0)]
     assert window.race_runs_label() == "Race: seeded runs ▸"
     window.cycle_race_runs()
-    assert window.race_runs == "unseeded" and window.lineup == [("ga", 1)]
+    assert window.race_runs == "unseeded" and window.lineup == [("es", 1), ("ga", 1), ("ga", 2), ("ga", 3)]
     assert window.race_runs_label() == "Race: unseeded runs ▸"
     window.cycle_race_runs()
-    assert window.race_runs == "all" and set(window.lineup) == {("ga", 0), ("ga", 1), ("es", 0)}
+    assert window.race_runs == "best" and window.lineup == [("es", 0), ("ga", 2)]
 
 
 def test_a_method_can_be_switched_off(window, tmp_path):
@@ -823,6 +863,7 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
     folder = archive_folder(tmp_path, inputs=config.N_INPUTS)
     save_race_champions(folder / "champions", approaches=[("ga", 0), ("ga", 1), ("ga", 2)])
     window.results_dir = tmp_path
+    window.race_runs = "all"
     window.set_mode("race")
     window.cycle_folder()
     assert window.race_available == {"ga": [0, 1, 2]}
@@ -845,13 +886,13 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
     window.cycle_race_runs()
     assert window.lineup == [("ga", 0)]
     window.cycle_race_runs()
-    assert window.lineup == [("ga", 1)]
+    assert window.lineup == [("ga", 1), ("ga", 2)]                         # unseeded: every run but run 0
 
 
 def test_the_leaderboard_names_the_seeded_run():
     assert viewer.leaderboard_line(1, "ga", 0, 2, 50.0, 49.0, "racing").startswith("1. GA (seeded) lap 2")
-    assert viewer.leaderboard_line(2, "ga", 1, 2, 50.0, 49.0, "racing").startswith("2. GA lap 2")
-    assert viewer.leaderboard_line(3, "ga", 2, 2, 50.0, 49.0, "racing").startswith("3. GA s2 lap 2")
+    assert viewer.leaderboard_line(2, "ga", 1, 2, 50.0, 49.0, "racing").startswith("2. GA r1 lap 2")
+    assert viewer.leaderboard_line(3, "ga", 2, 2, 50.0, 49.0, "racing").startswith("3. GA r2 lap 2")
     assert viewer.leaderboard_line(4, "ga", 0, 2, 50.0, 49.0, "racing", app=True).startswith("4. GA (app) s0 lap 2")
 
 
@@ -888,6 +929,7 @@ def test_an_archives_runs_are_named_by_their_seeds_and_carry_no_stripe(window, t
     save_race_champions(folder / "champions", approaches=[("ga", 0), ("ga", 1)])
     save_race_champions(tmp_path / "champions", approaches=[("ga", 1)])
     window.results_dir = tmp_path
+    window.race_runs = "all"
     window.set_mode("race")
     window.cycle_folder()
     window.update(1 / 60)
@@ -906,7 +948,7 @@ def test_an_archives_runs_are_named_by_their_seeds_and_carry_no_stripe(window, t
     window.update(1 / 60)
     assert window.race_cars() == [("ga", 1)]
     window.draw_racers(window.race, window.view_camera(window.race.track, window.race))
-    assert len(lines) == 1 and window.network_car_label() == "Network of: GA ▸"
+    assert len(lines) == 1 and window.network_car_label() == "Network of: GA r1 ▸"
 
 
 def test_preview_waits_on_the_start_line_until_started(window, tmp_path):
@@ -959,20 +1001,8 @@ def test_race_draws_a_leaderboard_and_fits_the_window(window, tmp_path):
     assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
 
 
-@pytest.mark.parametrize("record", ['{"ga": ', '{"ga": 1, "es": 5}'])
-def test_the_race_view_no_longer_reads_best_seeds(window, tmp_path, record):
-    """spec §10.3: the evaluation's best-seed record does not choose the racers, readable or not."""
-    save_race_champions(tmp_path)
-    (tmp_path / "best_seeds.json").write_text(record)
-    window.champions_dir = tmp_path
-    window.set_mode("race")
-    assert window.lineup == [("es", 0), ("ga", 0), ("ga", 1)] and window.status == "Race view."
-
-
 def test_unreadable_controller_is_skipped(window, tmp_path):
-    save_race_champions(tmp_path)
-    window.champions_dir = tmp_path
-    window.set_mode("race")
+    race_window(window, tmp_path)
     paths.champion_path("ga", 0, champion_dir=tmp_path).write_bytes(b"garbage")
     paths.champion_path("ga", 0, ".npy", tmp_path).unlink()
     window.update(1 / 60)
@@ -997,6 +1027,7 @@ def test_champions_saved_later_are_picked_up(window, tmp_path):
     assert "No trained controllers" in window.status
     window.set_mode("train")
     save_race_champions(tmp_path)
+    window.race_runs = "all"
     window.set_mode("race")
     assert window.race_available == {"es": [0], "ga": [0, 1]}
     assert window.lineup == [("es", 0), ("ga", 0), ("ga", 1)]
@@ -1241,7 +1272,7 @@ def test_leaderboard_lines_fit_the_panel(window):
                 assert window.small.size(line)[0] <= width - 4, line      # 4 px to spare: fonts differ by machine
     line = viewer.leaderboard_line(1, "kt_hyperband", 0, 1, 52.31, 51.94, "racing")
     assert line == "1. KT Hyperband (seeded) lap 1 52.3/51.9 racing"
-    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA lap 0 –/– ready"
+    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA r1 lap 0 –/– ready"
 
 
 def test_race_panel_text_fits_the_panel(window, tmp_path, monkeypatch):
@@ -1287,12 +1318,13 @@ def test_a_race_of_every_method_fits_the_panel(window, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("size", [config.WINDOW_SIZE, (1920, 1080)])
 def test_a_race_of_both_runs_of_every_method_fits_the_panel(window, tmp_path, monkeypatch, size):
-    """16 cars, all runs being the default (spec §10.3): the panel fits and, from the default window up, the
+    """16 cars, the race control on all runs (spec §10.3): the panel fits and, from the default window up, the
     leaderboard shows every car; the method switches form a grid of three columns."""
     window.screen = pygame.display.set_mode(size)
     window.layout()
     save_race_champions(tmp_path, approaches=[(approach, run) for approach in config.APPROACHES for run in (0, 1)])
     window.champions_dir = tmp_path
+    window.race_runs = "all"
     window.set_mode("race")
     window.update(1 / 60)
     window.start_race()
@@ -1764,8 +1796,8 @@ def test_the_network_buttons_fit_both_panels(net, tmp_path):
 def test_the_network_window_names_race_cars_as_the_leaderboard_does(net, tmp_path):
     """spec §10.3: one name per car in the leaderboard, the network selector and the window title."""
     assert [viewer.car_name("ga", 0), viewer.car_name("ga", 1), viewer.car_name("ga", 2),
-            viewer.car_name("ga", 1, app=True)] == ["GA (seeded)", "GA", "GA s2", "GA (app) s1"]
-    assert viewer.leaderboard_line(5, "ga", 1, 0, float("nan"), float("nan"), "ready").startswith("5. GA lap 0")
+            viewer.car_name("ga", 1, app=True)] == ["GA (seeded)", "GA r1", "GA r2", "GA (app) s1"]
+    assert viewer.leaderboard_line(5, "ga", 1, 0, float("nan"), float("nan"), "ready").startswith("5. GA r1 lap 0")
     app_race_window(net, tmp_path)                          # reported: es 0, ga 0, ga 1; app cars: ga 2, neat 0
     net.cycle_app_choice("ga")
     net.toggle_network_window()
@@ -1775,7 +1807,7 @@ def test_the_network_window_names_race_cars_as_the_leaderboard_does(net, tmp_pat
         names.append((net.network_car_label(), sent(net)[-1]["title"].split(" · ")[0]))
         net.cycle_network_car()
     assert names == [("Network of: ES (seeded) ▸", "ES (seeded)"), ("Network of: GA (seeded) ▸", "GA (seeded)"),
-                     ("Network of: GA ▸", "GA"), ("Network of: GA (app) s2 ▸", "GA (app) s2")]
+                     ("Network of: GA r1 ▸", "GA r1"), ("Network of: GA (app) s2 ▸", "GA (app) s2")]
 
 
 # ----- saved application runs (spec §10.6) -----
@@ -2010,6 +2042,7 @@ def app_race_window(window, tmp_path):
     save_race_champions(tmp_path)                                         # reported: es 0, ga 0, ga 1
     save_race_champions(window.app_champions_dir, approaches=[("ga", 2), ("neat", 0)])
     window.champions_dir = tmp_path
+    window.race_runs = "all"
     window.set_mode("race")
     return window
 
@@ -2072,7 +2105,7 @@ def test_app_cars_are_labelled_in_the_network_selector_and_leaderboard(net, tmp_
         net.cycle_network_car()
     assert net.network_car_label() == "Network of: NEAT (app) s0 ▸"
     assert viewer.leaderboard_line(3, "neat", 0, 1, 31.0, 30.5, "racing", app=True).startswith("3. NEAT (app) s0 lap 1")
-    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA lap 0 –/– ready"
+    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA r1 lap 0 –/– ready"
 
 
 def test_a_failed_app_car_is_dropped_with_a_message(window, tmp_path):
@@ -2487,3 +2520,47 @@ def test_the_viewer_ships_its_font():
     pygame.font.init()
     font = pygame.font.Font(str(config.FONT_PATH), 13)
     assert font.size("16. KT Hyperband (seeded) lap 3 888.9/1000.0 finished")[0] <= 332 - 4
+
+
+def test_runs_1_to_3_are_named_r1_to_r3():
+    assert viewer.car_name("ga", 0) == "GA (seeded)" and viewer.car_name("ga", 1) == "GA r1"
+    assert viewer.car_name("ga", 3) == "GA r3" and viewer.car_name("ga", 2, archived=True) == "GA s2"
+    assert viewer.car_name("ga", 1, app=True) == "GA (app) s1"
+
+
+def test_a_race_of_all_32_runs_shows_the_rows_that_fit_then_a_count(window, tmp_path, monkeypatch):
+    """spec §10.3: 8 methods x 4 runs at 1280x800 show as many rows as fit, then '… N more', nothing overlapping;
+    the default best (8 cars) shows every row."""
+    window.screen = pygame.display.set_mode((1280, 800))
+    window.layout()
+    save_race_champions(tmp_path, approaches=[(approach, run) for approach in config.APPROACHES for run in range(4)])
+    window.champions_dir = tmp_path
+    window.set_mode("race")
+
+    def panel(cars):
+        window.update(1 / 60)
+        window.start_race()
+        window.update(1 / 60)
+        assert len(window.race.cars.x) == cars
+        drawn, text = [], window.text
+
+        def recording_text(string, x, y, font=None, color=viewer.INK):
+            drawn.append((string, x, y, font or window.font))
+            return text(string, x, y, font, color)
+
+        monkeypatch.setattr(window, "text", recording_text)
+        window.buttons = []
+        window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
+        for string, x, y, font in drawn:
+            assert y + font.get_linesize() <= window.panel.bottom - 30 - 4, string
+            assert x + font.size(string)[0] <= window.panel.right - 16, string
+        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
+        window.stop_race()
+        return ([string for string, *_ in drawn if string[:1].isdigit() and ". " in string],
+                [string for string, *_ in drawn if string.startswith("… ")])
+
+    rows, more = panel(8)                                                   # best: one run per method
+    assert len(rows) == 8 and more == []
+    window.cycle_race_runs()                                                # all
+    rows, more = panel(32)
+    assert 0 < len(rows) < 32 and more == [f"… {32 - len(rows)} more"]
