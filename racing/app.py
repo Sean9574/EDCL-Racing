@@ -401,7 +401,7 @@ def car_name(approach, seed, app=False, archived=False):
 def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False):
     """One leaderboard row: position, car name, laps completed, last/best lap time (s), status."""
     times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
-    return f"{position}. {car_name(approach, seed, app, archived)}  lap {laps}  {times}  {status}"
+    return f"{position}. {car_name(approach, seed, app, archived)} lap {laps} {times} {status}"
 
 
 def percent(value):

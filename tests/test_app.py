@@ -840,7 +840,7 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
     monkeypatch.setattr(window, "text", recording_text)
     window.draw()
     rows = [string for string in drawn if string[:1].isdigit() and ". " in string]
-    assert sorted(row.split("  lap")[0].split(". ", 1)[1] for row in rows) == ["GA s0", "GA s1", "GA s2"]
+    assert sorted(row.split(" lap")[0].split(". ", 1)[1] for row in rows) == ["GA s0", "GA s1", "GA s2"]
     window.stop_race()
     window.cycle_race_runs()
     assert window.lineup == [("ga", 0)]
@@ -849,10 +849,10 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
 
 
 def test_the_leaderboard_names_the_seeded_run():
-    assert viewer.leaderboard_line(1, "ga", 0, 2, 50.0, 49.0, "racing").startswith("1. GA (seeded)  lap 2")
-    assert viewer.leaderboard_line(2, "ga", 1, 2, 50.0, 49.0, "racing").startswith("2. GA  lap 2")
-    assert viewer.leaderboard_line(3, "ga", 2, 2, 50.0, 49.0, "racing").startswith("3. GA s2  lap 2")
-    assert viewer.leaderboard_line(4, "ga", 0, 2, 50.0, 49.0, "racing", app=True).startswith("4. GA (app) s0  lap 2")
+    assert viewer.leaderboard_line(1, "ga", 0, 2, 50.0, 49.0, "racing").startswith("1. GA (seeded) lap 2")
+    assert viewer.leaderboard_line(2, "ga", 1, 2, 50.0, 49.0, "racing").startswith("2. GA lap 2")
+    assert viewer.leaderboard_line(3, "ga", 2, 2, 50.0, 49.0, "racing").startswith("3. GA s2 lap 2")
+    assert viewer.leaderboard_line(4, "ga", 0, 2, 50.0, 49.0, "racing", app=True).startswith("4. GA (app) s0 lap 2")
 
 
 def test_run_1_cars_carry_a_white_stripe(window, tmp_path, monkeypatch):
@@ -1238,10 +1238,10 @@ def test_leaderboard_lines_fit_the_panel(window):
             for status in ("ready", "racing", "finished", "crashed", "stopped"):
                 line = viewer.leaderboard_line(2 * len(config.APPROACHES), approach, seed, config.RACE_LAPS, 888.88,
                                                999.99, status, app=app)
-                assert window.small.size(line)[0] <= width, line
+                assert window.small.size(line)[0] <= width - 8, line      # 8 px to spare: fonts differ by machine
     line = viewer.leaderboard_line(1, "kt_hyperband", 0, 1, 52.31, 51.94, "racing")
-    assert line == "1. KT Hyperband (seeded)  lap 1  52.3/51.9  racing"
-    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA  lap 0  –/–  ready"
+    assert line == "1. KT Hyperband (seeded) lap 1 52.3/51.9 racing"
+    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA lap 0 –/– ready"
 
 
 def test_race_panel_text_fits_the_panel(window, tmp_path, monkeypatch):
@@ -1765,7 +1765,7 @@ def test_the_network_window_names_race_cars_as_the_leaderboard_does(net, tmp_pat
     """spec §10.3: one name per car in the leaderboard, the network selector and the window title."""
     assert [viewer.car_name("ga", 0), viewer.car_name("ga", 1), viewer.car_name("ga", 2),
             viewer.car_name("ga", 1, app=True)] == ["GA (seeded)", "GA", "GA s2", "GA (app) s1"]
-    assert viewer.leaderboard_line(5, "ga", 1, 0, float("nan"), float("nan"), "ready").startswith("5. GA  lap 0")
+    assert viewer.leaderboard_line(5, "ga", 1, 0, float("nan"), float("nan"), "ready").startswith("5. GA lap 0")
     app_race_window(net, tmp_path)                          # reported: es 0, ga 0, ga 1; app cars: ga 2, neat 0
     net.cycle_app_choice("ga")
     net.toggle_network_window()
@@ -2071,8 +2071,8 @@ def test_app_cars_are_labelled_in_the_network_selector_and_leaderboard(net, tmp_
     while net.selected_car() != ("neat", 0, "app"):
         net.cycle_network_car()
     assert net.network_car_label() == "Network of: NEAT (app) s0 ▸"
-    assert viewer.leaderboard_line(3, "neat", 0, 1, 31.0, 30.5, "racing", app=True).startswith("3. NEAT (app) s0  lap 1")
-    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA  lap 0  –/–  ready"
+    assert viewer.leaderboard_line(3, "neat", 0, 1, 31.0, 30.5, "racing", app=True).startswith("3. NEAT (app) s0 lap 1")
+    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA lap 0 –/– ready"
 
 
 def test_a_failed_app_car_is_dropped_with_a_message(window, tmp_path):
