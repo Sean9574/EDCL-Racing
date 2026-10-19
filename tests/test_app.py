@@ -2317,14 +2317,14 @@ def test_the_notebook_view_replays_an_archived_run_on_its_revisions_maps(window,
 
 
 def test_the_notebook_view_replays_every_run_of_an_archive(window, tmp_path, monkeypatch, circle_track):
-    """An archive of an earlier revision may hold runs 0, 1 and 2: the run control of the notebook view cycles
-    through every run in the selected folder, while training started here keeps runs 0 and 1 (spec §10.2)."""
+    """An archive may hold a run outside runs 0 to 3 (here run 4): the run control of the notebook view cycles
+    through every run in the selected folder, while training started here keeps runs 0 to 3 (spec §10.2)."""
     monkeypatch.setattr(viewer, "get_track", lambda seed, level, width=None: circle_track)
     archive_folder(tmp_path, inputs=config.N_INPUTS)
     window.results_dir = tmp_path
     notebook_view(window, tmp_path)
     window.cycle_folder()
-    for run in (0, 1, 2):
+    for run in (0, 1, 4):
         save_replay(window, ga_report(4 + run), seed=run)
     window.update(1 / 60)
     assert window.latest["generation"] == 4
@@ -2332,27 +2332,27 @@ def test_the_notebook_view_replays_every_run_of_an_archive(window, tmp_path, mon
     monkeypatch.setattr(window, "text", lambda string, *args: drawn.append(string) or text(string, *args))
     window.draw()
     assert "0" in drawn and "0 (seeded)" not in drawn                  # every run of an archive was seeded
-    window.change_run_seed(1)
-    window.change_run_seed(1)
+    for _ in range(4):
+        window.change_run_seed(1)
     window.update(1 / 60)
-    assert window.run_seed == 2 and window.latest["generation"] == 6
-    assert window.status == "Replaying the notebook run GA run 2."
+    assert window.run_seed == 4 and window.latest["generation"] == 8
+    assert window.status == "Replaying the notebook run GA run 4."
     window.change_run_seed(1)
     assert window.run_seed == 0
     window.change_run_seed(-1)
-    assert window.run_seed == 2
-    window.cycle_folder()                                   # the current results hold no run 2
+    assert window.run_seed == 4
+    window.cycle_folder()                                   # the current results hold no run 4
     window.update(1 / 60)
-    assert window.status == "Nothing to replay yet for GA run 2."
+    assert window.status == "Nothing to replay yet for GA run 4."
     window.change_run_seed(-1)
-    assert window.run_seed == 1
+    assert window.run_seed == 3
     window.cycle_folder()                                   # the archive again
     window.change_run_seed(1)
-    assert window.run_seed == 2
-    window.toggle_source()                                  # training here: runs 0 and 1 only
+    assert window.run_seed == 4
+    window.toggle_source()                                  # training here: runs 0 to 3 only
     assert window.source == "app" and window.run_seed == config.RUN_SEEDS[0]
-    window.change_run_seed(1)
-    window.change_run_seed(1)
+    for _ in range(4):
+        window.change_run_seed(1)
     assert window.run_seed == config.RUN_SEEDS[0]
 
 

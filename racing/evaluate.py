@@ -1,6 +1,6 @@
 """Final evaluation (spec §11): three-lap time trials on held-out maps, test accuracy, size, speed and
 training cost, as tables and figures. Each method has one final controller per run; tables report each run and their
-mean as 'run 0 · run 1 (mean)' and lead with completion and lap times."""
+mean as 'run 0 · run 1 · run 2 · run 3 (mean)' and lead with completion and lap times."""
 import json
 import time
 from pathlib import Path
@@ -488,7 +488,7 @@ def stages_table(results):
 
 def comparison_table(metrics):
     """The course comparison (spec §11.3 table 5), measured as in spec §11.2: per run and their mean, except the
-    search time, which a Keras Tuner method spends once for both runs (spec §8.2)."""
+    search time, which a Keras Tuner method spends once for all runs (spec §8.2)."""
     rows = []
     for approach in config.APPROACHES:
         sub = metrics[metrics["approach"] == approach]

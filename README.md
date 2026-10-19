@@ -13,10 +13,18 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
 Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
 its population must complete three laps within the target time, three generations in a row, on each level from Easy
 to Extra hard. In the speed push that follows, the target time is shortened by 2% at a time whenever 75% of the
-population beats it three generations in a row, until 300 generations pass without that. Every method is trained twice:
-run 0 is seeded (seed 0) and replays exactly, run 1 sets no seed, so its random choices differ every time; results are
-reported for both runs and their mean. Every evolved car also evolves its own setup next to its network: the length of
-its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and lap time.
+population beats it three generations in a row, until 600 generations pass without that. Every method is trained four
+times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ every
+time; results are reported for each run and their mean. Every evolved car also evolves its own setup next to its
+network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and
+lap time.
+
+**Stall boost:** after 100 speed-push generations without a mastered target, the decision layer (the output layer's
+weights; NEAT's connections into output nodes) mutates three times as hard, and the steering sensitivity mutates with
+probability 0.5 and standard deviation 0.2, until the next target is mastered; the speed push ends after 600 such
+generations (spec §9.4). The boost only scales random draws that are made anyway, so run 0 still replays exactly.
+`python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with and without
+it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 
 Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
 road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
@@ -164,7 +172,8 @@ python -m racing.progress                            # live status; Ctrl+C stops
   runner ends the notebook's kernel (and its worker processes), notes the stop in the run log and exits with code 130
   within a few seconds. Start the same command again to continue: finished runs are skipped and an interrupted run
   continues from its last checkpoint, losing at most one generation. A resumed run 0 produces exactly the same results
-  as an uninterrupted one; a resumed run 1 continues from the state of its random generator saved in the checkpoint.
+  as an uninterrupted one; a resumed run 1 to 3 continues from the state of its random generator saved in the
+  checkpoint.
 - **One runner at a time:** a second `run_notebooks.py` on the same `results/` stops at once with exit code 4 and
   names the process that holds `results/.runner.lock`.
 - **After a crash or power loss:** if a result file was cut short, the runner lists it and exits with code 3. Delete
@@ -188,12 +197,12 @@ python -m racing.progress                            # live status; Ctrl+C stops
 | Notebook | Purpose |
 |---|---|
 | `01_dataset` | Expert dataset on freshly generated maps |
-| `02_imitation` | Baseline, Keras Tuner searches, training of runs 0 and 1 |
-| `03_dagger` | DAgger refinement and speed push of the four imitation methods, runs 0 and 1 each |
-| `04_ga` | Genetic algorithm, runs 0 and 1 |
-| `05_es` | Evolution strategy, runs 0 and 1 |
-| `06_es_seeded` | Seeded evolution strategy, runs 0 and 1 |
-| `07_neat` | NEAT, runs 0 and 1 |
+| `02_imitation` | Baseline, Keras Tuner searches, training of runs 0 to 3 |
+| `03_dagger` | DAgger refinement and speed push of the four imitation methods, runs 0 to 3 each |
+| `04_ga` | Genetic algorithm, runs 0 to 3 |
+| `05_es` | Evolution strategy, runs 0 to 3 |
+| `06_es_seeded` | Seeded evolution strategy, runs 0 to 3 |
+| `07_neat` | NEAT, runs 0 to 3 |
 | `08_evaluate` | Tables and figures |
 
 The processor, worker count and thread setting, package versions, settings, code version (git commit) and notebook times are recorded
@@ -228,9 +237,9 @@ To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\resu
 A compiled run uses every processor and runs side by side share them, so several jobs side by side keep a machine busy
 through each run's map building and Keras phases, and several machines can share the experiment. The runs are
 independent: run 0's results depend only on its seed and the settings, so where it trains changes only its training
-time, while run 1's also depend on chance. Keras jobs come first: they train with 4 TensorFlow threads, and an evolution
-phase runs at the lowest priority (nice 19), using whatever processors the searches and DAgger refinements leave
-(specification §3.3).
+time, while runs 1 to 3 also depend on chance. Keras jobs come first: they train with 4 TensorFlow threads, and an
+evolution phase runs at the lowest priority (nice 19), using whatever processors the searches and DAgger refinements
+leave (specification §3.3).
 
 **Side by side on one machine:**
 `python scripts/run_notebooks.py --runs nb:01,search:kt_random,baseline:0,ga:1 --at-once 8` runs these jobs: runs of
@@ -256,8 +265,8 @@ searches and runs complete and only reports them.
 **On several machines:** `scripts/fleet.py` starts, watches, stops and collects runs on the desktop and on servers
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
 workers each). The plan follows measured generation times and memory (its comments show the arithmetic) and runs
-every job at once: the desktop the dataset, the three searches, the 8 imitation runs and the seeded ES runs, about
-3.2 h; the server every GA, ES and NEAT run, about 2.9 h. It runs on the desktop, in its Ubuntu shell with the
+every job at once: the desktop the dataset, the three searches, the 16 imitation runs and the 4 seeded ES runs, about
+6.5 h; the server every GA, ES and NEAT run (12 runs), about 5.8 h. It runs on the desktop, in its Ubuntu shell with the
 `ec-racing` environment active. A server is reached with Windows' `ssh.exe`, which goes through the school VPN
 (GlobalProtect); WSL's own `ssh` does not.
 
@@ -279,7 +288,7 @@ python scripts/fleet.py status     # one line per run in training on every machi
 python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
 python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
 python scripts/fleet.py archive revision3.1   # every machine moves its earlier results to results/archive/revision3.1/
-python scripts/fleet.py finish     # once all 16 runs have finished: collect, then notebooks 02 to 08 here
+python scripts/fleet.py finish     # once all 32 runs have finished: collect, then notebooks 02 to 08 here
 ```
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
@@ -351,10 +360,11 @@ On Windows 11 the window opens through WSLg.
   no stripe. A run whose networks do not match the selected folder is named in the status line instead. Training started
   in the viewer always uses the current results.
 - **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start line.
-  The **Race: all runs ▸** control chooses the runs that race: *all runs* (both runs of every method, up to 16 cars; the
-  default), *seeded runs* (run 0 of every method) or *unseeded runs* (run 1), and each method's button below it switches
-  that method on or off; both are kept while the viewer is open. Both runs of a method drive in its color; run 1 cars
-  carry a white stripe, and the leaderboard names run 0 *GA (seeded)* and run 1 *GA*. Press Start race; Stop returns to
+  The **Race** control chooses the runs that race: *best runs* (each method's best run; the default), *all runs*
+  (every saved run of every method, up to 32 cars), *seeded runs* (run 0 of every method) or *unseeded runs* (runs 1 to
+  3), and each method's button below it switches that method on or off; both are kept while the viewer is open. All
+  runs of a method drive in its color; run 1 to 3 cars carry a white stripe, and the leaderboard names run 0
+  *GA (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race; Stop returns to
   the start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training
   run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App
   cars start switched off, race next to the reported controllers when switched on (drawn with a white border), and are

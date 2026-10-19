@@ -11,7 +11,7 @@ with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through
                                     next start
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
   python scripts/fleet.py archive NAME   every machine moves its earlier results to results/archive/NAME/
-  python scripts/fleet.py finish    once all 16 runs have finished: collect, then notebooks 02 to 08 (they find
+  python scripts/fleet.py finish    once all 32 runs have finished: collect, then notebooks 02 to 08 (they find
                                     the networks, searches and runs complete and report them) and the evaluation, in
                                     the "fleet" session here
 
@@ -918,7 +918,7 @@ def unfinished(results=None):
 
 
 def finish(machines, out=sys.stdout):
-    """Collect, then, once all 16 runs are here, run notebooks 02 to 08 (they find the networks, searches and runs
+    """Collect, then, once all 32 runs are here, run notebooks 02 to 08 (they find the networks, searches and runs
     complete and report them, spec §3.3) and the evaluation in this machine's fleet session."""
     if collect(machines, out):
         raise FleetError("some runs could not be collected; see above")

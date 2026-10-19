@@ -145,7 +145,7 @@ def test_the_plan_names_each_machines_runs(fake):
     ('[machines.a]\nruns = []\n[machines.b]\nhost = "x"\nruns = ["baseline:0"]\n',
      r"machine b: baseline:0 runs only on the machine fleet.py runs on \(its Keras training may round differently "
      r"on another processor, spec §3.3\)"),
-    ('[machines.a]\nruns = ["ga:3"]\n', "seed must be one of"),
+    ('[machines.a]\nruns = ["ga:4"]\n', "seed must be one of"),
     ('[machines.a]\nhost = "x"\nruns = ["ga:1"]\n', "exactly one machine"),
     ('[machines.a]\nruns = []\n[machines.b]\nruns = []\n', "exactly one machine"),
     ('[machines.a]\nrun = ["ga:1"]\n', "unknown keys run"),
@@ -223,7 +223,8 @@ def test_a_script_for_a_server_travels_in_the_command_line(fake):
 
 def test_the_largest_scripts_fit_in_a_command_line(fake):
     server = fake.machines()[1]
-    every_run = [jobs.parse_job(f"{a}:{s}") for a in config.APPROACHES for s in config.RUN_SEEDS]
+    # a server takes only evolution runs (imitation runs are refused), so these are the most it can be given
+    every_run = [jobs.parse_job(f"{a}:{s}") for a in config.EVOLUTION_APPROACHES for s in config.RUN_SEEDS]
     members = [m for run in every_run for m in fake.fleet.run_members(run)]
     for script in (fake.fleet.setup_script(server), fake.fleet.pack_script(server, members),
                    fake.fleet.collect_script(fake.fleet.Machine("s", every_run, host="h", ssh="ssh.exe")),

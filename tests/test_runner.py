@@ -633,7 +633,7 @@ def test_stop_processes_ends_a_training_and_its_workers(runner):
         os.killpg(process.pid, 0)                                         # nothing of the group is left
 
 
-@pytest.mark.parametrize("argv", [["--runs", "nb:03"], ["--runs", "nb:02"], ["--runs", "ga:3"], ["--runs", "ga:1,ga:1"],
+@pytest.mark.parametrize("argv", [["--runs", "nb:03"], ["--runs", "nb:02"], ["--runs", "ga:4"], ["--runs", "ga:1,ga:1"],
                                   ["--runs", "ga:1", "--from", "01"], ["--runs", "ga:1", "--fresh"],
                                   ["--runs", "ga:1", "--at-once", "0"]])
 def test_invalid_jobs_are_refused_before_anything_starts(runner, tmp_path, monkeypatch, capsys, argv):

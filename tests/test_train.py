@@ -112,7 +112,7 @@ def test_imitation_runs_are_accepted():
     assert train.parse_runs("baseline:0,kt_bayesian:1") == [("baseline", 0), ("kt_bayesian", 1)]
 
 
-@pytest.mark.parametrize("text", ["nb:01", "ga:3", "ga", "ga:x", "ga:1,ga:1", "", " , "])
+@pytest.mark.parametrize("text", ["nb:01", "ga:4", "ga", "ga:x", "ga:1,ga:1", "", " , "])
 def test_runs_outside_the_experiment_are_refused(text):
     with pytest.raises(ValueError):
         train.parse_runs(text)
@@ -127,11 +127,11 @@ def test_main_trains_one_run_with_its_own_status_file(monkeypatch, tmp_path, cap
     assert "'generations': 5" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("text", ["ga:2", "es_seeded:2", "kt_random:2"])
-def test_seed_2_is_no_run_any_more(text):
-    with pytest.raises(ValueError, match="0, 1"):
+@pytest.mark.parametrize("text", ["ga:4", "es_seeded:4", "kt_random:4"])
+def test_seed_4_is_no_run(text):
+    with pytest.raises(ValueError, match="0, 1, 2, 3"):
         train.parse_run(text)
 
 
-def test_every_method_runs_twice():
-    assert config.RUN_SEEDS == (0, 1) and len(config.RUN_ORDER) == 2 * len(config.APPROACHES) == 16
+def test_every_method_runs_four_times():
+    assert config.RUN_SEEDS == (0, 1, 2, 3) and len(config.RUN_ORDER) == 4 * len(config.APPROACHES) == 32

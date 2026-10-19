@@ -675,7 +675,7 @@ class App:
         if self.process is not None:
             return
         self.source = "notebook" if self.source == "app" else "app"
-        if self.run_seed not in self.run_choices():         # an archive's other run: training here has runs 0 and 1
+        if self.run_seed not in self.run_choices():         # an archive's other run: training here has runs 0 to 3
             self.run_seed = config.RUN_SEEDS[0]
         self.halted = False
         self.clear_view()
@@ -921,8 +921,8 @@ class App:
         self.population[self.approach] = presets[min(max(position + direction, 0), len(presets) - 1)]
 
     def run_choices(self):
-        """The runs the run control cycles through: runs 0 and 1 for training here; for a notebook run also any other
-        run in the shown folder, such as an archive's run 2 (spec §10.2)."""
+        """The runs the run control cycles through: runs 0 to 3 for training here; for a notebook run also any other
+        run in the shown folder, such as an archive's (spec §10.2)."""
         if self.source != "notebook":
             return list(config.RUN_SEEDS)
         return sorted({*config.RUN_SEEDS, *paths.run_seeds(self.approach, self.runs_dir)})
@@ -1640,7 +1640,7 @@ class App:
                 self.button(pygame.Rect(x + 140, y, w - 140, 22), self.app_choice_label(approach),
                             lambda a=approach: self.cycle_app_choice(a), enabled=idle)
                 y += 24
-        else:           # each method's switch, filled when on, in a grid of three: a race of 16 runs keeps every row
+        else:           # each method's switch, filled when on, in a grid of three: a race of 32 runs keeps every row
             third = (w - 16) // 3
             for k, approach in enumerate(self.race_available):
                 self.button(pygame.Rect(x + (k % 3) * (third + 8), y + (k // 3) * 26, third, 22),
