@@ -112,8 +112,8 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
             maps = frame.loc[frame["width"] == width, "track"].nunique()
             lap = cell.loc[cell["finished"].astype(bool), "lap_time"]
             row[f"{width:g} m finished ({maps} maps)"] = f"{int(cell['finished'].sum())} / {len(cell)}"
-            per_run = cell.groupby("run_seed")["finished"].sum()
-            row[f"{width:g} m finished per run"] = ", ".join(str(int(v)) for v in per_run.sort_index())
+            finished = cell.groupby("run_seed", as_index=False)["finished"].sum()
+            row[f"{width:g} m finished per run"] = runs_list(per_run(finished, "finished", sub["run_seed"]))
             row[f"{width:g} m succeeded"] = f"{int(cell['success'].sum())} / {len(cell)}"
             row[f"{width:g} m mean lap (s)"] = "–" if lap.empty else f"{lap.mean():.2f}"
         rows.append(row)
@@ -226,18 +226,37 @@ def metrics_per_seed(models, data, runs_dir, latency_calls=1000, drivers=None):
                                        "training_s", "search_s"])
 
 
-def runs_cell(values, digits):
+def run_order(seeds=()):
+    """The runs a table lists: config.RUN_SEEDS, then any other run seeds among `seeds` (an archive of an earlier
+    revision) in seed order."""
+    return [*config.RUN_SEEDS, *sorted({int(s) for s in seeds} - set(config.RUN_SEEDS))]
+
+
+def per_run(frame, column, seeds=None):
+    """`column` of a frame with one row per run, as one value for each run of run_order(seeds, by default the frame's
+    run seeds): NaN for a run without a row."""
+    seeds = frame["run_seed"] if seeds is None else seeds
+    return list(frame.set_index("run_seed")[column].astype(float).reindex(run_order(seeds)))
+
+
+def runs_cell(values, digits, mean_digits=None):
     """Per-run values in run order as 'run 0 · run 1 (mean)' (spec §11.3): a run without a value shows '–', and the
-    mean covers the runs that have one; a single value alone; '–' if there is none. A standard deviation of two runs
-    is not reported."""
+    mean covers the runs that have one; the value once if every run has the same value; '–' if there is none. The
+    mean has mean_digits decimals (default: digits). A standard deviation of two runs is not reported."""
+    mean_digits = digits if mean_digits is None else mean_digits
     values = [float(v) for v in values]
     present = [v for v in values if not np.isnan(v)]
     if not present:
         return "–"
-    if len(values) == 1:
+    if len(present) == len(values) and all(v == values[0] for v in values):
         return f"{values[0]:.{digits}f}"
     shown = " · ".join("–" if np.isnan(v) else f"{v:.{digits}f}" for v in values)
-    return f"{shown} ({np.mean(present):.{digits}f})"
+    return f"{shown} ({np.mean(present):.{mean_digits}f})"
+
+
+def runs_list(values):
+    """Per-run counts in run order joined by ' · ', as in runs_cell but without a mean; '–' for a run without one."""
+    return " · ".join("–" if np.isnan(v) else str(int(v)) for v in values)
 
 
 def hours(seconds):
@@ -297,21 +316,22 @@ def results_table(per_track, runs_dir, drivers=None, best=None):
             continue
         total = int(sub["maps"].sum())
         best_lap = "–" if sub["best_lap"].isna().all() else f"{sub['best_lap'].min():.2f}"
-        sensor, steer = setup_cells(drivers, approach, sub["run_seed"])
+        order = run_order(sub["run_seed"])
+        sensor, steer = setup_cells(drivers, approach, order)
         row = {"Method": config.LABELS[approach], "Runs": len(sub)}
         if best is not None:
             row["Better run"] = best.get(approach, "–")
         rows.append({**row,
                      "Finished": f"{int(sub['finished'].sum())} / {total}",
-                     "Finished per run": ", ".join(str(int(v)) for v in sub["finished"]),
+                     "Finished per run": runs_list(per_run(sub, "finished")),
                      "Succeeded": f"{int(sub['success'].sum())} / {total}",
-                     "Succeeded per run": ", ".join(str(int(v)) for v in sub["success"]),
-                     "Mean lap time (s)": runs_cell(sub["lap_time"], 2), "Best lap time (s)": best_lap,
-                     "Mean race time (s)": runs_cell(sub["race_time"], 1),
-                     "Crashes": runs_cell(sub["crashes"], 1),
+                     "Succeeded per run": runs_list(per_run(sub, "success")),
+                     "Mean lap time (s)": runs_cell(per_run(sub, "lap_time"), 2), "Best lap time (s)": best_lap,
+                     "Mean race time (s)": runs_cell(per_run(sub, "race_time"), 1),
+                     "Crashes": runs_cell(per_run(sub, "crashes"), 0, mean_digits=1),
                      "Sensor length (m)": sensor, "Steering sensitivity": steer,
-                     "Target reduction (per run)": ", ".join(
-                         reduction_cell(run_summary(approach, int(s), runs_dir)) for s in sub["run_seed"])})
+                     "Target reduction (per run)": " · ".join(
+                         reduction_cell(run_summary(approach, s, runs_dir)) for s in order)})
     return pd.DataFrame(rows)
 
 
@@ -335,9 +355,10 @@ def head_to_head_table(per_track):
         if sub.empty:
             continue
         mine = on_shared[on_shared["approach"] == approach]
-        laps = [float(runs["lap_time"].mean()) for _, runs in mine.groupby("run_seed")]    # groupby sorts by run
+        laps = mine.groupby("run_seed", as_index=False)["lap_time"].mean()
         rows.append({"Method": config.LABELS[approach], "Runs": int(sub["run_seed"].nunique()),
-                     column: runs_cell(laps, 2), "Fastest on (maps)": fastest.get(approach, 0)})
+                     column: runs_cell(per_run(laps, "lap_time", sub["run_seed"]), 2),
+                     "Fastest on (maps)": fastest.get(approach, 0)})
     return pd.DataFrame(rows)
 
 
@@ -433,13 +454,13 @@ def stages_table(results):
             sub = results[(results["approach"] == approach) & (results["stage"] == stage)]
             if sub.empty:
                 continue
-            runs = per_seed(sub)                                        # groupby sorts by run
+            runs = per_seed(sub)
             total = int(runs["maps"].sum())
             rows.append({"Method": config.LABELS[approach], "Stage": name, "Runs": len(runs),
                          "Finished": f"{int(runs['finished'].sum())} / {total}",
                          "Succeeded": f"{int(runs['success'].sum())} / {total}",
-                         "Mean lap time (s)": runs_cell(runs["lap_time"], 2),
-                         "Crashes": runs_cell(runs["crashes"], 1)})
+                         "Mean lap time (s)": runs_cell(per_run(runs, "lap_time"), 2),
+                         "Crashes": runs_cell(per_run(runs, "crashes"), 0, mean_digits=1)})
     return pd.DataFrame(rows)
 
 
@@ -448,17 +469,17 @@ def comparison_table(metrics):
     search time, which a Keras Tuner method spends once for both runs (spec §8.2)."""
     rows = []
     for approach in config.APPROACHES:
-        sub = metrics[metrics["approach"] == approach].sort_values("run_seed")
+        sub = metrics[metrics["approach"] == approach]
         if sub.empty:
             continue
         search = float(sub["search_s"].iloc[0])
         rows.append({"Method": config.LABELS[approach], "Runs": len(sub),
-                     "Test accuracy": runs_cell(sub["accuracy"], 4),
-                     "Parameters": runs_cell(sub["params"], 0),
-                     "Batch inference (µs/sample)": runs_cell(sub["batch_us"], 3),
-                     "Single-sample latency (ms)": runs_cell(sub["single_ms"], 3),
+                     "Test accuracy": runs_cell(per_run(sub, "accuracy"), 4),
+                     "Parameters": runs_cell(per_run(sub, "params"), 0),
+                     "Batch inference (µs/sample)": runs_cell(per_run(sub, "batch_us"), 3),
+                     "Single-sample latency (ms)": runs_cell(per_run(sub, "single_ms"), 3),
                      "Search time (s)": "–" if np.isnan(search) else f"{search:.1f}",
-                     "Training time (s)": runs_cell(sub["training_s"], 1)})
+                     "Training time (s)": runs_cell(per_run(sub, "training_s"), 1)})
     return pd.DataFrame(rows)
 
 
