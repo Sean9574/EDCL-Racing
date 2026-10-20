@@ -776,6 +776,9 @@ def test_best_falls_back_to_run_0_without_a_readable_record(window, tmp_path, re
     assert window.lineup == [("es", 0), ("ga", 0)]
     if record in ('{"ga": ', '[1, 2]'):
         assert window.best == {} and "best_seeds.json could not be read" in window.status
+    elif record is None:
+        assert window.best == {} and window.status == (
+            "no best-run record yet (the evaluation, notebook 08, writes it); best races run 0.")
     else:
         assert "could not be read" not in window.status
 

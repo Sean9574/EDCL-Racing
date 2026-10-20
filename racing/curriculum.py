@@ -84,7 +84,8 @@ class MasteryTracker:
     @property
     def stalled(self):
         """The speed push has gone STALL_GENERATIONS generations without mastering its target (spec §9.4): the
-        stall boost is on until the next mastered target."""
+        stall boost is on until the next mastered target. Unrelated to outcome == "stalled" (the safety stop before the
+        goal)."""
         return self.goal_reached and not self.done and self.since_mastered >= config.STALL_GENERATIONS
 
     @property

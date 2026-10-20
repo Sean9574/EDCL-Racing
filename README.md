@@ -20,7 +20,7 @@ network: the length of its distance sensors (10–150 m) and its steering sensit
 lap time.
 
 **Stall boost:** after 100 speed-push generations without a mastered target, the decision layer (the output layer's
-weights; NEAT's connections into output nodes) mutates three times as hard, and the steering sensitivity mutates with
+weights and biases; NEAT's connections into output nodes) mutates three times as hard, and the steering sensitivity mutates with
 probability 0.5 and standard deviation 0.2, until the next target is mastered; the speed push ends after 600 such
 generations (spec §9.4). The boost only scales random draws that are made anyway, so run 0 still replays exactly.
 `python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with and without
@@ -29,7 +29,7 @@ it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
 road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
 they trained on. The evaluation adds a robustness table: the test maps rebuilt at 8, 10, 14 and 18 m, two of which no
-controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.5, which incorporates every
+controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.6, which incorporates every
 revision).
 
 ## Setup on a Windows desktop (WSL 2)
@@ -172,7 +172,7 @@ python -m racing.progress                            # live status; Ctrl+C stops
   runner ends the notebook's kernel (and its worker processes), notes the stop in the run log and exits with code 130
   within a few seconds. Start the same command again to continue: finished runs are skipped and an interrupted run
   continues from its last checkpoint, losing at most one generation. A resumed run 0 produces exactly the same results
-  as an uninterrupted one; a resumed run 1 to 3 continues from the state of its random generator saved in the
+  as an uninterrupted one; a resumed run (1 to 3) continues from the state of its random generator saved in the
   checkpoint.
 - **One runner at a time:** a second `run_notebooks.py` on the same `results/` stops at once with exit code 4 and
   names the process that holds `results/.runner.lock`.
@@ -266,7 +266,9 @@ searches and runs complete and only reports them.
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
 workers each). The plan follows measured generation times and memory (its comments show the arithmetic) and runs
 every job at once: the desktop the dataset, the three searches, the 16 imitation runs and the 4 seeded ES runs, about
-6.5 h; the server every GA, ES and NEAT run (12 runs), about 5.8 h. It runs on the desktop, in its Ubuntu shell with the
+7.8 h; the server every GA, ES and NEAT run (12 runs), about 7 h (the speed push's patience of 600 generations adds
+about 20% to the times of the plan's first estimate, and each stall the boost breaks restarts it, so a run can take
+longer). It runs on the desktop, in its Ubuntu shell with the
 `ec-racing` environment active. A server is reached with Windows' `ssh.exe`, which goes through the school VPN
 (GlobalProtect); WSL's own `ssh` does not.
 
@@ -363,7 +365,7 @@ On Windows 11 the window opens through WSLg.
   The **Race** control chooses the runs that race: *best runs* (each method's best run; the default), *all runs*
   (every saved run of every method, up to 32 cars), *seeded runs* (run 0 of every method) or *unseeded runs* (runs 1 to
   3), and each method's button below it switches that method on or off; both are kept while the viewer is open. All
-  runs of a method drive in its color; run 1 to 3 cars carry a white stripe, and the leaderboard names run 0
+  runs of a method drive in its color; runs 1 to 3 cars carry a white stripe, and the leaderboard names run 0
   *GA (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race; Stop returns to
   the start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training
   run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App

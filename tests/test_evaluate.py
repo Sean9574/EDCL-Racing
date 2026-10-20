@@ -200,7 +200,7 @@ def test_results_table_counts_finishes_successes_and_target_reduction(tmp_path):
     assert ga["Mean lap time (s)"] == "50.00 · 57.00 · – · – (53.50 ± 4.95)" and ga["Best lap time (s)"] == "50.00"
     assert ga["Mean race time (s)"] == "150.0 · 171.0 · – · – (160.5 ± 14.8)"
     assert ga["Crashes"] == "1 · 0 · – · – (0.5 ± 0.7)"
-    assert ga["Target reduction (per run)"] == "14.3% · not reached · – · –"
+    assert ga["Target reduction (per run)"] == "14.3% · not reached · – · – (14.3%)"
     assert table.set_index("Method").loc["ES", "Target reduction (per run)"] == "– · – · – · –"
 
 
@@ -561,3 +561,24 @@ def test_the_robustness_table_gives_finishes_per_run():
     frame["width"] = 14.0
     ga = evaluate.robustness_table(frame, (14.0,)).iloc[0]
     assert ga["14 m finished per run"] == "1 · 0 · 1 · –" and ga["14 m finished (1 maps)"] == "2 / 3"
+
+
+def test_plot_runs_gives_runs_0_to_3_four_different_line_styles():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    log = pd.DataFrame({"generation": [0, 1, 2], "fitness": [1.0, 2.0, 3.0]})
+    evaluate._plot_runs(ax, {run: log for run in range(4)}, "fitness", "ga")
+    styles = [line.get_linestyle() for line in ax.get_lines()]
+    plt.close(fig)
+    assert len(styles) == 4 and len(set(styles)) == 4
+
+
+def test_reduction_cells_append_mean_and_sd_over_the_runs_that_reached_the_goal():
+    reached = lambda r: {"goal_reached": True, "target_reduction": r}
+    two = [reached(0.276), {"goal_reached": False}, reached(0.301), reached(0.25)]
+    assert evaluate.reduction_cells(two) == "27.6% · not reached · 30.1% · 25.0% (27.6 ± 2.6%)"
+    one = [reached(0.276), {"goal_reached": False}, {}, {"goal_reached": False}]
+    assert evaluate.reduction_cells(one) == "27.6% · not reached · – · not reached (27.6%)"
+    assert evaluate.reduction_cells([{}, {"goal_reached": False}]) == "– · not reached"

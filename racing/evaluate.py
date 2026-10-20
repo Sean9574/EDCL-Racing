@@ -1,6 +1,6 @@
 """Final evaluation (spec §11): three-lap time trials on held-out maps, test accuracy, size, speed and
 training cost, as tables and figures. Each method has one final controller per run; tables report each run and their
-mean as 'run 0 · run 1 · run 2 · run 3 (mean)' and lead with completion and lap times."""
+mean as 'run 0 · run 1 · run 2 · run 3 (mean ± sd)' and lead with completion and lap times."""
 import json
 import time
 from pathlib import Path
@@ -20,7 +20,7 @@ PER_SEED_COLUMNS = ["approach", "run_seed", "maps", "finished", "success", "lap_
 STAGES = (("imitation", "After imitation"), ("dagger", "After DAgger"), ("speed push", "After speed push"))
 LEVEL_NAMES = {**{level: f"{name} cleared" for level, name in config.DIFFICULTIES.items() if level < config.MAX_LEVEL},
                config.MAX_LEVEL: "Mastery goal"}
-SEED_STYLES = ("-", "--", ":")
+SEED_STYLES = ("-", "--", ":", "-.")                       # one per run, runs 0-3 (spec §11.4)
 EVENT_STYLES = {"level_up": "-", "goal": "-", "tightened": ":"}
 
 
@@ -309,6 +309,19 @@ def reduction_cell(summary):
     return f"{100 * float(summary['target_reduction']):.1f}%"
 
 
+def reduction_cells(summaries):
+    """The runs' reduction_cell values joined with ' · ', followed by the mean and sample sd (ddof = 1) of the target
+    reduction in percent over the runs that reached the goal: ' (m ± s%)' for two or more, ' (m%)' for one, nothing
+    for none (spec §11.3)."""
+    text = " · ".join(reduction_cell(s) for s in summaries)
+    reached = [100 * float(s["target_reduction"]) for s in summaries if s and s.get("goal_reached")]
+    if len(reached) >= 2:
+        return f"{text} ({np.mean(reached):.1f} ± {np.std(reached, ddof=1):.1f}%)"
+    if reached:
+        return f"{text} ({reached[0]:.1f}%)"
+    return text
+
+
 def setup_cells(drivers, approach, seeds):
     """The final controllers' sensor length (m, no decimals) and steering sensitivity (two decimals) of the runs
     `seeds`, in that order, as runs_cell (spec §11.3); a run without a driver shows '–'."""
@@ -323,8 +336,8 @@ def setup_cells(drivers, approach, seeds):
 def results_table(per_track, runs_dir, drivers=None, best=None):
     """Spec §11.3 table 1: test maps finished and succeeded (in total and per run), lap and race times,
     crashes, the final controllers' setups (drivers: {(approach, run seed): driver}) and the target
-    reduction of each run's speed push; per-run cells read 'r0 · r1 · r2 · r3 (mean ± sd)'. With best ({approach: run}, as
-    best_seeds returns), each method's best run is named (spec §11.1)."""
+    reduction of each run's speed push; per-run cells read 'r0 · r1 · r2 · r3 (mean ± sd)'. With best
+    ({approach: run}, as best_seeds returns), each method's best run is named (spec §11.1)."""
     runs = per_seed(per_track)
     rows = []
     for approach in config.APPROACHES:
@@ -347,8 +360,8 @@ def results_table(per_track, runs_dir, drivers=None, best=None):
                      "Mean race time (s)": runs_cell(per_run(sub, "race_time"), 1),
                      "Crashes": runs_cell(per_run(sub, "crashes"), 0, mean_digits=1),
                      "Sensor length (m)": sensor, "Steering sensitivity": steer,
-                     "Target reduction (per run)": " · ".join(
-                         reduction_cell(run_summary(approach, s, runs_dir)) for s in order)})
+                     "Target reduction (per run)": reduction_cells(
+                         [run_summary(approach, s, runs_dir) for s in order])})
     return pd.DataFrame(rows)
 
 

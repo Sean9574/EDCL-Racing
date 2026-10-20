@@ -70,7 +70,7 @@ def check(driver, seeds, factor=config.TARGET_FACTOR, level=config.MAX_LEVEL, n_
 
 
 def _rng_seed(approach, seed):
-    """Every method and run draws its own maps; run 1's generator ignores this (spec §3.3)."""
+    """Every method and run draws its own maps; an unseeded run's generator ignores this (spec §3.3)."""
     return [seed, config.IMITATION_APPROACHES.index(approach), config.DAGGER_SALT]
 
 

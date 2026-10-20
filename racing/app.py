@@ -1111,7 +1111,9 @@ class App:
         self.best = {}
         note = ""
         best_path = paths.best_seeds_path(self.champions_dir)
-        if best_path.exists():
+        if not best_path.exists():
+            note = f"no best-run record yet (the evaluation, notebook 08, writes it); best races run {SEEDED_RUN}."
+        else:
             try:
                 for approach, seed in json.loads(best_path.read_text()).items():
                     if isinstance(seed, int) and not isinstance(seed, bool):

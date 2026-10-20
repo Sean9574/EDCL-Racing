@@ -19,6 +19,10 @@
 # Four runs per method (spec §3.3) double the work. The server takes every GA, ES and NEAT run (296 / 0.85, about
 # 5.8 h); the desktop the dataset, the searches, the imitation runs and the seeded ES (about 388, about 6.5 h). A server
 # may run only GA, ES, NEAT and seeded ES runs.
+# The speed-push patience going from 300 to 600 generations (spec §9.4) adds at least 300 generations to every run: in
+# the revision-3.2 logs about 16-19% for GA, 19-23% for NEAT, 24-31% for ES and 17-28% for the imitation speed pushes.
+# Both machines grow by about 20% (x 1.2): the server about 7.0 h (5.8 x 1.2), the desktop about 7.8 h (6.5 x 1.2).
+# Each stall the boost breaks (spec §9.4) restarts the 600-generation patience, so a run can take longer still.
 
 [machines.desktop]
 at_once = 24

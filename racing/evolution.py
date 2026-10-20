@@ -16,6 +16,7 @@ from racing.nets import DensePopulation
 
 LOG_NAME = "log.csv"
 SUMMARY_NAME = "summary.json"
+# Row g's `boost` is the boost used for the children bred after generation g (evaluate.stalls_broken depends on it).
 LOG_FIELDS = ["generation", "level", "factor", "evals", "best", "mean", "worst", "map_shares", "min_share", "n_kept",
               "kept_success", "child_success", "median_lap", "sensor_mean", "sensor_std", "steer_mean", "steer_std",
               "step_size", "boost", "streak", "event", "seeds", "elapsed"]

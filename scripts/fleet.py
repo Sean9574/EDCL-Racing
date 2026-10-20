@@ -911,7 +911,7 @@ def collect(machines, out=sys.stdout, results=None):
 
 
 def unfinished(results=None):
-    """The experiment's runs (all 16) without their final record here."""
+    """The experiment's runs (every approach and run) without their final record here."""
     results = Path(config.RESULTS_DIR if results is None else results)
     return [(approach, seed) for approach in config.APPROACHES for seed in config.RUN_SEEDS
             if not paths.final_record(approach, seed, results / "runs").exists()]
