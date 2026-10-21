@@ -1,7 +1,8 @@
-"""Compiled simulator (spec §5.7): time trials of dense populations (of one architecture or one per car), NEAT populations and the expert's lap, computed by
-racing/fastsim.cpp exactly as racing/sim.py computes them. The library is built with the C++ compiler (compiler()) the
-first time it is needed, under a name given by its build identity (the source, the compiler flags and the processor);
-without a compiler the numpy simulator runs instead, with identical results."""
+"""Compiled simulator (spec §5.7): time trials of dense populations (of one architecture or one per car), NEAT
+populations and the expert's lap, computed by racing/fastsim.cpp exactly as racing/sim.py computes them. The library
+is built with the C++ compiler (compiler()) the first time it is needed, under a name given by its build identity (the
+source, the compiler flags and the processor); without a compiler the numpy simulator runs instead, with identical
+results."""
 import ctypes
 import hashlib
 import os
