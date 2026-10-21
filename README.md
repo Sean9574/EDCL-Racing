@@ -296,9 +296,11 @@ python scripts/fleet.py finish     # once all 32 runs have finished: collect, th
 
 Version 3.7 trains only the GA again; the runs of the other methods made with 3.6 stay valid:
 
-    python scripts/fleet.py setup
-    python scripts/fleet.py archive revision3.6-ga --runs ga:0,ga:1,ga:2,ga:3
-    python scripts/fleet.py start
+```bash
+python scripts/fleet.py setup
+python scripts/fleet.py archive revision3.6-ga --runs ga:0,ga:1,ga:2,ga:3
+python scripts/fleet.py start
+```
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
   code changes first; a server gets the last commit), its environment and inputs, no machine holds earlier results
