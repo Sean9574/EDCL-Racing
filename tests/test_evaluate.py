@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from racing import config, evaluate, nets, paths, population, sim
+from racing import config, evaluate, nets, neat, paths, population, sim
 
 
 @pytest.fixture
@@ -499,7 +499,7 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
                             out_dir=tmp_path / "out", test_seeds=[1000], val_seeds=[80], latency_calls=5)
     assert set(results) == {"results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
                             "driving_selected", "dataset", "per_track", "validation", "metrics", "best_seeds",
-                            "figures", "robustness", "robustness_per_track"}
+                            "figures", "robustness", "robustness_per_track", "evolved_networks"}
     assert set(results["robustness_per_track"]["width"]) <= set(config.ROBUSTNESS_WIDTHS)
     assert list(results["robustness"]["Method"]) == ["ES", "GA"]
     assert list(results["results"]["Method"]) == ["ES", "GA"] and list(results["comparison"]["Method"]) == ["ES", "GA"]
@@ -582,3 +582,37 @@ def test_reduction_cells_append_mean_and_sd_over_the_runs_that_reached_the_goal(
     one = [reached(0.276), {"goal_reached": False}, {}, {"goal_reached": False}]
     assert evaluate.reduction_cells(one) == "27.6% · not reached · – · not reached (27.6%)"
     assert evaluate.reduction_cells([{}, {"goal_reached": False}]) == "– · not reached"
+
+
+def test_network_text_names_each_layer_or_the_genomes_size():
+    dense = nets.from_flat(np.zeros(nets.n_params((9,))), (9,))
+    assert evaluate.network_text(dense) == "12 → 9 → 15"
+    assert evaluate.network_text(nets.from_flat(np.zeros(195), ())) == "12 → 15"
+    innovations = neat.Innovations()
+    genome = neat.add_node(np.random.default_rng(0), neat.initial_genome(np.random.default_rng(0), innovations),
+                           innovations)
+    assert evaluate.network_text(neat.NeatNet(genome)) == "1 hidden nodes, 181 connections"
+
+
+def test_the_evolved_networks_table_lists_ga_and_neat_runs_only():
+    drivers = {("ga", 1): nets.from_flat(np.zeros(nets.n_params((4,))), (4,)),
+               ("ga", 0): nets.from_flat(np.zeros(195), ()),
+               ("es", 0): nets.from_flat(np.zeros(463)),
+               ("neat", 0): neat.NeatNet(neat.initial_genome(np.random.default_rng(0), neat.Innovations()))}
+    table = evaluate.evolved_networks_table(drivers)
+    assert list(table.columns) == ["Method", "Run", "Structure", "Parameters"]
+    assert table.values.tolist() == [["GA", 0, "12 → 15", 195], ["GA", 1, "12 → 4 → 15", nets.n_params((4,))],
+                                     ["NEAT", 0, "0 hidden nodes, 180 connections", 195]]
+
+
+def test_network_size_is_drawn_for_the_ga_and_neat(tmp_path):
+    runs = tmp_path / "runs"
+    for approach in ("ga", "neat", "es"):
+        folder = paths.run_dir(approach, 0, runs)
+        folder.mkdir(parents=True)
+        rows = {"generation": [0, 1], "min_share": [0.1, 0.2], "median_lap": [30.0, 29.0], "event": ["", ""]}
+        if approach != "es":
+            rows["mean_nodes"] = [0.0, 1.5]
+        pd.DataFrame(rows).to_csv(folder / "log.csv", index=False)
+    written = evaluate.figures(runs, tmp_path / "figures")
+    assert tmp_path / "figures" / "network_size_over_training.png" in written

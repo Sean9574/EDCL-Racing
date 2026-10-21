@@ -123,7 +123,7 @@ def test_the_evaluation_notebook_reports_each_run_and_their_mean_and_shows_every
     heading = module.NOTEBOOKS["08_evaluate.ipynb"][0][1]
     assert "`r0 · r1 · r2 · r3 (mean ± sd)`" in heading and "best run" in heading
     assert module.EVALUATION_TABLES == ("results", "head_to_head", "training_cost", "stages", "comparison",
-                                        "search_cost", "driving_selected", "dataset", "robustness")
+                                        "search_cost", "driving_selected", "dataset", "robustness", "evolved_networks")
 
 
 def test_a_fresh_clone_without_revision_2_notebooks_archives_nothing(tmp_path, monkeypatch):

@@ -6,8 +6,9 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
 - **Imitation learning:** a hand-designed baseline and three Keras Tuner searches (random search, Hyperband,
   Bayesian optimization) are trained to imitate a scripted expert driver, refined by DAgger and then pushed for speed
   by an evolution strategy grown from each of them.
-- **Neuroevolution:** a genetic algorithm and an evolution strategy evolve the weights of a fixed network by driving;
-  NEAT evolves the network structure together with its weights.
+- **Neuroevolution:** a genetic algorithm grows its own networks from the inputs wired to the outputs (hidden
+  units and layers, no size limit), an evolution strategy evolves the weights of a fixed network, and NEAT evolves nodes
+  and connections.
 - **Hybrid:** a seeded evolution strategy starts from the DAgger-refined baseline and continues by driving.
 
 Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
@@ -292,6 +293,12 @@ python scripts/fleet.py collect    # copies the servers' finished runs here (any
 python scripts/fleet.py archive revision3.1   # every machine moves its earlier results to results/archive/revision3.1/
 python scripts/fleet.py finish     # once all 32 runs have finished: collect, then notebooks 02 to 08 here
 ```
+
+Version 3.7 trains only the GA again; the runs of the other methods made with 3.6 stay valid:
+
+    python scripts/fleet.py setup
+    python scripts/fleet.py archive revision3.6-ga --runs ga:0,ga:1,ga:2,ga:3
+    python scripts/fleet.py start
 
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
   code changes first; a server gets the last commit), its environment and inputs, no machine holds earlier results

@@ -26,7 +26,7 @@ BRIEF = (
     "    print({key: summary[key] for key in BRIEF_KEYS if key in summary}, flush=True)\n")
 
 EVALUATION_TABLES = ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
-                     "driving_selected", "dataset", "robustness")
+                     "driving_selected", "dataset", "robustness", "evolved_networks")
 
 NOTEBOOKS = {
     "01_dataset.ipynb": [

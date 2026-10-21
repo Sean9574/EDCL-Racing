@@ -717,10 +717,29 @@ def _setup_figure(plt, logs):
     return fig
 
 
+def network_text(driver):
+    """A final controller's structure (spec §11.3, table 8): a dense network's layer sizes, such as 12 → 9 → 15;
+    a NEAT genome's hidden nodes and enabled connections."""
+    from racing import neat
+    if isinstance(driver, neat.NeatNet):
+        genome = driver.genome
+        return (f"{int(np.sum(genome.node_ids >= neat.FIRST_HIDDEN))} hidden nodes, "
+                f"{int(np.sum(genome.enabled))} connections")
+    return " → ".join(str(units) for units in (driver.n_inputs, *(w.shape[1] for w, _ in driver.layers)))
+
+
+def evolved_networks_table(drivers):
+    """Spec §11.3, table 8: per GA and NEAT run, the final controller's structure and parameters (§11.2)."""
+    rows = [{"Method": config.LABELS[approach], "Run": seed, "Structure": network_text(drivers[(approach, seed)]),
+             "Parameters": drivers[(approach, seed)].n_params}
+            for approach in ("ga", "neat") for a, seed in sorted(drivers) if a == approach]
+    return pd.DataFrame(rows, columns=["Method", "Run", "Structure", "Parameters"])
+
+
 def figures(runs_dir, out_dir):
     """Spec §11.4: the lowest map success share and the median lap time over training (one panel per method,
-    one line per run), the population's mean setup over training, the step sizes, and the Keras
-    Tuner trials. Only figures with data are written."""
+    one line per run), the population's mean setup, the GA's and NEAT's mean network size over training, the
+    step sizes, and the Keras Tuner trials. Only figures with data are written."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -731,7 +750,8 @@ def figures(runs_dir, out_dir):
     logs = evolution_logs(runs_dir)
     for name, column, ylabel, threshold in (
             ("success_over_training.png", "min_share", "Lowest map success share", config.MASTERY_FRACTION),
-            ("lap_time_over_training.png", "median_lap", "Median lap time (s)", None)):
+            ("lap_time_over_training.png", "median_lap", "Median lap time (s)", None),
+            ("network_size_over_training.png", "mean_nodes", "Hidden units or nodes (mean)", None)):
         fig = _panels(plt, logs, column, ylabel, threshold)
         if fig is None:
             continue
@@ -818,7 +838,8 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
               "training_cost": training_cost_table(runs_dir), "stages": stages_table(stages),
               "comparison": comparison_table(metrics), "search_cost": search_cost_table(runs_dir),
               "driving_selected": selected, "dataset": dataset_table(data_path),
-              "robustness": robustness_table(robust)}
+              "robustness": robustness_table(robust),
+              "evolved_networks": evolved_networks_table(drivers)}
     folder = out_dir / "tables"
     folder.mkdir(parents=True, exist_ok=True)
     per_track.to_csv(folder / "driving_per_track.csv", index=False)
