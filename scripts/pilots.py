@@ -1,8 +1,9 @@
 """Pilot runs of revision 3.2 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
 which show whether the 90% requirement can be reached with the reported settings, now with a road width of 10 to
 16 m per map and the position and width inputs, before the reported run starts. Each pilot starts over in
-results/pilots/revision3.2/<name>/ and adds a row to results/pilots/revision3.2/summary.md, with the population's mean
-sensor length and steering sensitivity at the end. Pilots are not part of the reported results.
+results/pilots/revision3.7/<name>/ and adds a row to results/pilots/revision3.7/summary.md, with the population's mean
+sensor length and steering sensitivity and, for the GA, its network size at the end. Pilots are not part of the
+reported results.
 
 Run with:  python scripts/pilots.py                       (ga, es, neat and seeded; 300 generations each)
            python scripts/pilots.py ga neat               (selected pilots)
@@ -23,7 +24,7 @@ from racing import config, es, ga, neat, paths  # noqa: E402
 
 PILOTS = ("ga", "es", "neat", "seeded")
 NAMES = {"ga": "GA", "es": "ES", "neat": "NEAT", "seeded": "Seeded ES"}
-OUT = config.PILOTS_DIR / "revision3.2"
+OUT = config.PILOTS_DIR / "revision3.7"
 
 
 def level_ups(log):
@@ -35,6 +36,15 @@ def level_ups(log):
         elif row.event == "goal":
             marks.append(f"goal@{int(row.generation)}")
     return " ".join(marks) or "none"
+
+
+def last_value(log, column, digits):
+    """The last generation's `column` rounded, or None (a blank in the table) when the log has no such column
+    (spec §12.2: the network size of the GA's pilot)."""
+    if column not in log or log[column].isna().all():
+        return None
+    value = round(float(log[column].dropna().iloc[-1]), digits)
+    return int(value) if digits == 0 else value
 
 
 def run_pilot(name, out, max_generations, n_jobs, pop_size):
@@ -66,6 +76,8 @@ def pilot(name, out_root=None, max_generations=300, n_jobs=None, pop_size=None):
             "min_share_last20": round(float(log["min_share"].tail(20).mean()), 3),
             "sensor_last": round(float(log["sensor_mean"].iloc[-1]), 1),
             "steer_last": round(float(log["steer_mean"].iloc[-1]), 2),
+            "mean hidden units": last_value(log, "mean_nodes", 1),
+            "largest parameters": last_value(log, "max_params", 0),
             "minutes": round(float(summary["wall_time"]) / 60, 1)}
 
 

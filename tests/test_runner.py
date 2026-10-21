@@ -843,6 +843,17 @@ def test_archive_runs_of_runs_that_are_not_here_moves_nothing(runner, tmp_path):
     assert moved == [] and not target.exists()
 
 
+def test_archive_runs_again_into_the_same_archive_moves_nothing(runner, tmp_path):
+    results = tmp_path / "results"
+    for seed in (0, 1):
+        make_run_files(results, "ga", seed)
+    runner.archive_runs(results, "x", jobs.parse_jobs("ga:0"))
+    target, moved = runner.archive_runs(results, "x", jobs.parse_jobs("ga:0"))      # nothing of ga:0 is left here
+    assert moved == [] and target.is_dir()
+    with pytest.raises(FileExistsError):                                              # ga:1 is here, "x" is taken
+        runner.archive_runs(results, "x", jobs.parse_jobs("ga:1"))
+
+
 def test_archive_with_runs_moves_them_and_exits(runner, tmp_path, monkeypatch, capsys):
     three_notebooks(tmp_path)
     make_run_files(tmp_path / "results", "ga", 0)

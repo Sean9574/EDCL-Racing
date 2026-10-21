@@ -667,7 +667,8 @@ def readiness(machine, facts, commit):
         problems.append(f"{machine.where}: no ec-racing Python; run: python scripts/fleet.py setup")
     if "results" in facts:
         problems.append(f"{machine.where}: its earlier results were made with other settings or cannot be read, so "
-                        "its runner would stop at once; keep them aside first: python scripts/fleet.py archive NAME")
+                        "its runner would stop at once; keep them aside first: python scripts/fleet.py archive NAME "
+                        "(or only some runs: archive NAME --runs ga:0,ga:1)")
     for target in facts["missing"]:
         problems.append(f"{machine.where}: {target} is missing; run: python scripts/fleet.py setup")
     return problems

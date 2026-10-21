@@ -616,3 +616,4 @@ def test_network_size_is_drawn_for_the_ga_and_neat(tmp_path):
         pd.DataFrame(rows).to_csv(folder / "log.csv", index=False)
     written = evaluate.figures(runs, tmp_path / "figures")
     assert tmp_path / "figures" / "network_size_over_training.png" in written
+    assert (tmp_path / "figures" / "network_size_over_training.png").is_file()

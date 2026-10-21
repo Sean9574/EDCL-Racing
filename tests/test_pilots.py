@@ -36,6 +36,12 @@ def test_level_ups_lists_each_level_reached_and_the_goal(pilots):
 def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
     row = pilots.pilot(name, tmp_path, max_generations=2, n_jobs=1, pop_size=60)
     assert row["generations"] == 2 and row["level_reached"] >= 1
+    log = pd.read_csv(tmp_path / name / "log.csv")
+    for key, column in (("mean hidden units", "mean_nodes"), ("largest parameters", "max_params")):
+        if column in log:                                       # the network size at the last generation
+            assert row[key] == pytest.approx(log[column].iloc[-1], abs=0.5)
+        else:
+            assert row[key] is None
     assert isinstance(row["level_ups"], str) and 0.0 <= row["min_share_last20"] <= 1.0
     low, high = config.SENSOR_LENGTH_LIMITS
     assert low <= row["sensor_last"] <= high                    # the population's mean setup at the end
@@ -44,8 +50,8 @@ def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
     assert (tmp_path / name / "log.csv").exists()
 
 
-def test_revision_3_1_pilots_have_their_own_folder(pilots):
-    assert pilots.OUT == config.PILOTS_DIR / "revision3.2"
+def test_revision_3_7_pilots_have_their_own_folder(pilots):
+    assert pilots.OUT == config.PILOTS_DIR / "revision3.7"
 
 
 def test_a_pilot_always_starts_over(pilots, tmp_path):

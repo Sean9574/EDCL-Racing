@@ -639,7 +639,7 @@ def _plot_runs(ax, runs, column, approach):
                 ax.axvline(generation, color="0.6", linewidth=0.6, linestyle=EVENT_STYLES[event], zorder=0)
 
 
-def _panels(plt, logs, column, ylabel, threshold=None):
+def _panels(plt, logs, column, ylabel, threshold=None, sharey=True):
     """Small multiples: one panel per method with data in `column`, one line per run (told apart by line style),
     level advancements and the mastery goal as solid and target reductions as dotted grey vertical lines. None if no
     method has data."""
@@ -651,7 +651,8 @@ def _panels(plt, logs, column, ylabel, threshold=None):
     n = len(with_data)
     ncols = min(4, n)
     nrows = -(-n // ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows), squeeze=False, sharey=True)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows), squeeze=False,
+                             sharey=sharey)
     for ax in axes.flat[n:]:
         ax.set_visible(False)
     for ax, (approach, runs) in zip(axes.flat, with_data.items()):
@@ -752,7 +753,7 @@ def figures(runs_dir, out_dir):
             ("success_over_training.png", "min_share", "Lowest map success share", config.MASTERY_FRACTION),
             ("lap_time_over_training.png", "median_lap", "Median lap time (s)", None),
             ("network_size_over_training.png", "mean_nodes", "Hidden units or nodes (mean)", None)):
-        fig = _panels(plt, logs, column, ylabel, threshold)
+        fig = _panels(plt, logs, column, ylabel, threshold, sharey=column != "mean_nodes")
         if fig is None:
             continue
         if column == "min_share":

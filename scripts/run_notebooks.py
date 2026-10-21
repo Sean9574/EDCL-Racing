@@ -402,24 +402,25 @@ def archive_results(results_dir, name):
 def archive_runs(results_dir, name, job_list):
     """--archive NAME --runs ...: move the named runs to results/archive/NAME/ under the same paths: each run's folder,
     final controller files, status file and output log (spec §3.3). Every other result stays. Refuses an existing
-    archive. Returns (the archive folder, the paths moved there)."""
+    archive when there is something to move; when none of the runs is here, nothing happens. Returns (the archive
+    folder, the paths moved there)."""
     results_dir = Path(results_dir)
     target = results_dir / "archive" / name
-    if target.exists():
-        raise FileExistsError(f"{target} already exists; choose another archive name")
     found = []
     for job in job_list:
         stem = job_stem(job)
         found.append(paths.run_dir(job.approach, job.seed, results_dir / "runs"))
         found += sorted((results_dir / "champions" / job.approach).glob(f"seed{job.seed}.*"))
         found += [results_dir / "status" / f"{stem}.json", results_dir / "train_logs" / f"{stem}.log"]
+    found = [source for source in found if source.exists()]
+    if found and target.exists():
+        raise FileExistsError(f"{target} already exists; choose another archive name")
     moved = []
     for source in found:
-        if source.exists():
-            destination = target / source.relative_to(results_dir)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source), str(destination))
-            moved.append(destination)
+        destination = target / source.relative_to(results_dir)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(destination))
+        moved.append(destination)
     return target, moved
 
 

@@ -30,7 +30,7 @@ it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
 road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
 they trained on. The evaluation adds a robustness table: the test maps rebuilt at 8, 10, 14 and 18 m, two of which no
-controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.6, which incorporates every
+controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.7, which incorporates every
 revision).
 
 ## Setup on a Windows desktop (WSL 2)
@@ -297,14 +297,21 @@ python scripts/fleet.py finish     # once all 32 runs have finished: collect, th
 Version 3.7 trains only the GA again; the runs of the other methods made with 3.6 stay valid:
 
 ```bash
+python scripts/fleet.py stop
 python scripts/fleet.py setup
 python scripts/fleet.py archive revision3.6-ga --runs ga:0,ga:1,ga:2,ga:3
 python scripts/fleet.py start
 ```
 
+The runners stop first, so that no job of 3.6 starts with the code of 3.7. The unfinished ES, NEAT and imitation runs
+continue from their checkpoints at the next start, while the GA runs of 3.6 are set aside and trained again. The race
+view's "best" run per method (`results/champions/best_seeds.json`) is renewed when notebook 08 runs after the GA runs
+have finished (`fleet.py finish`).
+
 - `start` checks every machine first and starts nothing unless all are ready: the server has this commit (commit
   code changes first; a server gets the last commit), its environment and inputs, no machine holds earlier results
-  made with other settings (keep those aside with `fleet.py archive NAME`), and no runner is still training on any
+  made with other settings (keep those aside with `fleet.py archive NAME`, or only some runs with
+  `fleet.py archive NAME --runs ga:0,ga:1`), and no runner is still training on any
   machine. Stop a runner started by hand first (Ctrl+C in its tmux session).
 - The runs keep going when GlobalProtect or SSH disconnects; only fleet.py's commands need the connection. On the
   desktop, keep WSL running as for any run (see above).
@@ -334,7 +341,7 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.2/` and are not part of the reported results; their summary includes
+The pilots write to `results/pilots/revision3.7/` and are not part of the reported results; their summary includes
 the populations' final mean sensor length and steering sensitivity. Before notebook 03 has run, leave out the seeded
 pilot: it needs a refined baseline of this revision.
 
