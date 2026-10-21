@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from racing import config, nets, population
 
@@ -166,3 +167,49 @@ def test_the_decision_mask_marks_the_last_layer():
     assert fewer.shape == (nets.n_params((16,), 10),) and fewer.sum() == last and fewer[-last:].all()
     layers = nets.unflatten(np.where(mask, 1.0, 0.0)[None, :], (16,))   # the mask is exactly the last layer
     assert all(np.all(part == (i == len(layers) - 1)) for i, layer in enumerate(layers) for part in layer)
+
+
+def test_shaped_outputs_equal_each_cars_own_dense_pass(shaped_cars):
+    cars = shaped_cars(13)
+    obs = np.random.default_rng(1).random((13, config.N_INPUTS)) * 2 - 0.5
+    logits = cars.logits(obs)
+    for i in range(13):
+        flat, hidden = cars.network(i)
+        assert np.array_equal(logits[i], nets.forward(flat[None, :], obs[i:i + 1], hidden, "relu")[0])
+    assert np.array_equal(cars.policy()(obs, None), np.argmax(logits, axis=1))
+    assert cars.n_inputs == config.N_INPUTS and len(cars) == 13
+
+
+def test_shaped_subsets_and_drivers_keep_each_cars_architecture_and_setup(shaped_cars):
+    cars = shaped_cars(12)
+    part = cars.subset([5, 0, 2])
+    assert part.shapes == [cars.shapes[5], cars.shapes[0], cars.shapes[2]]
+    assert all(np.array_equal(a, cars.weights[i]) for a, i in zip(part.weights, (5, 0, 2)))
+    assert np.array_equal(part.setup, cars.setup[[5, 0, 2]])
+    obs = np.random.default_rng(2).random((1, config.N_INPUTS))
+    for i in range(12):
+        driver = cars.driver(i)
+        assert np.array_equal(driver.act(obs), np.argmax(cars.subset([i]).logits(obs), axis=1))
+        assert np.array_equal(driver.setup, cars.setup[i]) and driver.n_params == nets.n_params(cars.shapes[i])
+
+
+def test_a_network_without_hidden_layers_maps_the_inputs_to_the_outputs():
+    flat = np.random.default_rng(3).normal(size=nets.n_params(()))
+    assert flat.size == (config.N_INPUTS + 1) * config.N_ACTIONS == 195
+    obs = np.random.default_rng(4).random((3, config.N_INPUTS))
+    w, b = flat[:config.N_INPUTS * config.N_ACTIONS].reshape(config.N_INPUTS, config.N_ACTIONS), flat[-config.N_ACTIONS:]
+    cars = nets.ShapedPopulation([(), (), ()], [flat] * 3)
+    assert np.allclose(cars.logits(obs), obs @ w + b, rtol=0, atol=1e-12)
+
+
+def test_shaped_populations_refuse_weights_that_do_not_fit_their_architecture():
+    with pytest.raises(ValueError, match="hidden layers"):
+        nets.ShapedPopulation([(4,)], [np.zeros(195)])
+    with pytest.raises(ValueError, match="architectures"):
+        nets.ShapedPopulation([(), ()], [np.zeros(195)])
+
+
+def test_a_dense_population_names_each_cars_network():
+    cars = nets.DensePopulation(np.arange(2 * 463, dtype=float).reshape(2, 463))
+    flat, hidden = cars.network(1)
+    assert np.array_equal(flat, cars.weights[1]) and hidden == config.BASELINE_HIDDEN

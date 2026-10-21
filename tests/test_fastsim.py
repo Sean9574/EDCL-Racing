@@ -185,7 +185,7 @@ def dense_cars(n, hidden=config.BASELINE_HIDDEN, activation="relu", n_inputs=con
 
 
 ARCHITECTURES = [((16,), "relu", config.N_INPUTS), ((32, 16), "tanh", config.N_INPUTS),
-                 ((8,), "linear", config.N_INPUTS), ((16,), "relu", 10)]
+                 ((8,), "linear", config.N_INPUTS), ((16,), "relu", 10), ((1,), "relu", config.N_INPUTS)]
 
 
 @needs_compiler
@@ -202,6 +202,25 @@ def test_dense_time_trials_equal_numpys(hidden, activation, n_inputs, circle_tra
     tracks = [circle_track, get_track(0, 1), get_track(1, 2)]
     cars = dense_cars(60, hidden, activation, n_inputs, seed=3)
     limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks]
+    for compiled, reference in zip(fastsim.simulate(tracks, cars, limits, laps=config.LAPS),
+                                   numpy_results(tracks, cars, limits, config.LAPS)):
+        same_results(compiled, reference)
+
+
+@needs_compiler
+@pytest.mark.parametrize("n", [1, 6, 40])
+def test_shaped_programs_compute_numpys_outputs(n, shaped_cars):
+    cars = shaped_cars(n, seed=n)
+    obs = np.random.default_rng(5).random((n, config.N_INPUTS)) * 2 - 0.5
+    assert np.array_equal(fastsim.forward(cars, obs), cars.logits(obs))
+
+
+@needs_compiler
+def test_shaped_time_trials_equal_numpys(circle_track, shaped_cars):
+    tracks = [circle_track, get_track(0, 1), get_track(1, 2)]
+    cars = shaped_cars(48, seed=7)
+    limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks]
+    assert fastsim.supports(cars)
     for compiled, reference in zip(fastsim.simulate(tracks, cars, limits, laps=config.LAPS),
                                    numpy_results(tracks, cars, limits, config.LAPS)):
         same_results(compiled, reference)

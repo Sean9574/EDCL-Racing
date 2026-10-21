@@ -121,11 +121,12 @@ def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEED
 
 def save_dense_champion(approach, seed, population, index, champion_dir=config.CHAMPIONS_DIR):
     """Final dense controller (spec §6, §9.5): a Keras file, the float64 weights (.npy) and the car's
-    setup (<seed>.setup.json); the architecture is the Keras file's. Returns the Keras file's path."""
+    setup (<seed>.setup.json), of a nets.DensePopulation or nets.ShapedPopulation; the architecture is the Keras
+    file's. Returns the Keras file's path."""
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    flat = population.weights[int(index)]
-    nets.to_keras(flat, population.hidden, population.activation).save(path)
+    flat, hidden = population.network(index)
+    nets.to_keras(flat, hidden, population.activation).save(path)
     np.save(paths.champion_path(approach, seed, ".npy", champion_dir), np.asarray(flat, dtype=float))
     paths.champion_path(approach, seed, ".setup.json", champion_dir).write_text(
         json.dumps(car_setup.to_dict(population.setup[int(index)])))

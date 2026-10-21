@@ -11,6 +11,25 @@ import pytest
 from racing.track import build_track
 
 
+SHAPED_ARCHITECTURES = [(), (5,), (8, 3), (1,), (), (4, 4, 2)]
+
+
+def make_shaped_cars(n, seed=0, shapes=SHAPED_ARCHITECTURES):
+    """Random networks of mixed architectures, some without hidden layers, with random setups (nets.ShapedPopulation)."""
+    from racing import nets
+    from racing import setup as car_setup
+    rng = np.random.default_rng(seed)
+    chosen = [shapes[i % len(shapes)] for i in range(n)]
+    weights = [nets.init_population(rng, 1, shape)[0] + rng.normal(0.0, 0.3, nets.n_params(shape)) for shape in chosen]
+    return nets.ShapedPopulation(chosen, weights, "relu", car_setup.random(rng, n))
+
+
+@pytest.fixture
+def shaped_cars():
+    """make_shaped_cars, for tests that need populations of mixed architectures."""
+    return make_shaped_cars
+
+
 @pytest.fixture
 def circle_track():
     """A counter-clockwise circle (radius 50 m, width 16 m) with a fixed expert lap time, built without the generator."""

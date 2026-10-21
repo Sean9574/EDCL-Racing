@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from racing import config, expert, nets, population, sim
+from racing import config, expert, nets, paths, population, sim
 from racing import setup as car_setup
 
 
@@ -207,3 +207,15 @@ def test_compiled_time_trials_use_the_thread_count_not_the_worker_count(monkeypa
     monkeypatch.setattr(config, "thread_count", lambda: 3)
     population.evaluate_population(dense(4), [0, 1], 1, config.TARGET_FACTOR, n_jobs=7)
     assert seen == [3]
+
+
+def test_a_shaped_champion_saves_and_drives_like_its_car(tmp_path, shaped_cars):
+    cars = shaped_cars(6)
+    obs = np.random.default_rng(8).random((4, config.N_INPUTS))
+    for index in (0, 2):                                  # architectures () and (8, 3)
+        population.save_dense_champion("ga", index, cars, index, tmp_path)
+        model, driver = nets.load_champion("ga", index, tmp_path)
+        assert np.array_equal(np.load(paths.champion_path("ga", index, ".npy", tmp_path)), cars.weights[index])
+        assert np.array_equal(driver.act(obs), cars.driver(index).act(obs))
+        assert np.array_equal(driver.setup, cars.setup[index])
+        assert model.count_params() == nets.n_params(cars.shapes[index])

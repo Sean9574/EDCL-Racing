@@ -78,13 +78,24 @@ def activate(h, name):
     raise ValueError(f"unsupported activation: {name}")
 
 
+def _sum_products(h, weights):
+    """einsum("ni,nij->nj"): each unit sums input × weight in input order, from zero. For a layer of one unit numpy
+    would sum in SIMD lanes, which no sequential sum (the compiled simulator's) reproduces, so that sum is explicit."""
+    if weights.shape[2] != 1:
+        return np.einsum("ni,nij->nj", h, weights)
+    total = np.zeros((h.shape[0], 1))
+    for k in range(weights.shape[1]):
+        total = total + h[:, k:k + 1] * weights[:, k, :]
+    return total
+
+
 def forward(flat, obs, hidden=config.BASELINE_HIDDEN, activation="relu"):
     """Logits (n, N_ACTIONS) for n cars, each with its own weights: flat (n, P), obs (n, N_INPUTS). A network of an
     earlier revision reads only its first inputs."""
     layers = unflatten(flat, hidden)
     h = obs[:, :layers[0][0].shape[1]]
     for i, (weights, bias) in enumerate(layers):
-        h = np.einsum("ni,nij->nj", h, weights) + bias
+        h = _sum_products(h, weights) + bias
         if i < len(layers) - 1:
             h = activate(h, activation)
     return h
@@ -127,6 +138,70 @@ class DensePopulation:
 
     def driver(self, i):
         return from_flat(self.weights[int(i)], self.hidden, self.activation, self.setup[int(i)])
+
+    def network(self, i):
+        """(flat weights, hidden layer sizes) of car i."""
+        return self.weights[int(i)], self.hidden
+
+
+class ShapedPopulation:
+    """Dense networks whose hidden layers differ from car to car (the GA, spec §9.6): one architecture, one flat
+    weight vector in the layout of unflatten and one setup row per car; every network reads config.N_INPUTS inputs.
+    It offers the population interface of DensePopulation. The numpy forward pass groups the cars by architecture and
+    runs one einsum per layer for each group, so no network is padded."""
+
+    def __init__(self, shapes, weights, activation="relu", setup=None):
+        self.shapes = [tuple(int(units) for units in shape) for shape in shapes]
+        self.weights = [np.asarray(w, dtype=float) for w in weights]
+        if len(self.shapes) != len(self.weights):
+            raise ValueError(f"{len(self.shapes)} architectures for {len(self.weights)} networks")
+        for shape, w in zip(self.shapes, self.weights):
+            if w.shape != (n_params(shape),):
+                raise ValueError(f"a network with hidden layers {shape} has {n_params(shape)} weights, not {w.shape}")
+        self.activation = activation
+        self.setup = car_setup.as_rows(setup, len(self.weights))
+
+    def __len__(self):
+        return len(self.weights)
+
+    @property
+    def n_inputs(self):
+        return config.N_INPUTS
+
+    def groups(self):
+        """{architecture: car indices (int64)}, in order of first appearance."""
+        found = {}
+        for i, shape in enumerate(self.shapes):
+            found.setdefault(shape, []).append(i)
+        return {shape: np.array(cars, dtype=np.int64) for shape, cars in found.items()}
+
+    def stacks(self):
+        """[(architecture, car indices, their flat weights stacked (k, P))]: what logits computes with."""
+        return [(shape, cars, np.stack([self.weights[i] for i in cars])) for shape, cars in self.groups().items()]
+
+    def logits(self, obs, stacks=None):
+        """Outputs (n, N_ACTIONS) of every car's network for its own row of obs."""
+        out = np.zeros((len(self), config.N_ACTIONS))
+        for shape, cars, weights in self.stacks() if stacks is None else stacks:
+            out[cars] = forward(weights, obs[cars], shape, self.activation)
+        return out
+
+    def subset(self, indices):
+        indices = np.asarray(indices, dtype=np.int64).ravel()
+        return ShapedPopulation([self.shapes[int(i)] for i in indices], [self.weights[int(i)] for i in indices],
+                                self.activation, self.setup[indices])
+
+    def policy(self):
+        """Policy for sim.simulate: car i is driven by its own network; the groups are stacked once, here."""
+        stacks = self.stacks()
+        return lambda obs, cars: np.argmax(self.logits(obs, stacks), axis=1)
+
+    def network(self, i):
+        """(flat weights, hidden layer sizes) of car i."""
+        return self.weights[int(i)], self.shapes[int(i)]
+
+    def driver(self, i):
+        return from_flat(self.weights[int(i)], self.shapes[int(i)], self.activation, self.setup[int(i)])
 
 
 class DenseNet:

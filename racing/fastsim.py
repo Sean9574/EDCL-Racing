@@ -1,4 +1,4 @@
-"""Compiled simulator (spec §5.7): time trials of dense and NEAT populations and the expert's lap, computed by
+"""Compiled simulator (spec §5.7): time trials of dense populations (of one architecture or one per car), NEAT populations and the expert's lap, computed by
 racing/fastsim.cpp exactly as racing/sim.py computes them. The library is built with the C++ compiler (compiler()) the
 first time it is needed, under a name given by its build identity (the source, the compiler flags and the processor);
 without a compiler the numpy simulator runs instead, with identical results."""
@@ -343,6 +343,31 @@ def dense_program(population):
                     outputs=np.tile(previous, (n, 1)).astype(np.int64))
 
 
+def shaped_program(population):
+    """Programs of a nets.ShapedPopulation: each car's own dense program (dense_program of its architecture's group),
+    in car order, so every car sums as np.einsum does in nets.forward (spec §9.6)."""
+    n = len(population)
+    pieces = [None] * n
+    for shape, cars in population.groups().items():
+        group = dense_program(nets.DensePopulation(np.stack([population.weights[i] for i in cars]), shape,
+                                                   population.activation))
+        per_car = int(group.node_offset[1])
+        for j, car in enumerate(cars.tolist()):
+            first, last = j * per_car, (j + 1) * per_car
+            conns = slice(int(group.conn_offset[first]), int(group.conn_offset[last]))
+            pieces[car] = (group.bias[first:last], group.activation[first:last],
+                           np.diff(group.conn_offset[first:last + 1]), group.source[conns], group.weight[conns],
+                           group.outputs[j])
+    counts = np.concatenate([piece[2] for piece in pieces])
+    return Programs(node_offset=np.concatenate([[0], np.cumsum([len(piece[0]) for piece in pieces])]).astype(np.int64),
+                    bias=np.concatenate([piece[0] for piece in pieces]).astype(np.float64),
+                    activation=np.concatenate([piece[1] for piece in pieces]).astype(np.int64),
+                    conn_offset=np.concatenate([[0], np.cumsum(counts)]).astype(np.int64),
+                    source=np.concatenate([piece[3] for piece in pieces]).astype(np.int64),
+                    weight=np.concatenate([piece[4] for piece in pieces]).astype(np.float64),
+                    outputs=np.array([piece[5] for piece in pieces], dtype=np.int64).reshape(n, config.N_ACTIONS))
+
+
 def neat_program(population):
     """Programs of a neat.NeatPopulation: nodes by depth (neat.node_depths), each with its enabled connections in
     genome order, so it sums as np.bincount does in neat.forward; hidden nodes use tanh, outputs the identity."""
@@ -373,14 +398,17 @@ def neat_program(population):
 
 
 def supports(population):
-    """True for the populations the compiled simulator drives: dense and NEAT (spec §5.7)."""
+    """True for the populations the compiled simulator drives: dense (one architecture or one per car) and NEAT
+    (spec §5.7)."""
     from racing import neat
-    return isinstance(population, (nets.DensePopulation, neat.NeatPopulation))
+    return isinstance(population, (nets.DensePopulation, nets.ShapedPopulation, neat.NeatPopulation))
 
 
 def program(population):
     if isinstance(population, nets.DensePopulation):
         return dense_program(population)
+    if isinstance(population, nets.ShapedPopulation):
+        return shaped_program(population)
     from racing import neat
     if isinstance(population, neat.NeatPopulation):
         return neat_program(population)

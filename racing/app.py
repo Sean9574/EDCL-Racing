@@ -203,7 +203,7 @@ def report_inputs(report):
     if "population" not in report:
         return report["nets"][0].n_inputs
     population = report["population"]
-    return population.n_inputs if isinstance(population, nets.DensePopulation) else None
+    return population.n_inputs if isinstance(population, (nets.DensePopulation, nets.ShapedPopulation)) else None
 
 
 def run_folders(results_dir=config.RESULTS_DIR):
