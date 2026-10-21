@@ -176,3 +176,30 @@ def test_the_machine_record_names_the_thread_setting_and_the_worker_count(monkey
     monkeypatch.setattr(config, "THREADS", None)
     record = checkpoint.machine_record()
     assert record["threads"] == "all" and record["n_jobs"] == config.N_JOBS
+
+
+def test_a_methods_own_settings_are_recorded_only_in_its_runs():
+    own = set(checkpoint.METHOD_SETTINGS_KEYS["ga"])
+    assert own == {"GA_START_HIDDEN", "GA_ADD_UNIT", "GA_REMOVE_UNIT", "GA_ADD_LAYER", "GA_REMOVE_LAYER"}
+    assert not own & set(checkpoint.SETTINGS_KEYS)
+    assert own <= set(checkpoint.settings_record("ga"))
+    for approach in (None, "es", "es_seeded", "neat", "baseline", "kt_random"):
+        assert checkpoint.settings_record(approach) == checkpoint.settings_record()
+    assert checkpoint.settings_record("ga")["GA_START_HIDDEN"] == [] and config.GA_ADD_UNIT == 0.03
+    assert (config.GA_REMOVE_UNIT, config.GA_ADD_LAYER, config.GA_REMOVE_LAYER) == (0.03, 0.01, 0.01)
+
+
+def test_a_ga_record_without_the_ga_settings_is_refused_and_other_records_are_not():
+    shared = json.loads(json.dumps(checkpoint.settings_record()))       # a record of version 3.6
+    with pytest.raises(checkpoint.SettingsMismatch, match="GA_ADD_UNIT: recorded None, now 0.03"):
+        checkpoint.check_settings(shared, "ga")
+    checkpoint.check_settings(shared, "es")
+    checkpoint.check_settings(shared)
+    checkpoint.check_settings(json.loads(json.dumps(checkpoint.settings_record("ga"))), "ga")
+
+
+def test_completed_checks_the_methods_own_settings(tmp_path):
+    (tmp_path / "summary.json").write_text(json.dumps({"settings": checkpoint.settings_record()}))
+    with pytest.raises(checkpoint.SettingsMismatch, match="GA_START_HIDDEN"):
+        checkpoint.completed(tmp_path, approach="ga")
+    assert checkpoint.completed(tmp_path, approach="neat")["settings"] == checkpoint.settings_record()

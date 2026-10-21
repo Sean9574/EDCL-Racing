@@ -173,7 +173,7 @@ def test_other_maps_or_no_resume_collect_again(monkeypatch, tmp_path):
 
 def test_a_dataset_collected_with_other_settings_is_refused(monkeypatch, tmp_path):
     expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
-    monkeypatch.setattr(checkpoint, "settings_record", lambda: {"TARGET_FACTOR": 9.9})
+    monkeypatch.setattr(checkpoint, "settings_record", lambda approach=None: {"TARGET_FACTOR": 9.9})
     with pytest.raises(checkpoint.SettingsMismatch):
         expert.collect_dataset(tmp_path / "d.npz", splits=SMALL_SPLITS)
 

@@ -328,7 +328,7 @@ def test_an_unreadable_summary_next_to_its_checkpoint_finishes_by_itself(runner,
     run.mkdir(parents=True)
     (run / "summary.json").write_text("")
     runner.checkpoint.save(run / runner.checkpoint.CHECKPOINT_NAME,
-                           {"generation": 9, "settings": runner.checkpoint.settings_record()})
+                           {"generation": 9, "settings": runner.checkpoint.settings_record("ga")})
     assert run_main(runner, tmp_path, []) == 0
 
 
@@ -711,7 +711,7 @@ def test_archive_moves_what_fresh_would_delete(runner, tmp_path):
         runner.archive_results(results, "revision3.1")
 
 
-@pytest.mark.parametrize("extra", [["--fresh"], ["--from", "02"], ["--runs", "ga:0"]])
+@pytest.mark.parametrize("extra", [["--fresh"], ["--from", "02"]])
 def test_archive_runs_nothing_else(runner, tmp_path, capsys, extra):
     three_notebooks(tmp_path)
     assert run_main(runner, tmp_path, ["--archive", "x", *extra]) == 2
@@ -796,3 +796,63 @@ def test_a_search_job_runs_racing_train_search_with_its_own_status_file(runner, 
     assert runner.job_command(job, tmp_path / "s.json") == [sys.executable, "-m", "racing.train", "search",
                                                             "kt_hyperband", "--status", str(tmp_path / "s.json")]
     assert runner.job_stem(job) == "search-kt_hyperband" and runner.job_stem(jobs.parse_job("nb:01")) == "nb-01"
+
+
+def test_version_3_6_runs_of_other_methods_stay_valid_and_its_ga_runs_do_not(runner, tmp_path):
+    runs = tmp_path / "results" / "runs"
+    shared = checkpoint.settings_record()                                # what version 3.6 recorded
+    for approach in ("es", "neat", "es_seeded", "ga"):
+        folder = runs / approach / "seed0"
+        folder.mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({"approach": approach, "settings": shared}))
+    problems, unreadable = runner.check_results(runs)
+    assert not unreadable and len(problems) == 1 and problems[0].startswith("ga/seed0/summary.json")
+    (runs / "ga" / "seed0" / "summary.json").write_text(
+        json.dumps({"approach": "ga", "settings": checkpoint.settings_record("ga")}))
+    assert runner.check_results(runs) == ([], [])
+
+
+def make_run_files(results, approach, seed):
+    stem = f"{approach}-seed{seed}"
+    for name in (f"runs/{approach}/seed{seed}/log.csv", f"champions/{approach}/seed{seed}.keras",
+                 f"champions/{approach}/seed{seed}.npy", f"champions/{approach}/seed{seed}.setup.json",
+                 f"status/{stem}.json", f"train_logs/{stem}.log"):
+        (results / name).parent.mkdir(parents=True, exist_ok=True)
+        (results / name).write_text(name)
+
+
+def test_archive_runs_moves_only_the_named_runs(runner, tmp_path):
+    results = tmp_path / "results"
+    for approach, seed in (("ga", 1), ("ga", 10), ("es", 1)):
+        make_run_files(results, approach, seed)
+    (results / "dataset.npz").write_text("data")
+    target, moved = runner.archive_runs(results, "revision3.6-ga", jobs.parse_jobs("ga:1"))
+    assert target == results / "archive" / "revision3.6-ga" and len(moved) == 6
+    assert (target / "runs" / "ga" / "seed1" / "log.csv").read_text() == "runs/ga/seed1/log.csv"
+    assert (target / "champions" / "ga" / "seed1.setup.json").exists()
+    assert (target / "status" / "ga-seed1.json").exists() and (target / "train_logs" / "ga-seed1.log").exists()
+    assert not (results / "runs" / "ga" / "seed1").exists() and not (results / "champions" / "ga" / "seed1.npy").exists()
+    assert (results / "champions" / "ga" / "seed10.keras").exists() and (results / "runs" / "ga" / "seed10").is_dir()
+    assert (results / "runs" / "es" / "seed1").is_dir() and (results / "dataset.npz").exists()
+    with pytest.raises(FileExistsError):
+        runner.archive_runs(results, "revision3.6-ga", [jobs.Job(label="ga:10", approach="ga", seed=10)])
+
+
+def test_archive_runs_of_runs_that_are_not_here_moves_nothing(runner, tmp_path):
+    target, moved = runner.archive_runs(tmp_path / "results", "x", jobs.parse_jobs("ga:0,ga:1"))
+    assert moved == [] and not target.exists()
+
+
+def test_archive_with_runs_moves_them_and_exits(runner, tmp_path, monkeypatch, capsys):
+    three_notebooks(tmp_path)
+    make_run_files(tmp_path / "results", "ga", 0)
+    monkeypatch.setattr(runner, "execute", lambda *a, **k: pytest.fail("a notebook was run"))
+    assert run_main(runner, tmp_path, ["--archive", "revision3.6-ga", "--runs", "ga:0"]) == 0
+    assert (tmp_path / "results" / "archive" / "revision3.6-ga" / "runs" / "ga" / "seed0").is_dir()
+    assert "ga:0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("runs", ["search:kt_random", "nb:01", "ga:9"])
+def test_archive_with_runs_takes_runs_of_the_experiment_only(runner, tmp_path, runs):
+    three_notebooks(tmp_path)
+    assert run_main(runner, tmp_path, ["--archive", "x", "--runs", runs]) == 2

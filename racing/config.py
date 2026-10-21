@@ -105,6 +105,11 @@ GA_CROSSOVER_P = 0.5
 GA_MUTATION_P = 0.1
 GA_S_MAX = 0.1               # chosen by the pilot runs (scripts/pilots.py) from 0.5, 0.2 and 0.1, fastest level progression
 GA_S_MIN = GA_S_MAX / 100
+GA_START_HIDDEN = ()         # hidden layer sizes in generation 0: none, the inputs wired to the outputs (spec §9.6)
+GA_ADD_UNIT = 0.03           # per child: a random hidden layer gains a unit with zero outgoing weights
+GA_REMOVE_UNIT = 0.03        # per child: a random hidden unit is removed (with its layer if it was the only unit)
+GA_ADD_LAYER = 0.01          # per child: an identity hidden layer is inserted at a random depth
+GA_REMOVE_LAYER = 0.01       # per child: a random hidden layer is removed, its neighbours joined by their product
 
 # --- Evolution strategy (spec §9.7) ---
 ES_POP = 550

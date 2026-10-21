@@ -434,7 +434,7 @@ def finished_run(results, approach, seed, settings=None, champion=b"weights"):
     record = paths.final_record(approach, seed, results / "runs")
     record.parent.mkdir(parents=True, exist_ok=True)
     checkpoint.write_json(record, {"approach": approach, "seed": seed,
-                                   "settings": settings or checkpoint.settings_record()})
+                                   "settings": settings or checkpoint.settings_record(approach)})
     (run / "log.csv").write_text("generation\n0\n")
     champions = results / "champions" / approach
     champions.mkdir(parents=True, exist_ok=True)
@@ -592,6 +592,23 @@ def test_archive_moves_the_earlier_results_on_every_machine(fake):
     out = io.StringIO()
     fake.fleet.archive([fake.machines()[1]], "revision3.1", out=out)
     assert (fake.tmp / "server-args").read_text().strip() == "scripts/run_notebooks.py --archive revision3.1"
+
+
+def test_archive_with_runs_moves_only_those_runs_on_every_machine(fake):
+    fake.ready_server()
+    python = fake.home("server") / "miniforge3" / "envs" / "ec-racing" / "bin" / "python"
+    python.write_text(f"#!/bin/sh\necho \"$@\" > {fake.tmp / 'server-args'}\n")
+    script = fake.fleet.archive_script(fake.machines()[0], "revision3.6-ga", ["ga:0", "ga:1"])
+    assert "scripts/run_notebooks.py --archive revision3.6-ga --runs ga:0,ga:1" in script
+    fake.fleet.archive([fake.machines()[1]], "revision3.6-ga", out=io.StringIO(), runs=["ga:0", "ga:1"])
+    assert (fake.tmp / "server-args").read_text().strip() == (
+        "scripts/run_notebooks.py --archive revision3.6-ga --runs ga:0,ga:1")
+
+
+def test_runs_is_an_option_of_archive_only(fake, capsys, monkeypatch):
+    monkeypatch.setattr(fake.fleet, "load_plan", lambda plan: fake.machines())
+    assert fake.fleet.main(["status", "--runs", "ga:0"]) == 2
+    assert fake.fleet.main(["archive", "x", "--runs", "ga:x"]) == 2
 
 
 def test_a_dagger_run_from_a_server_joins_its_imitation_files_here(fake):

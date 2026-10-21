@@ -68,7 +68,7 @@ def test_small_run_logs_every_generation(evaluation, tmp_path):
     assert len(maps) == len(set(maps)) == 9 and min(maps) >= config.TRAIN_SEED_START   # fresh maps, never reused
     assert (tmp_path / "run" / checkpoint.CHECKPOINT_NAME).exists()
     saved = json.loads((tmp_path / "run" / "summary.json").read_text())
-    assert saved["settings"] == checkpoint.settings_record() and saved["goal_reached"] is False
+    assert saved["settings"] == checkpoint.settings_record("ga") and saved["goal_reached"] is False
     assert saved["champion_path"] is None and saved["level_reached"] == 1
 
 

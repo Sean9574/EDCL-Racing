@@ -11,6 +11,7 @@ with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through
                                     next start
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
   python scripts/fleet.py archive NAME   every machine moves its earlier results to results/archive/NAME/
+  python scripts/fleet.py archive NAME --runs ga:0,ga:1   ... only those runs (version 3.7: the GA)
   python scripts/fleet.py finish    once all 32 runs have finished: collect, then notebooks 02 to 08 (they find
                                     the networks, searches and runs complete and report them) and the evaluation, in
                                     the "fleet" session here
@@ -820,7 +821,8 @@ def place_run(staging, results, run, source):
     except (OSError, checkpoint.UnreadableRecord) as error:
         raise FleetError(f"{name} from {source}: its summary cannot be read ({error})") from error
     try:
-        checkpoint.check_settings(summary.get("settings") if isinstance(summary.get("settings"), dict) else {})
+        checkpoint.check_settings(
+            summary.get("settings") if isinstance(summary.get("settings"), dict) else {}, approach)
     except checkpoint.SettingsMismatch as error:
         raise FleetError(f"{name} from {source}: {error}") from error
     target = results / "runs" / approach / f"seed{seed}"
@@ -936,17 +938,18 @@ def finish(machines, out=sys.stdout):
     return 0
 
 
-def archive_script(machine, name):
+def archive_script(machine, name, runs=None):
+    option = "" if runs is None else f" --runs {shlex.quote(','.join(runs))}"
     return (f"cd {machine.root} 2>/dev/null || {{ echo 'no project here, nothing to archive'; exit 0; }}\n"
-            f"{machine.python} scripts/run_notebooks.py --archive {shlex.quote(name)}\n")
+            f"{machine.python} scripts/run_notebooks.py --archive {shlex.quote(name)}{option}\n")
 
 
-def archive(machines, name, out=sys.stdout):
+def archive(machines, name, out=sys.stdout, runs=None):
     """Move every machine's earlier results to results/archive/NAME/ (run_notebooks.py --archive), so the next start
-    begins afresh everywhere (spec §3.3)."""
+    begins afresh everywhere; with `runs`, only those runs (spec §3.3)."""
     problems = 0
     for machine in machines:
-        code, answer, err = run_shell(machine, archive_script(machine, name))
+        code, answer, err = run_shell(machine, archive_script(machine, name, runs))
         print(f"{machine.where}: {(answer.strip() or err.strip() or f'exit code {code}').splitlines()[-1]}", file=out)
         problems += code != 0
     return 1 if problems else 0
@@ -959,10 +962,20 @@ def main(argv=None, plan=PLAN, out=sys.stdout):
     parser = argparse.ArgumentParser(description="Train the experiment's runs on several machines at once.")
     parser.add_argument("command", choices=[*COMMANDS, "collect", "archive"])
     parser.add_argument("name", nargs="?", help="with archive: the archive's name, for example revision3.1")
+    parser.add_argument("--runs", help="with archive: move only these runs, for example ga:0,ga:1,ga:2,ga:3")
     args = parser.parse_args(argv)
     if (args.command == "archive") != (args.name is not None):
         print("error: archive takes a name (fleet.py archive revision3.1), and only archive does", file=sys.stderr)
         return 2
+    if args.runs is not None:
+        if args.command != "archive":
+            print("error: --runs is an option of archive only", file=sys.stderr)
+            return 2
+        try:
+            jobs.parse_jobs(args.runs)
+        except ValueError as error:
+            print(f"error: --runs {error}", file=sys.stderr)
+            return 2
     try:
         machines = load_plan(plan)
     except PlanError as error:
@@ -972,7 +985,7 @@ def main(argv=None, plan=PLAN, out=sys.stdout):
         if args.command == "collect":
             return 1 if collect(machines, out) else 0
         if args.command == "archive":
-            return archive(machines, args.name, out)
+            return archive(machines, args.name, out, args.runs.split(",") if args.runs else None)
         return COMMANDS[args.command](machines, out=out)
     except FleetError as error:
         print(f"error: {error}", file=sys.stderr)

@@ -9,6 +9,8 @@ Side by side:    python scripts/run_notebooks.py --runs nb:01,search:kt_random,b
                  runs and searches complete later. scripts/fleet.py starts this on several machines.)
 Archive:         python scripts/run_notebooks.py --archive revision3.1
                  (moves the earlier results to results/archive/revision3.1/ and exits; the next start begins afresh)
+                 python scripts/run_notebooks.py --archive revision3.6-ga --runs ga:0,ga:1
+                 (moves only these runs: folder, final controller, status file and log; everything else stays)
 In background:   mkdir -p results
                  nohup python scripts/run_notebooks.py > results/run_console.txt 2>&1 &
 Progress:        python -m racing.progress                     (from another terminal)
@@ -250,8 +252,10 @@ def check_results(runs_dir):
         if recorded is None:
             problems.append(f"{name}: no settings record (made by an earlier version)")
             continue
+        parts = path.relative_to(runs_dir).parts
+        approach = parts[0] if len(parts) > 1 and parts[0] in config.APPROACHES else None
         try:
-            checkpoint.check_settings(recorded)
+            checkpoint.check_settings(recorded, approach)
         except checkpoint.SettingsMismatch as error:
             problems.append(f"{name}: {error}")
     return problems, unreadable
@@ -393,6 +397,30 @@ def archive_results(results_dir, name):
         if source.exists():
             shutil.move(str(source), str(target / item))
     return target
+
+
+def archive_runs(results_dir, name, job_list):
+    """--archive NAME --runs ...: move the named runs to results/archive/NAME/ under the same paths: each run's folder,
+    final controller files, status file and output log (spec §3.3). Every other result stays. Refuses an existing
+    archive. Returns (the archive folder, the paths moved there)."""
+    results_dir = Path(results_dir)
+    target = results_dir / "archive" / name
+    if target.exists():
+        raise FileExistsError(f"{target} already exists; choose another archive name")
+    found = []
+    for job in job_list:
+        stem = job_stem(job)
+        found.append(paths.run_dir(job.approach, job.seed, results_dir / "runs"))
+        found += sorted((results_dir / "champions" / job.approach).glob(f"seed{job.seed}.*"))
+        found += [results_dir / "status" / f"{stem}.json", results_dir / "train_logs" / f"{stem}.log"]
+    moved = []
+    for source in found:
+        if source.exists():
+            destination = target / source.relative_to(results_dir)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+            moved.append(destination)
+    return target, moved
 
 
 def notebook_job(number, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH):
@@ -565,7 +593,8 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
     parser.add_argument("--fresh", action="store_true", help="remove the earlier results and start over")
     parser.add_argument("--runs", help="run these jobs side by side instead of the notebooks in order: runs of any "
                                        "method, the Keras Tuner searches search:<method> and notebook 01, for example "
-                                       "nb:01,search:kt_random,baseline:0,ga:1")
+                                       "nb:01,search:kt_random,baseline:0,ga:1; "
+                                       "with --archive: move only these runs")
     parser.add_argument("--at-once", type=int, default=1, help="with --runs: how many run at the same time")
     parser.add_argument("--archive", metavar="NAME", help="move the earlier results to results/archive/NAME/ and exit")
     parser.add_argument("--check", action="store_true",
@@ -576,8 +605,8 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
         return notebook_job(args.notebook_job, notebook_dir, log_path)
     if args.check:                                     # read-only, so no lock (scripts/fleet.py start asks this)
         return 3 if report_results(results_dir) else 0
-    if args.archive is not None and (args.fresh or args.start is not None or args.runs is not None):
-        print("error: --archive moves the earlier results and runs nothing; use it on its own", file=sys.stderr)
+    if args.archive is not None and (args.fresh or args.start is not None):
+        print("error: --archive moves earlier results and runs nothing; use it alone or with --runs", file=sys.stderr)
         return 2
     if args.runs is not None:
         try:
@@ -588,15 +617,22 @@ def main(argv=None, notebook_dir=NOTEBOOK_DIR, log_path=config.RUN_LOG_PATH, inf
         if args.start is not None or args.fresh:
             print("error: --runs cannot be combined with --from or --fresh", file=sys.stderr)
             return 2
-        if args.at_once < 1:
-            print("error: --at-once must be at least 1", file=sys.stderr)
-            return 2
-        unmet = jobs.unmet(args.runs, results_dir)
-        for job, path in unmet:
-            print(f"error: {job.label} needs {path}, which neither exists nor is made by a listed job",
-                  file=sys.stderr)
-        if unmet:
-            return 2
+        if args.archive is not None:                   # nothing runs: only runs of the experiment can be set aside
+            for job in args.runs:
+                if job.is_notebook or job.is_search or job.seed not in config.RUN_SEEDS:
+                    print(f"error: --archive --runs takes runs of the experiment only, not {job.label}",
+                          file=sys.stderr)
+                    return 2
+        else:
+            if args.at_once < 1:
+                print("error: --at-once must be at least 1", file=sys.stderr)
+                return 2
+            unmet = jobs.unmet(args.runs, results_dir)
+            for job, path in unmet:
+                print(f"error: {job.label} needs {path}, which neither exists nor is made by a listed job",
+                      file=sys.stderr)
+            if unmet:
+                return 2
     if args.start is not None:
         prefixes = sorted({name[:2] for name in notebook_names(notebook_dir)})
         if args.start not in prefixes:
@@ -629,12 +665,24 @@ def locked_main(args, notebook_dir, log_path, info_path, results_dir, status_pat
         return 4
     try:
         if getattr(args, "archive", None) is not None:
+            runs = getattr(args, "runs", None)
             try:
-                target = archive_results(results_dir, args.archive)
+                if runs is None:
+                    target = archive_results(results_dir, args.archive)
+                else:
+                    target, moved = archive_runs(results_dir, args.archive, runs)
             except FileExistsError as error:
                 print(f"error: {error}", file=sys.stderr)
                 return 2
-            print(f"The earlier results are in {target}; the next start begins afresh.")
+            if runs is None:
+                print(f"The earlier results are in {target}; the next start begins afresh.")
+            else:
+                labels = ", ".join(job.label for job in runs)
+                if moved:
+                    print(f"Moved {len(moved)} files and folders of {labels} to {target}; the next start trains "
+                          "them again.")
+                else:
+                    print(f"None of {labels} is here; nothing was moved.")
             return 0
         if args.fresh:
             fresh_start(results_dir)

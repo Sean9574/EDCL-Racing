@@ -42,6 +42,17 @@ SETTINGS_KEYS = (
     "HYPERBAND_ITERATIONS", "SIZE_RULE_TOLERANCE", "STEPS_PER_EXECUTION", "JIT_COMPILE",
 )
 
+# Settings that affect only one method's results (spec §3.3): recorded and checked only in that method's runs, so the
+# runs of the other methods made before such a setting existed stay valid.
+METHOD_SETTINGS_KEYS = {
+    "ga": ("GA_START_HIDDEN", "GA_ADD_UNIT", "GA_REMOVE_UNIT", "GA_ADD_LAYER", "GA_REMOVE_LAYER"),
+}
+
+
+def settings_keys(approach=None):
+    """The settings that affect the results of `approach`'s runs: the shared ones, then the method's own."""
+    return SETTINGS_KEYS + METHOD_SETTINGS_KEYS.get(approach, ())
+
 
 class SettingsMismatch(RuntimeError):
     """The settings recorded with a run differ from the current configuration."""
@@ -66,9 +77,10 @@ def plain(value):
     return json.loads(json.dumps(value, default=_json_value))
 
 
-def settings_record():
-    """{name: value} of the settings that affect results, in JSON form."""
-    return {name: plain(getattr(config, name)) for name in SETTINGS_KEYS}
+def settings_record(approach=None):
+    """{name: value} of the settings that affect the results of `approach`'s runs (the shared settings when approach
+    is None), in JSON form."""
+    return {name: plain(getattr(config, name)) for name in settings_keys(approach)}
 
 
 def processor():
@@ -89,9 +101,10 @@ def machine_record():
             "threads": config.thread_label(), "n_jobs": config.N_JOBS, "simulator": fastsim.description()}
 
 
-def check_settings(recorded):
-    """Raise SettingsMismatch if `recorded` differs from the current settings, naming every difference."""
-    current = settings_record()
+def check_settings(recorded, approach=None):
+    """Raise SettingsMismatch if `recorded` differs from the current settings of `approach`'s runs, naming every
+    difference."""
+    current = settings_record(approach)
     recorded = plain(recorded)
     differences = [f"{name}: recorded {recorded.get(name)!r}, now {current.get(name)!r}"
                    for name in sorted(set(recorded) | set(current)) if recorded.get(name) != current.get(name)]
@@ -159,11 +172,12 @@ def read_record(path):
     return record
 
 
-def completed(run_dir, name="summary.json", state_name=CHECKPOINT_NAME):
+def completed(run_dir, name="summary.json", state_name=CHECKPOINT_NAME, approach=None):
     """The summary of a completed run in `run_dir`, or None if the run has not completed. A summary made with other
     settings, or without a settings record (an earlier version), raises SettingsMismatch. A summary that cannot be
     read counts as not completed when the run's checkpoint `state_name` is next to it (the run finishes again from
-    the checkpoint); otherwise it raises UnreadableRecord naming the file."""
+    the checkpoint); otherwise it raises UnreadableRecord naming the file. `approach` names the method whose own
+    settings are checked too."""
     path = Path(run_dir) / name
     if not path.exists():
         return None
@@ -176,5 +190,5 @@ def completed(run_dir, name="summary.json", state_name=CHECKPOINT_NAME):
     if "settings" not in summary:
         raise SettingsMismatch(f"{path} has no settings record (made by an earlier version); "
                                "start over with scripts/run_notebooks.py --fresh")
-    check_settings(summary["settings"])
+    check_settings(summary["settings"], approach)
     return summary

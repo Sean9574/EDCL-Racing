@@ -190,7 +190,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
     selected or saved and nothing is written to the status file or the run log: only the experiment's runs report
     progress. Returns the summary."""
     out_dir = Path(out_dir)
-    done = checkpoint.completed(out_dir, SUMMARY_NAME)
+    done = checkpoint.completed(out_dir, SUMMARY_NAME, approach=method.approach)
     if done is not None:
         return done
     reporting = champion_dir is not None
@@ -214,7 +214,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         if reporting:
             progress.milestone(f"{label(method, seed)}: started")
     else:
-        checkpoint.check_settings(state["settings"])
+        checkpoint.check_settings(state["settings"], method.approach)
         rng = np.random.default_rng()
         rng.bit_generator.state = state["rng"]
         method.load_state(state["method"])
@@ -274,12 +274,12 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         method.advance(rng, result, kept, event, boost=boost)
         generation += 1
         checkpoint.save(out_dir / checkpoint.CHECKPOINT_NAME, {
-            "settings": checkpoint.settings_record(), "generation": generation, "evals": evals,
+            "settings": checkpoint.settings_record(method.approach), "generation": generation, "evals": evals,
             "elapsed": active(), "rng": rng.bit_generator.state, "seeds": seeds.state(),
             "tracker": tracker.state(), "method": method.state(), "levels": levels, "tightenings": tightenings,
             "start_level": start_level})
 
-    summary = {"approach": method.approach, "seed": seed, "settings": checkpoint.settings_record(),
+    summary = {"approach": method.approach, "seed": seed, "settings": checkpoint.settings_record(method.approach),
                "generations": generation, "evals": evals, "pop_size": pop_size,
                "start_level": start_level, "level_reached": int(tracker.level),
                "goal_reached": bool(tracker.goal_reached), "outcome": tracker.outcome,

@@ -160,7 +160,7 @@ def test_training_without_resume_or_without_its_stage_file_trains_again(monkeypa
 
 def test_training_recorded_with_other_settings_is_refused(monkeypatch, toy_data, tmp_path):
     imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
-    monkeypatch.setattr(checkpoint, "settings_record", lambda: {"MAX_EPOCHS": 1})
+    monkeypatch.setattr(checkpoint, "settings_record", lambda approach=None: {"MAX_EPOCHS": 1})
     with pytest.raises(checkpoint.SettingsMismatch):
         imitation.train_baseline(toy_data, out_dir=tmp_path / "run", epochs=1, seed=0)
 
