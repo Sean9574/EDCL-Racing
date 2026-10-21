@@ -170,7 +170,9 @@ def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):
     assert list(split["generation"]) == [0, 1, 2, 3, 4]
     pd.testing.assert_frame_equal(whole, split)
     ends = [checkpoint.load(tmp_path / name / checkpoint.CHECKPOINT_NAME) for name in ("whole", "split")]
-    assert all(np.array_equal(a, b) for a, b in zip(ends[0]["method"]["networks"], ends[1]["method"]["networks"]))
+    a, b = ends[0]["method"], ends[1]["method"]
+    assert a["shapes"] == b["shapes"] and len(a["networks"]) == len(b["networks"])
+    assert all(np.array_equal(x, y) for x, y in zip(a["networks"], b["networks"]))
     assert np.array_equal(ends[0]["method"]["setup"], ends[1]["method"]["setup"])
     assert ends[0]["rng"] == ends[1]["rng"] and summary["generations"] == 5
 
@@ -249,7 +251,9 @@ def test_a_reported_run_keeps_its_latest_generation_for_the_viewer(evaluation, m
     last = reports[-1]
     assert replay["generation"] == last["generation"] == 2 and replay["seeds"] == last["seeds"]
     assert np.array_equal(replay["fitness"], last["fitness"])
-    assert np.array_equal(replay["population"].weights, last["population"].weights)
+    assert replay["population"].shapes == last["population"].shapes
+    assert len(replay["population"].weights) == len(last["population"].weights)
+    assert all(np.array_equal(a, b) for a, b in zip(replay["population"].weights, last["population"].weights))
     assert np.array_equal(replay["population"].setup, last["population"].setup)
 
 
@@ -537,7 +541,9 @@ def test_a_resumed_run_0_in_a_stall_replays_exactly(monkeypatch, tmp_path):
     assert list(whole["boost"]) == [0, 0, 0, 0, 1, 1, 1, 1]                  # boosted before and after the cut
     pd.testing.assert_frame_equal(whole, cut)
     ends = [checkpoint.load(tmp_path / name / checkpoint.CHECKPOINT_NAME) for name in ("whole", "cut")]
-    assert all(np.array_equal(a, b) for a, b in zip(ends[0]["method"]["networks"], ends[1]["method"]["networks"]))
+    a, b = ends[0]["method"], ends[1]["method"]
+    assert a["shapes"] == b["shapes"] and len(a["networks"]) == len(b["networks"])
+    assert all(np.array_equal(x, y) for x, y in zip(a["networks"], b["networks"]))
     assert np.array_equal(ends[0]["method"]["setup"], ends[1]["method"]["setup"]) and ends[0]["rng"] == ends[1]["rng"]
 
 

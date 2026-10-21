@@ -106,9 +106,14 @@ def remove_layer(rng, layers):
 
 def fold(layers, k):
     """Hidden layer k removed and the layers on either side joined by the product of their weights: weights
-    W_k W_{k+1}, biases b_k W_{k+1} + b_{k+1}, which reproduces the network wherever layer k's units are active."""
+    W_k W_{k+1}, biases b_k W_{k+1} + b_{k+1}, which reproduces the network wherever layer k's units are active. The
+    sums run in unit order with elementwise operations only (no BLAS), so every machine gets the same bits."""
     (w1, b1), (w2, b2) = layers[k], layers[k + 1]
-    return [*layers[:k], (w1 @ w2, b1 @ w2 + b2), *layers[k + 2:]]
+    w, b = np.zeros((w1.shape[0], w2.shape[1])), np.zeros(w2.shape[1])
+    for j in range(w1.shape[1]):
+        w = w + np.outer(w1[:, j], w2[j])
+        b = b + b1[j] * w2[j]
+    return [*layers[:k], (w, b + b2), *layers[k + 2:]]
 
 
 STRUCTURAL = (("GA_ADD_UNIT", add_unit), ("GA_REMOVE_UNIT", remove_unit), ("GA_ADD_LAYER", add_layer),

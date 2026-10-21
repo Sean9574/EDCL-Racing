@@ -138,6 +138,20 @@ def test_removing_a_layer_joins_its_neighbours_by_their_product():
     assert len(ga.remove_layer(Picks(), random_layers(()))) == 1               # no hidden layer: unchanged
 
 
+def test_fold_sums_in_a_fixed_order_and_matches_the_matrix_product():
+    rng = np.random.default_rng(11)
+    layers = [(rng.normal(size=(7, 5)), rng.normal(size=5)), (rng.normal(size=(5, 4)), rng.normal(size=4))]
+    (w, b), = ga.fold(layers, 0)
+    (w1, b1), (w2, b2) = layers
+    assert np.allclose(w, w1 @ w2, rtol=0, atol=1e-12) and np.allclose(b, b1 @ w2 + b2, rtol=0, atol=1e-12)
+    ref_w, ref_b = np.zeros((7, 4)), np.zeros(4)
+    for j in range(5):
+        for i in range(7):
+            ref_w[i] = ref_w[i] + w1[i, j] * w2[j]
+        ref_b = ref_b + b1[j] * w2[j]
+    assert np.array_equal(w, ref_w) and np.array_equal(b, ref_b + b2)
+
+
 def test_crossover_between_equal_architectures_mixes_every_value():
     a, b = random_layers((4,), seed=1), random_layers((4,), seed=2)
     child = ga.crossover(np.random.default_rng(3), a, b)
@@ -241,6 +255,7 @@ def test_state_round_trip_continues_identically(monkeypatch):
     first.advance(np.random.default_rng(7), trial, np.arange(6), None)
     second.advance(np.random.default_rng(7), trial, np.arange(6), None)
     assert first.population.shapes == second.population.shapes
+    assert len(first.population.weights) == len(second.population.weights)
     assert all(np.array_equal(a, b) for a, b in zip(first.population.weights, second.population.weights))
     assert first.step_size == second.step_size and np.array_equal(first.is_kept, second.is_kept)
     assert np.array_equal(first.setup, second.setup)
@@ -287,7 +302,8 @@ def test_a_resumed_growing_run_replays_exactly(monkeypatch, tmp_path):
                                   pd.read_csv(tmp_path / "whole" / "log.csv").drop(columns="elapsed"))
     a = checkpoint.load(tmp_path / "whole" / checkpoint.CHECKPOINT_NAME)["method"]
     b = checkpoint.load(tmp_path / "parts" / checkpoint.CHECKPOINT_NAME)["method"]
-    assert a["shapes"] == b["shapes"] and all(np.array_equal(x, y) for x, y in zip(a["networks"], b["networks"]))
+    assert a["shapes"] == b["shapes"] and len(a["networks"]) == len(b["networks"])
+    assert all(np.array_equal(x, y) for x, y in zip(a["networks"], b["networks"]))
 
 
 def test_a_ga_run_of_version_3_6_is_refused(monkeypatch, tmp_path):
@@ -300,9 +316,10 @@ def test_a_ga_run_of_version_3_6_is_refused(monkeypatch, tmp_path):
         ga.run_ga(pop_size=20, max_generations=1, out_dir=tmp_path, champion_dir=None)
 
 
-def test_a_boost_triples_only_the_output_layers_mutation(fixed_shapes):
+def test_a_boost_triples_only_the_output_layers_mutation(fixed_shapes, monkeypatch):
     """Spec §9.4: in a stall the output layer of each child's own network mutates STALL_BOOST times as strongly,
     from the same draws. From zero weights every child is its mutation alone."""
+    monkeypatch.setattr(config, "GA_START_HIDDEN", (4,))          # a hidden layer, so there is a sensing layer
     plain, boosted = started(pop_size=20), started(pop_size=20)
     for method in (plain, boosted):
         for w in method.population.weights:
@@ -315,6 +332,7 @@ def test_a_boost_triples_only_the_output_layers_mutation(fixed_shapes):
     for a, b, hidden in zip(plain.population.weights[4:], boosted.population.weights[4:], plain.population.shapes[4:]):
         mask = nets.decision_mask(hidden)
         assert np.array_equal(b[~mask], a[~mask]) and np.array_equal(b[mask], config.STALL_BOOST * a[mask])
+        assert np.any(a[~mask] != 0.0) and np.any(a[mask] != 0.0)
     assert np.array_equal(boosted.setup[:, 0], plain.setup[:, 0])
     assert not np.array_equal(boosted.setup[:, 1], plain.setup[:, 1])
 
@@ -373,4 +391,5 @@ def test_setup_draws_come_after_the_network_draws(fixed_shapes):
     mothers = ga.tournament(rng, fitness, n_new)
     fathers = ga.tournament(rng, fitness, n_new)
     children = [ga.make_child(rng, cars.network(m), cars.network(f), strength) for m, f in zip(mothers, fathers)]
+    assert len(method.population.weights[3:]) == len(children) == 27
     assert all(np.array_equal(w, c[0]) for w, c in zip(method.population.weights[3:], children))
