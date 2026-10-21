@@ -52,8 +52,8 @@ def children_success(result, is_kept):
 
 
 class DenseMethod:
-    """What GA and ES share: a dense population of at least two cars, survivors first and unchanged, saving the
-    final controller through population.save_dense_champion."""
+    """What the ES uses (the GA has networks of its own shapes, racing/ga.py): a dense population of at least two
+    cars, survivors first and unchanged, saving the final controller through population.save_dense_champion."""
     approach = None
 
     def __init__(self, pop_size, hidden, activation):

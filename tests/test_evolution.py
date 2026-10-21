@@ -12,14 +12,16 @@ import pytest
 from racing import checkpoint, config, curriculum, evolution, ga, nets, paths, population, progress, setup
 from racing.population import TrialResult
 
+GA_FIELDS = ["mean_layers", "max_layers", "mean_nodes", "max_nodes", "mean_params", "max_params"]   # what the GA logs
+
 
 def fake_evaluate(success_rate):
     """Evaluation without simulation: fitness falls with the size of a car's weights, and the fittest
     `success_rate` share of the population succeeds on every map."""
     def evaluate(population, seeds, level, factor, n_jobs=1, backend="loky"):
-        weights = population.weights
+        weights = population.weights                # a list of vectors when the cars differ in shape (the GA)
         n = len(weights)
-        fitness = 1.0 / (1.0 + np.sum(weights ** 2, axis=1))
+        fitness = 1.0 / (1.0 + np.array([np.sum(w ** 2) for w in weights]))
         rank = np.argsort(np.argsort(-fitness, kind="stable"), kind="stable")
         success = np.tile(rank < success_rate * n, (len(seeds), 1))
         return TrialResult(fitness=fitness + success[0], success=success,
@@ -63,7 +65,7 @@ def test_small_run_logs_every_generation(evaluation, tmp_path):
     assert summary["generations"] == len(reports) == 3 and summary["evals"] == 60 and summary["pop_size"] == 20
     assert [r["generation"] for r in reports] == [0, 1, 2] and math.isnan(reports[0]["step_size"])
     log = pd.read_csv(tmp_path / "run" / "log.csv")
-    assert list(log.columns) == evolution.LOG_FIELDS and list(log["generation"]) == [0, 1, 2]
+    assert list(log.columns) == evolution.LOG_FIELDS + GA_FIELDS and list(log["generation"]) == [0, 1, 2]
     maps = [s for r in reports for s in r["seeds"]]
     assert len(maps) == len(set(maps)) == 9 and min(maps) >= config.TRAIN_SEED_START   # fresh maps, never reused
     assert (tmp_path / "run" / checkpoint.CHECKPOINT_NAME).exists()
@@ -168,7 +170,7 @@ def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):
     assert list(split["generation"]) == [0, 1, 2, 3, 4]
     pd.testing.assert_frame_equal(whole, split)
     ends = [checkpoint.load(tmp_path / name / checkpoint.CHECKPOINT_NAME) for name in ("whole", "split")]
-    assert np.array_equal(ends[0]["method"]["weights"], ends[1]["method"]["weights"])
+    assert all(np.array_equal(a, b) for a, b in zip(ends[0]["method"]["networks"], ends[1]["method"]["networks"]))
     assert np.array_equal(ends[0]["method"]["setup"], ends[1]["method"]["setup"])
     assert ends[0]["rng"] == ends[1]["rng"] and summary["generations"] == 5
 
@@ -501,7 +503,7 @@ def test_the_run_passes_the_stall_to_advance_and_logs_it(evaluation, tmp_path, m
     evaluation(1.0)                     # every car succeeds: the goal at generation 2, then a target every third
     _, reports = train(tmp_path, 12, start_level=config.MAX_LEVEL)
     log = pd.read_csv(tmp_path / "run" / "log.csv")
-    assert list(log.columns) == evolution.LOG_FIELDS and "boost" in log.columns
+    assert list(log.columns) == evolution.LOG_FIELDS + GA_FIELDS and "boost" in log.columns
     assert list(log["boost"]) == [0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]       # on after 2 generations, off when mastered
     assert seen == list(log["boost"]) == [r["boost"] for r in reports]   # what advance got is what the log says
 
@@ -535,7 +537,7 @@ def test_a_resumed_run_0_in_a_stall_replays_exactly(monkeypatch, tmp_path):
     assert list(whole["boost"]) == [0, 0, 0, 0, 1, 1, 1, 1]                  # boosted before and after the cut
     pd.testing.assert_frame_equal(whole, cut)
     ends = [checkpoint.load(tmp_path / name / checkpoint.CHECKPOINT_NAME) for name in ("whole", "cut")]
-    assert np.array_equal(ends[0]["method"]["weights"], ends[1]["method"]["weights"])
+    assert all(np.array_equal(a, b) for a, b in zip(ends[0]["method"]["networks"], ends[1]["method"]["networks"]))
     assert np.array_equal(ends[0]["method"]["setup"], ends[1]["method"]["setup"]) and ends[0]["rng"] == ends[1]["rng"]
 
 
