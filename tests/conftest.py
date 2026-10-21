@@ -15,7 +15,7 @@ SHAPED_ARCHITECTURES = [(), (5,), (8, 3), (1,), (), (4, 4, 2)]
 
 
 def make_shaped_cars(n, seed=0, shapes=SHAPED_ARCHITECTURES):
-    """Random networks of mixed architectures, some without hidden layers, with random setups (nets.ShapedPopulation)."""
+    """Random networks of mixed architectures (some without hidden layers) and random setups."""
     from racing import nets
     from racing import setup as car_setup
     rng = np.random.default_rng(seed)

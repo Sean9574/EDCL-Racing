@@ -352,6 +352,7 @@ def test_math_functions_match_numpy_here():
 
 @needs_compiler
 @pytest.mark.parametrize("check, name", [("_math_mismatch", "tanh"), ("_network_mismatch", "dense forward"),
+                                         ("_network_mismatch", "shaped forward"),
                                          ("_network_mismatch", "neat forward")])
 def test_a_load_check_mismatch_falls_back(private_library, monkeypatch, capsys, check, name):
     monkeypatch.setattr(fastsim, check, lambda lib: name)
@@ -375,6 +376,11 @@ def test_the_network_check_sees_a_last_bit_difference(monkeypatch):
     dense_forward, neat_forward = nets.forward, neat.forward
     monkeypatch.setattr(nets, "forward", lambda *args: np.nextafter(dense_forward(*args), np.inf))
     assert fastsim._network_mismatch(lib) == "dense forward"
+    monkeypatch.setattr(nets, "forward", dense_forward)
+    shaped = nets.ShapedPopulation.logits
+    monkeypatch.setattr(nets.ShapedPopulation, "logits", lambda self, obs: np.nextafter(shaped(self, obs), np.inf))
+    assert fastsim._network_mismatch(lib) == "shaped forward"
+    monkeypatch.setattr(nets.ShapedPopulation, "logits", shaped)
     monkeypatch.setattr(nets, "forward", dense_forward)
     monkeypatch.setattr(neat, "forward", lambda *args: np.nextafter(neat_forward(*args), np.inf))
     assert fastsim._network_mismatch(lib) == "neat forward"

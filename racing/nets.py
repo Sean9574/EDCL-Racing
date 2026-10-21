@@ -79,8 +79,9 @@ def activate(h, name):
 
 
 def _sum_products(h, weights):
-    """einsum("ni,nij->nj"): each unit sums input × weight in input order, from zero. For a layer of one unit numpy
-    would sum in SIMD lanes, which no sequential sum (the compiled simulator's) reproduces, so that sum is explicit."""
+    """einsum("ni,nij->nj") (spec §5.7): each unit sums input × weight in input order, from zero.
+    For a layer of one unit numpy would sum in SIMD lanes, which no sequential sum (the compiled simulator's)
+    reproduces, so that sum is explicit."""
     if weights.shape[2] != 1:
         return np.einsum("ni,nij->nj", h, weights)
     total = np.zeros((h.shape[0], 1))
@@ -148,7 +149,7 @@ class ShapedPopulation:
     """Dense networks whose hidden layers differ from car to car (the GA, spec §9.6): one architecture, one flat
     weight vector in the layout of unflatten and one setup row per car; every network reads config.N_INPUTS inputs.
     It offers the population interface of DensePopulation. The numpy forward pass groups the cars by architecture and
-    runs one einsum per layer for each group, so no network is padded."""
+    runs one pass per layer (nets.forward) for each group, so no network is padded."""
 
     def __init__(self, shapes, weights, activation="relu", setup=None):
         self.shapes = [tuple(int(units) for units in shape) for shape in shapes]

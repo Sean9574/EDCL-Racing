@@ -197,7 +197,8 @@ def test_a_network_without_hidden_layers_maps_the_inputs_to_the_outputs():
     flat = np.random.default_rng(3).normal(size=nets.n_params(()))
     assert flat.size == (config.N_INPUTS + 1) * config.N_ACTIONS == 195
     obs = np.random.default_rng(4).random((3, config.N_INPUTS))
-    w, b = flat[:config.N_INPUTS * config.N_ACTIONS].reshape(config.N_INPUTS, config.N_ACTIONS), flat[-config.N_ACTIONS:]
+    w = flat[:config.N_INPUTS * config.N_ACTIONS].reshape(config.N_INPUTS, config.N_ACTIONS)
+    b = flat[-config.N_ACTIONS:]
     cars = nets.ShapedPopulation([(), (), ()], [flat] * 3)
     assert np.allclose(cars.logits(obs), obs @ w + b, rtol=0, atol=1e-12)
 

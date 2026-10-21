@@ -138,7 +138,7 @@ def library():
 
 def available():
     """True when the compiled simulator runs: EC_RACING_SIM is not "numpy", the library builds and loads, and its
-    tanh, sin, cos, sincos, atan2 and hypot and its dense and NEAT network outputs equal numpy's on this machine
+    tanh, sin, cos, sincos, atan2 and hypot and its dense, shaped and NEAT network outputs equal numpy's on this machine
     (checked once per process). A failed build or check prints one warning, and the numpy simulator runs instead
     (spec §5.7). Safe to call from several threads at once: the first call builds, loads and checks the library while
     the others wait."""
@@ -209,11 +209,12 @@ def _math_mismatch(lib):
 
 
 def _network_mismatch(lib):
-    """The name "dense forward" or "neat forward" if the library's network outputs differ from numpy's on small
-    fixed populations, else None (spec §5.7). Dense networks of two hidden layers (ReLU and tanh; 1 and 7 cars; all
-    config.N_INPUTS inputs and the first 10, as an earlier revision's networks read) are summed in np.einsum's
-    order, and grown NEAT genomes in np.bincount's; equal outputs show that the library sums as numpy does on this
-    machine. Takes a few milliseconds."""
+    """The name "dense forward", "shaped forward" or "neat forward" if the library's network outputs differ from
+    numpy's on small fixed populations, else None (spec §5.7). Dense networks of two hidden layers (ReLU and tanh;
+    1 and 7 cars; all config.N_INPUTS inputs and the first 10, as an earlier revision's networks read) are summed in
+    np.einsum's order; a population of mixed architectures with one-unit and narrow layers sums each car as
+    nets.forward does (spec §9.6); grown NEAT genomes sum in np.bincount's order. Equal outputs show that the library
+    sums as numpy does on this machine. Takes a few milliseconds."""
     from racing import neat
     rng = np.random.default_rng(0)
     for activation in ("relu", "tanh"):
@@ -225,6 +226,12 @@ def _network_mismatch(lib):
                 expected = nets.forward(cars.weights, obs, cars.hidden, cars.activation)
                 if not np.array_equal(_bits(_forward(lib, cars, obs)), _bits(expected)):
                     return "dense forward"
+    shapes = [(), (1,), (2,), (3,), (8, 1), (1, 8), (1,), (5, 3)]  # one-unit and narrow layers; groups of 1 and 2
+    for activation in ("relu", "tanh"):
+        cars = nets.ShapedPopulation(shapes, [rng.normal(0.0, 0.5, nets.n_params(s)) for s in shapes], activation)
+        obs = rng.uniform(-0.5, 1.5, (len(cars), config.N_INPUTS))
+        if not np.array_equal(_bits(_forward(lib, cars, obs)), _bits(cars.logits(obs))):
+            return "shaped forward"
     rng = np.random.default_rng(0)
     innovations = neat.Innovations()
     genomes = []
@@ -346,7 +353,7 @@ def dense_program(population):
 
 def shaped_program(population):
     """Programs of a nets.ShapedPopulation: each car's own dense program (dense_program of its architecture's group),
-    in car order, so every car sums as np.einsum does in nets.forward (spec §9.6)."""
+    in car order, so every car sums as nets.forward does (spec §9.6)."""
     n = len(population)
     pieces = [None] * n
     for shape, cars in population.groups().items():
