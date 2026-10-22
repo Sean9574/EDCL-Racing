@@ -53,6 +53,15 @@ WIDTH_SALT = 13              # a map's width: default_rng([seed, level, WIDTH_SA
 TRACK_CACHE_SIZE = 8         # built tracks kept per process (an Extra hard track holds 10-14 MB); training maps are
                              # fresh every generation, so a larger cache only costs memory in every worker
 
+# --- Real circuits (spec §4.7): names of the files in data/racetracks/tracks ---
+F1_CIRCUITS = ("Austin", "Budapest", "Catalunya", "Hockenheim", "Melbourne", "MexicoCity", "Montreal", "Monza",
+               "Sakhir", "SaoPaulo", "Sepang", "Shanghai", "Silverstone", "Sochi", "Spa", "Spielberg", "Suzuka",
+               "YasMarina")
+OTHER_CIRCUITS = ("BrandsHatch", "IMS", "MoscowRaceway", "Norisring", "Nuerburgring", "Oschersleben", "Zandvoort")
+TEST_CIRCUITS = ("Melbourne", "Sakhir", "Sepang", "Silverstone")   # default_rng(0).choice(sorted F1, 4), sorted
+TRAINING_CIRCUITS = (tuple(c for c in F1_CIRCUITS if c not in TEST_CIRCUITS)
+                     + ("BrandsHatch", "MoscowRaceway", "Nuerburgring", "Oschersleben", "Zandvoort"))   # Table 1e
+
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
 N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (spec §5.2)
