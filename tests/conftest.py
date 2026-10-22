@@ -49,7 +49,7 @@ def stadium(straight=300.0, radius=60.0, width=12.0):
                         np.column_stack([straight / 2 + radius * np.cos(a), radius * np.sin(a)]),
                         np.column_stack([straight / 2 - s, np.full(len(s), radius)]),
                         np.column_stack([-straight / 2 - radius * np.cos(a), -radius * np.sin(a)])])
-    track = build_track(points, width, seed=0, level=4)
+    track = build_track(points, width / 2, width / 2, seed=0, level=4)
     track.expert_lap_time = 60.0
     return track
 
@@ -58,7 +58,7 @@ def stadium(straight=300.0, radius=60.0, width=12.0):
 def circle_track():
     """A counter-clockwise circle (radius 50 m, width 16 m) with a fixed expert lap time, built without the generator."""
     a = np.linspace(-np.pi / 2, 1.5 * np.pi, 3200, endpoint=False)
-    track = build_track(np.column_stack([50 * np.cos(a), 50 * np.sin(a)]), 16.0, seed=0, level=1)
+    track = build_track(np.column_stack([50 * np.cos(a), 50 * np.sin(a)]), 8.0, 8.0, seed=0, level=1)
     track.expert_lap_time = 20.0
     return track
 

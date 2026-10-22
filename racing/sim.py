@@ -29,6 +29,7 @@ class Cars:
     finish_time: np.ndarray         # s, nan unless finished
     ray_length: np.ndarray          # m, each car's sensor length (spec §5.2)
     steer_gain: np.ndarray          # each car's steering sensitivity (spec §5.1)
+    lap_times: np.ndarray           # (n, laps) s, nan until that lap is completed
     laps: int = 1
     time: float = 0.0
 
@@ -42,6 +43,7 @@ class RunResult:
     finish_time: np.ndarray
     steps: int
     laps_done: np.ndarray           # laps completed when the run ended (spec §9.2)
+    lap_times: np.ndarray           # (n, laps) s per completed lap, nan otherwise (spec §5.4)
 
 
 def setup_columns(setup, n):
@@ -69,7 +71,7 @@ def start_cars(track, n, laps=1, setup=None):
         laps_done=np.zeros(n, dtype=np.int64), lap_start_time=np.zeros(n), last_lap=nan.copy(),
         best_lap=nan.copy(), crashed=np.zeros(n, dtype=bool), finished=np.zeros(n, dtype=bool),
         done=np.zeros(n, dtype=bool), finish_time=nan.copy(), ray_length=ray_length, steer_gain=steer_gain,
-        laps=laps,
+        lap_times=np.full((n, laps), np.nan), laps=laps,
     )
 
 
@@ -106,19 +108,21 @@ def cast_rays(track, x, y, heading, lengths=None):
 
 def road_position(track, cars, rows):
     """Position across the road of the cars `rows`: −1 at the left edge, 0 on the centerline, +1 at the right edge,
-    relative to the driving direction, from each car's matched centerline point (spec §5.2)."""
+    from each car's matched centerline point, relative to the driving direction and to the width on the car's side of
+    its matched point (spec §5.2)."""
     i = np.asarray(cars.index[rows]) % len(track.centerline)
     tangent = track.tangent[i]
     dx = cars.x[rows] - track.centerline[i, 0]
     dy = cars.y[rows] - track.centerline[i, 1]
     left = -dx * tangent[:, 1] + dy * tangent[:, 0]          # component along the left normal
-    return np.clip(-left / (track.width / 2), -1.0, 1.0)
+    half = np.where(left >= 0.0, track.half_left[i], track.half_right[i])
+    return np.clip(-left / half, -1.0, 1.0)
 
 
 def sense(track, cars):
     """Network inputs (spec §5.2): ray distances / 150 m (RAY_SCALE; each car's rays reach its own sensor length, so a
     ray input can exceed 1), speed / 105 m/s (SPEED_SCALE), position across the road (−1 at the left edge,
-    +1 at the right edge) and road width / WIDTH_SCALE. Rows of cars that are done stay zero."""
+    +1 at the right edge) and the local road width / WIDTH_SCALE. Rows of cars that are done stay zero."""
     obs = np.zeros((len(cars.x), config.N_INPUTS))
     live = np.flatnonzero(~cars.done)
     if live.size:
@@ -126,7 +130,8 @@ def sense(track, cars):
         obs[live, :config.N_RAYS] = rays / config.RAY_SCALE
         obs[live, config.N_RAYS] = cars.speed[live] / config.SPEED_SCALE
         obs[live, config.N_RAYS + 1] = road_position(track, cars, live)
-        obs[live, config.N_RAYS + 2] = track.width / config.WIDTH_SCALE
+        i = cars.index[live] % len(track.centerline)
+        obs[live, config.N_RAYS + 2] = (track.half_left[i] + track.half_right[i]) / config.WIDTH_SCALE
     return obs
 
 
@@ -190,6 +195,9 @@ def _update_progress(track, cars, mask):
     new_lap = laps_now > cars.laps_done[idx]
     j = idx[new_lap]
     lap_time = cars.time - cars.lap_start_time[j]
+    number = laps_now[new_lap]
+    recorded = number <= cars.laps
+    cars.lap_times[j[recorded], number[recorded] - 1] = lap_time[recorded]
     cars.last_lap[j] = lap_time
     cars.best_lap[j] = np.fmin(cars.best_lap[j], lap_time)
     cars.lap_start_time[j] = cars.time
@@ -197,6 +205,14 @@ def _update_progress(track, cars, mask):
     complete = j[cars.laps_done[j] >= cars.laps]
     cars.finished[complete] = True
     cars.finish_time[complete] = cars.time
+
+
+def flying_laps(lap_times):
+    """Each run's flying lap (spec §11.1): its fastest complete lap after the first, which starts at speed; nan if it
+    completed none."""
+    later = np.asarray(lap_times, dtype=float)[:, 1:]
+    best = np.min(np.where(np.isnan(later), np.inf, later), axis=1, initial=np.inf)
+    return np.where(np.isinf(best), np.nan, best)
 
 
 def fitness(cars, track, time_limit):
@@ -233,4 +249,5 @@ def simulate(track, policy, n, time_limit=None, laps=1, setup=None, grip_scale=1
         steps += 1
     return RunResult(fitness=fitness(cars, track, time_limit), finished=cars.finished.copy(),
                      crashed=cars.crashed.copy(), progress=np.minimum(cars.progress / (track.length * laps), 1.0),
-                     finish_time=cars.finish_time.copy(), steps=steps, laps_done=cars.laps_done.copy())
+                     finish_time=cars.finish_time.copy(), steps=steps, laps_done=cars.laps_done.copy(),
+                     lap_times=cars.lap_times.copy())

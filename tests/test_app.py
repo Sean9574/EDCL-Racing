@@ -1522,7 +1522,7 @@ def test_map_text_names_the_track(window, circle_track):
     window.receive(ga_report())
     window.update(1 / 60)
     assert window.map_text() == (f"Map: seed {circle_track.seed}, level {circle_track.level}, "
-                                 f"road {circle_track.width:.1f} m")
+                                 f"road {circle_track.widths.mean():.1f} m")
 
 
 def test_imitation_preview_uses_the_difficulty(monkeypatch, window, circle_track):

@@ -67,7 +67,8 @@ def test_driving_together_matches_driving_alone(fake_tracks):
 def test_success_means_three_laps_within_the_target(monkeypatch, fake_tracks):
     result = sim.RunResult(fitness=np.array([1.2, 1.1, 0.4]), finished=np.array([True, True, False]),
                            crashed=np.array([False, False, True]), progress=np.array([1.0, 1.0, 0.3]),
-                           finish_time=np.array([70.0, 90.0, np.nan]), steps=1, laps_done=np.array([3, 3, 0]))
+                           finish_time=np.array([70.0, 90.0, np.nan]), steps=1, laps_done=np.array([3, 3, 0]),
+                           lap_times=np.full((3, 3), np.nan))
     monkeypatch.setattr(evaluate.sim, "simulate", lambda track, policy, n, **kwargs: result)
     frame = evaluate.driving_results(drivers(), [1000])          # target: 1.3 × 20 s × 3 laps = 78 s
     assert list(frame["finished"]) == [True, True, False] and list(frame["success"]) == [True, False, False]
@@ -520,7 +521,7 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
 def test_a_widened_map_keeps_the_centerline_and_is_timed_by_the_expert(monkeypatch, fake_tracks):
     monkeypatch.setattr(evaluate.expert, "expert_lap_time", lambda track: 21.5)
     wide = evaluate.widened_track(80, 18.0, level=1)
-    assert wide.width == 18.0 and wide.expert_lap_time == 21.5
+    assert np.all(wide.widths == 18.0) and wide.expert_lap_time == 21.5
     assert np.allclose(wide.centerline, fake_tracks.centerline, atol=1e-6)
 
 

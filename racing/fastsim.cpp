@@ -23,12 +23,14 @@ __asm__(".symver hypot,hypot@GLIBC_2.2.5");     // GLIBC_2.2.5 is the x86-64 bas
 extern "C" {
 
 struct Track {
-    const double* dist;          // (rows, cols) m from each road cell to the nearest grass cell; 0 on grass
+    const float* dist;           // (rows, cols) m from each road cell to the nearest grass cell; 0 on grass
     int64_t rows, cols;
-    double origin_x, origin_y, width;
+    double origin_x, origin_y;
     const double* centerline;    // (m, 2)
     const double* tangent;       // (m, 2)
     const double* curvature;     // (m,)
+    const double* half_left;     // (m,) m from each centerline point to the left edge
+    const double* half_right;    // (m,) m from each centerline point to the right edge
     int64_t m;
     double spacing;
     double start_x, start_y, start_heading;
@@ -68,6 +70,7 @@ struct Results {                 // (n_tracks, n_cars), one row per track
     double* finish_time;         // s, nan unless finished
     int64_t* laps_done;
     int64_t* steps;
+    double* lap_times;           // (n_tracks, n_cars, laps) s, nan unless completed
 };
 
 }  // extern "C"
@@ -84,7 +87,7 @@ double wall_distance(const Track& t, const Settings& s, double x, double y) {
     int64_t c = (int64_t)std::floor((x - t.origin_x) / s.grid_res);
     int64_t r = (int64_t)std::floor((y - t.origin_y) / s.grid_res);
     if (r < 0 || r >= t.rows || c < 0 || c >= t.cols) return 0.0;
-    return t.dist[r * t.cols + c];
+    return (double)t.dist[r * t.cols + c];
 }
 
 // sim.cast_rays for one ray: sphere tracing for at most `cap` iterations
@@ -326,7 +329,7 @@ void drive(const Track& t, const Settings& s, const Programs* p, const double* s
 
     double x = t.start_x, y = t.start_y, heading = t.start_heading, speed = 0.0, time = 0.0;
     int64_t index = 0, laps_done = 0, steps = 0;
-    double progress = 0.0, last_progress_time = 0.0, finish_time = std::nan("");
+    double progress = 0.0, last_progress_time = 0.0, lap_start_time = 0.0, finish_time = std::nan("");
     bool crashed = false, finished = false, done = false;
 
     std::vector<double> obs(s.n_inputs, 0.0), values;
@@ -341,8 +344,9 @@ void drive(const Track& t, const Settings& s, const Programs* p, const double* s
             int64_t i = wrap(index, t.m);                                               // sim.road_position
             double dx = x - t.centerline[2 * i], dy = y - t.centerline[2 * i + 1];
             double left = -dx * t.tangent[2 * i + 1] + dy * t.tangent[2 * i];
-            obs[s.n_rays + 1] = std::clamp(-left / (t.width / 2), -1.0, 1.0);
-            obs[s.n_rays + 2] = t.width / s.width_scale;
+            double half = left >= 0.0 ? t.half_left[i] : t.half_right[i];
+            obs[s.n_rays + 1] = std::clamp(-left / half, -1.0, 1.0);
+            obs[s.n_rays + 2] = (t.half_left[i] + t.half_right[i]) / s.width_scale;
             action = network_action(*p, car, s.n_inputs, obs.data(), values);
         }
         double steer = s.steer_levels[action / s.n_throttle];                          // actions.class_to_controls
@@ -382,6 +386,9 @@ void drive(const Track& t, const Settings& s, const Programs* p, const double* s
             progress = std::max(progress, reached);
             int64_t laps_now = (int64_t)std::nearbyint(progress / t.spacing) / t.m;
             if (laps_now > laps_done) {
+                double lap_time = time - lap_start_time;
+                if (laps_now <= s.laps) out.lap_times[job * s.laps + (laps_now - 1)] = lap_time;
+                lap_start_time = time;
                 laps_done = laps_now;
                 if (laps_done >= s.laps) finished = true, finish_time = time;
             }

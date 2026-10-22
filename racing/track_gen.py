@@ -120,10 +120,11 @@ def runs_clockwise(seed, level):
 
 
 def geometry_ok(track, min_corner):
-    """True if no corner is tighter than min_corner and separate parts of the road stay apart."""
-    if np.max(np.abs(track.curvature)) > 1.0 / min_corner:
+    """True if no corner is tighter than min_corner (None: no corner check) and separate parts of the road stay
+    apart."""
+    if min_corner is not None and np.max(np.abs(track.curvature)) > 1.0 / min_corner:
         return False
-    reach = track.width + config.OVERLAP_MARGIN
+    reach = track.max_width + config.OVERLAP_MARGIN
     pairs = cKDTree(track.centerline).query_pairs(reach, output_type="ndarray")
     if len(pairs) == 0:
         return True
@@ -152,7 +153,7 @@ def candidate_track(seed, level, attempt=0, width=None):
         points = circuit_points(rng, spec, width)
     if runs_clockwise(seed, level):
         points = points[::-1]
-    track = build_track(points, width, seed, level)
+    track = build_track(points, width / 2, width / 2, seed, level)
     if not geometry_ok(track, spec["min_corner"]):
         return None
     return track

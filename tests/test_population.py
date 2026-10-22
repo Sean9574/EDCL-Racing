@@ -117,7 +117,7 @@ def test_time_trial_ends_at_the_target_time(monkeypatch, fake_tracks, numpy_simu
         return sim.RunResult(fitness=np.array([1.5, 0.6, 0.2]), finished=np.array([True, False, False]),
                              crashed=np.array([False, False, True]), progress=np.array([1.0, 0.67, 0.2]),
                              finish_time=np.array([target - 1.0, np.nan, np.nan]), steps=10,
-                             laps_done=np.array([3, 2, 0]))
+                             laps_done=np.array([3, 2, 0]), lap_times=np.full((3, 3), np.nan))
 
     monkeypatch.setattr(population.sim, "simulate", fake_simulate)
     result = population.evaluate_population(dense(3), [0], 1, config.TARGET_FACTOR)

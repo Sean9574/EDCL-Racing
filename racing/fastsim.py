@@ -258,6 +258,7 @@ def description():
 
 
 P_DOUBLE = ctypes.POINTER(ctypes.c_double)
+P_FLOAT = ctypes.POINTER(ctypes.c_float)
 P_INT64 = ctypes.POINTER(ctypes.c_int64)
 P_UINT8 = ctypes.POINTER(ctypes.c_uint8)
 ACTIVATIONS = {"relu": 0, "tanh": 1, "linear": 2}
@@ -265,9 +266,10 @@ IDENTITY = ACTIVATIONS["linear"]
 
 
 class Track(ctypes.Structure):
-    _fields_ = [("dist", P_DOUBLE), ("rows", ctypes.c_int64), ("cols", ctypes.c_int64),
-                ("origin_x", ctypes.c_double), ("origin_y", ctypes.c_double), ("width", ctypes.c_double),
-                ("centerline", P_DOUBLE), ("tangent", P_DOUBLE), ("curvature", P_DOUBLE), ("m", ctypes.c_int64),
+    _fields_ = [("dist", P_FLOAT), ("rows", ctypes.c_int64), ("cols", ctypes.c_int64),
+                ("origin_x", ctypes.c_double), ("origin_y", ctypes.c_double),
+                ("centerline", P_DOUBLE), ("tangent", P_DOUBLE), ("curvature", P_DOUBLE),
+                ("half_left", P_DOUBLE), ("half_right", P_DOUBLE), ("m", ctypes.c_int64),
                 ("spacing", ctypes.c_double), ("start_x", ctypes.c_double), ("start_y", ctypes.c_double),
                 ("start_heading", ctypes.c_double), ("back", ctypes.c_int64), ("ahead", ctypes.c_int64),
                 ("sight", ctypes.c_int64), ("time_limit", ctypes.c_double)]
@@ -291,7 +293,7 @@ class CPrograms(ctypes.Structure):
 
 class Results(ctypes.Structure):
     _fields_ = [("finished", P_UINT8), ("crashed", P_UINT8), ("progress", P_DOUBLE), ("finish_time", P_DOUBLE),
-                ("laps_done", P_INT64), ("steps", P_INT64)]
+                ("laps_done", P_INT64), ("steps", P_INT64), ("lap_times", P_DOUBLE)]
 
 
 def _declare(lib):
@@ -479,15 +481,16 @@ def _settings(grip_scale, laps, keep):
 
 
 def _c_track(track, time_limit, keep):
-    arrays = [np.ascontiguousarray(a, dtype=np.float64) for a in (track.dist, track.centerline, track.tangent,
-                                                                   track.curvature)]
-    keep.append(arrays)
-    dist, centerline, tangent, curvature = arrays
+    dist = np.ascontiguousarray(track.dist, dtype=np.float32)
+    arrays = [np.ascontiguousarray(a, dtype=np.float64) for a in (track.centerline, track.tangent, track.curvature,
+                                                                   track.half_left, track.half_right)]
+    keep.append([dist, *arrays])
+    centerline, tangent, curvature, half_left, half_right = arrays
     x0, y0 = track.start_position
-    return Track(dist=_pointer(dist), rows=dist.shape[0], cols=dist.shape[1], origin_x=track.origin[0],
-                 origin_y=track.origin[1], width=track.width, centerline=_pointer(centerline),
-                 tangent=_pointer(tangent), curvature=_pointer(curvature), m=len(centerline), spacing=track.spacing,
-                 start_x=x0, start_y=y0, start_heading=track.start_heading,
+    return Track(dist=_pointer(dist, P_FLOAT), rows=dist.shape[0], cols=dist.shape[1], origin_x=track.origin[0],
+                 origin_y=track.origin[1], centerline=_pointer(centerline), tangent=_pointer(tangent),
+                 curvature=_pointer(curvature), half_left=_pointer(half_left), half_right=_pointer(half_right),
+                 m=len(centerline), spacing=track.spacing, start_x=x0, start_y=y0, start_heading=track.start_heading,
                  back=int(round(config.PROGRESS_BACK / track.spacing)),
                  ahead=int(round(config.PROGRESS_AHEAD / track.spacing)),
                  sight=int(round(config.EXPERT_SIGHT / track.spacing)), time_limit=float(time_limit))
@@ -512,9 +515,11 @@ def _run(tracks, programs, setup, time_limits, laps, grip_scale, threads):
     finished, crashed = np.zeros(shape, dtype=np.uint8), np.zeros(shape, dtype=np.uint8)
     progress, finish_time = np.zeros(shape), np.full(shape, np.nan)
     laps_done, steps = np.zeros(shape, dtype=np.int64), np.zeros(shape, dtype=np.int64)
+    lap_times = np.full((len(tracks), n, laps), np.nan)
     c_results = Results(finished=_pointer(finished, P_UINT8), crashed=_pointer(crashed, P_UINT8),
                         progress=_pointer(progress), finish_time=_pointer(finish_time),
-                        laps_done=_pointer(laps_done, P_INT64), steps=_pointer(steps, P_INT64))
+                        laps_done=_pointer(laps_done, P_INT64), steps=_pointer(steps, P_INT64),
+                        lap_times=_pointer(lap_times))
     library().simulate(c_tracks, len(tracks), ctypes.byref(c_settings), c_programs, _pointer(setup), n, int(threads),
                        ctypes.byref(c_results))
     results = []
@@ -525,7 +530,7 @@ def _run(tracks, programs, setup, time_limits, laps, grip_scale, threads):
                                      crashed=crashed[k].astype(bool),
                                      progress=np.minimum(progress[k] / (track.length * laps), 1.0),
                                      finish_time=finish_time[k].copy(), steps=int(steps[k].max(initial=0)),
-                                     laps_done=laps_done[k].copy()))
+                                     laps_done=laps_done[k].copy(), lap_times=lap_times[k].copy()))
     return results
 
 

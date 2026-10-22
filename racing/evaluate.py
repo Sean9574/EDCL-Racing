@@ -69,7 +69,7 @@ def driving_results(drivers, track_seeds, level=config.MAX_LEVEL, factor=config.
 def widened_track(seed, width, level=config.MAX_LEVEL):
     """Map `seed` rebuilt with the same centerline and a `width` m road, timed by the expert; None if the road would
     reach another part of the map or the expert cannot drive it (spec §11.1)."""
-    track = build_track(get_track(seed, level).centerline, width, seed, level)
+    track = build_track(get_track(seed, level).centerline, width / 2, width / 2, seed, level)
     if not geometry_ok(track, config.LEVELS[level]["min_corner"]):
         return None
     lap_time = expert.expert_lap_time(track)

@@ -1083,7 +1083,7 @@ class App:
     def map_text(self):
         track = self.shown_track()
         if track is not None:
-            return f"Map: seed {track.seed}, level {track.level}, road {track.width:.1f} m"
+            return f"Map: seed {track.seed}, level {track.level}, road {track.widths.mean():.1f} m"
         if self.source == "notebook" and self.latest is None:
             return "Map: shown with the run's latest generation"
         if self.approach in config.EVOLUTION_APPROACHES and self.latest is None:
@@ -1336,7 +1336,7 @@ class App:
 
     # ----- drawing -----
     def track_surface(self, track):
-        key = (track.seed, track.level, track.width)
+        key = (track.seed, track.level, track.name, track.length, track.max_width)
         if key not in self.surfaces:
             camera = Camera(track, self.view)
             self.surfaces[key] = (camera, render_track(track, camera, self.view.size))

@@ -169,6 +169,7 @@ def same_results(a, b):
     for field in ("fitness", "finished", "crashed", "progress", "laps_done"):
         assert np.array_equal(getattr(a, field), getattr(b, field)), field
     assert np.array_equal(a.finish_time, b.finish_time, equal_nan=True)
+    assert np.array_equal(a.lap_times, b.lap_times, equal_nan=True)
     assert a.steps == b.steps
 
 
@@ -252,7 +253,7 @@ from racing.track import build_track
 config.SIMULATOR = "auto"                                          # whatever EC_RACING_SIM says, as in this module
 assert fastsim.available()
 a = np.linspace(-np.pi / 2, 1.5 * np.pi, 3200, endpoint=False)
-track = build_track(np.column_stack([50 * np.cos(a), 50 * np.sin(a)]), 16.0, seed=0, level=1)
+track = build_track(np.column_stack([50 * np.cos(a), 50 * np.sin(a)]), 8.0, 8.0, seed=0, level=1)
 track.expert_lap_time = 20.0
 cars = nets.DensePopulation(nets.init_population(np.random.default_rng(0), 12))
 limit = sim.target_time(track, config.TARGET_FACTOR)
@@ -533,6 +534,30 @@ def test_the_compiled_expert_matches_numpy_on_a_fast_stadium():
     reference = sim.simulate(track, expert.expert_policy(track), 3, time_limit=600.0, laps=2)
     same_results(compiled, reference)
     assert reference.finished.all()
+
+
+from racing.track import build_track
+
+
+@needs_compiler
+def test_the_compiled_simulator_matches_numpy_on_uneven_widths_including_lap_times():
+    a = np.linspace(-np.pi / 2, 1.5 * np.pi, 4000, endpoint=False)
+    points = np.column_stack([300 * np.cos(a) * 1.2, 300 * np.sin(a)])   # an ellipse the expert drives 3 laps on
+    left = 5.0 + 2.0 * np.sin(3 * a)
+    right = 6.0 + 1.5 * np.cos(2 * a)
+    track = build_track(points, left, right, seed=0, level=1)
+    track.expert_lap_time = expert.expert_lap_time(track)
+    cars = dense_cars(60, seed=5)
+    limits = [3 * track.expert_lap_time * 1.5]
+    compiled = fastsim.simulate([track], cars, limits, laps=config.LAPS)[0]
+    reference = sim.simulate(track, cars.policy(), len(cars), time_limit=limits[0], laps=config.LAPS,
+                             setup=cars.setup)
+    same_results(compiled, reference)
+    assert np.array_equal(compiled.lap_times, reference.lap_times, equal_nan=True)
+    expert_compiled = fastsim.simulate_expert([track], 2, limits, laps=config.LAPS)[0]
+    expert_reference = sim.simulate(track, expert.expert_policy(track), 2, time_limit=limits[0], laps=config.LAPS)
+    assert np.array_equal(expert_compiled.lap_times, expert_reference.lap_times, equal_nan=True)
+    assert np.isfinite(expert_reference.lap_times).all()
 
 
 from racing import population

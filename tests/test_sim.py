@@ -286,8 +286,9 @@ def placed(track, offset_left, index=0):
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_position_runs_from_the_left_edge_to_the_right_edge(circle_track, reverse):
-    track = circle_track if not reverse else build_track(circle_track.centerline[::-1], circle_track.width, 0, 1)
-    half = track.width / 2
+    track = circle_track if not reverse else build_track(circle_track.centerline[::-1], circle_track.half_right[::-1],
+                                                         circle_track.half_left[::-1], 0, 1)    # right becomes left
+    half = track.half_left[0]                                           # equal on both sides
     for offset, expected in ((0.0, 0.0), (half / 2, -0.5), (-half / 2, 0.5), (half * 0.999, -0.999)):
         cars = placed(track, offset)
         assert sim.road_position(track, cars, np.array([0])) == pytest.approx([expected], abs=1e-3)
@@ -297,7 +298,7 @@ def test_position_wraps_the_lap_counting_index(circle_track):
     m = len(circle_track.centerline)
     a = sim.road_position(circle_track, placed(circle_track, 2.0, index=7), np.array([0]))
     b = sim.road_position(circle_track, placed(circle_track, 2.0, index=7 + 2 * m), np.array([0]))
-    assert a == pytest.approx(b) and a[0] == pytest.approx(-2.0 / (circle_track.width / 2), abs=1e-3)
+    assert a == pytest.approx(b) and a[0] == pytest.approx(-2.0 / circle_track.half_left[7], abs=1e-3)
 
 
 def test_sense_adds_position_and_width_and_keeps_done_rows_zero(circle_track):
@@ -306,5 +307,45 @@ def test_sense_adds_position_and_width_and_keeps_done_rows_zero(circle_track):
     obs = sim.sense(circle_track, cars)
     assert obs.shape == (2, 12) == (2, config.N_INPUTS)
     assert obs[0, config.N_RAYS + 1] == pytest.approx(0.0, abs=1e-6)
-    assert obs[0, config.N_RAYS + 2] == pytest.approx(circle_track.width / config.WIDTH_SCALE)
+    assert obs[0, config.N_RAYS + 2] == pytest.approx(circle_track.widths[0] / config.WIDTH_SCALE)
     assert not obs[1].any()
+
+
+def test_position_and_width_use_the_widths_on_each_side():
+    points = np.column_stack([np.linspace(-300.0, 300.0, 1201), np.zeros(1201)])
+    points = np.vstack([points, np.column_stack([np.linspace(300.0, -300.0, 1201), np.full(1201, 400.0)])[1:-1]])
+    track = build_track(points, 3.0, 6.0, seed=0, level=1)
+    track.expert_lap_time = 60.0
+    cars = sim.start_cars(track, 3)
+    cars.x[:] = 10.0
+    cars.y[:] = [3.0, -6.0, 0.0]                                     # left edge, right edge, centerline
+    cars.index[:] = 310
+    obs = sim.sense(track, cars)
+    assert list(obs[:, config.N_RAYS + 1]) == [-1.0, 1.0, 0.0]
+    assert np.all(obs[:, config.N_RAYS + 2] == 9.0 / config.WIDTH_SCALE)
+
+
+# ----- lap times (spec §5.4, §11.1) -----
+
+def test_lap_times_sum_to_the_finish_time_and_the_flying_lap_skips_lap_1(circle_track):
+    cars = sim.start_cars(circle_track, 1, laps=3)
+    while not cars.done[0]:
+        steer = (cars.speed ** 2 / 50.0) / sim.grip_at(cars.speed)
+        throttle = np.where(cars.speed < 20.0, 1.0, 0.0)
+        sim.step(circle_track, cars, steer, throttle, time_limit=100.0)
+    laps = cars.lap_times[0]
+    assert cars.finished[0] and np.all(np.isfinite(laps)) and laps[0] > laps[1]          # lap 1 starts from rest
+    assert np.isclose(laps.sum(), cars.finish_time[0])
+    assert sim.flying_laps(cars.lap_times)[0] == min(laps[1], laps[2])
+    assert np.isnan(sim.flying_laps(np.array([[30.0, np.nan, np.nan]]))[0])
+
+
+def test_a_car_at_top_speed_counts_every_lap_once():
+    track = stadium(straight=1500.0, radius=600.0, width=14.0)      # corners of 600 m take 105 m/s at 1.9 g
+    cars = sim.start_cars(track, 1, laps=3)
+    cars.speed[:] = config.TOP_SPEED                                    # no drag: coasting keeps 105 m/s
+    while not cars.done[0]:
+        steer, _ = expert.expert_controls(track, cars)                  # pure pursuit, continuous
+        sim.step(track, cars, steer, np.zeros(1), time_limit=300.0)
+    assert cars.finished[0] and cars.laps_done[0] == 3 and np.all(np.isfinite(cars.lap_times[0]))
+    assert np.isclose(cars.lap_times[0].sum(), cars.finish_time[0])

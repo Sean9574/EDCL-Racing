@@ -1,6 +1,8 @@
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 
-from racing.track import resample_loop, wall_distance
+from racing import config
+from racing.track import build_track, resample_loop, track_shape, wall_distance
 
 
 def test_resample_loop_is_evenly_spaced():
@@ -31,3 +33,40 @@ def test_wall_distance(circle_track):
     assert abs(d[1] - 3.0) < 0.6      # 5 m toward the infield
     assert d[2] == 0.0                # infield grass
     assert d[3] == 0.0                # outside the grid
+
+
+# ----- per-point road widths (spec §4.1) -----
+
+def test_a_symmetric_road_is_the_old_band_around_the_centerline(circle_track):
+    """Equal widths reproduce the road of up to version 3.7: every cell within half the width of the centerline."""
+    a = np.linspace(-np.pi / 2, 1.5 * np.pi, 3200, endpoint=False)
+    points = np.column_stack([50 * np.cos(a), 50 * np.sin(a)])
+    track = build_track(points, 8.0, 8.0, seed=0, level=1)
+    shape = track_shape(points, 8.0, 8.0)
+    dense, _ = resample_loop(shape["center"], config.GRID_RES / 2)
+    rows, cols = track.dist.shape
+    on_line = np.zeros((rows, cols), dtype=bool)
+    on_line[np.floor((dense[:, 1] - track.origin[1]) / config.GRID_RES).astype(int),
+            np.floor((dense[:, 0] - track.origin[0]) / config.GRID_RES).astype(int)] = True
+    old_road = distance_transform_edt(~on_line) * config.GRID_RES <= 8.0
+    assert np.array_equal(track.dist > 0, old_road)
+    assert track.dist.dtype == np.float32 and track.max_width == 16.0 and np.all(track.widths == 16.0)
+
+
+def test_each_side_of_the_road_has_its_own_width():
+    points = np.column_stack([np.linspace(-300.0, 300.0, 1201), np.zeros(1201)])       # a long straight, closed
+    points = np.vstack([points, np.column_stack([np.linspace(300.0, -300.0, 1201), np.full(1201, 400.0)])[1:-1]])
+    track = build_track(points, 3.0, 6.0, seed=0, level=1)
+    assert wall_distance(track, 0.0, 2.5) > 0.0 and wall_distance(track, 0.0, 3.6) == 0.0     # left of travel: 3 m
+    assert wall_distance(track, 0.0, -5.5) > 0.0 and wall_distance(track, 0.0, -6.6) == 0.0  # right of travel: 6 m
+
+
+def test_widths_change_along_the_lap():
+    a = np.linspace(-np.pi / 2, 1.5 * np.pi, 3200, endpoint=False)
+    points = np.column_stack([200 * np.cos(a), 200 * np.sin(a)])
+    half = 4.0 + 2.0 * (np.cos(a + np.pi / 2) > 0)                    # 8 m wide on half of the lap, 12 m on the other
+    track = build_track(points, half, half, seed=0, level=1)
+    widths = np.round(track.widths, 6)
+    steps = (widths != 8.0) & (widths != 12.0)                       # interpolated where a step falls between points
+    assert set(widths[~steps]) == {8.0, 12.0} and np.count_nonzero(steps) <= 2
+    assert np.all((widths[steps] > 8.0) & (widths[steps] < 12.0))

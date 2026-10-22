@@ -5,7 +5,8 @@ import pytest
 from scipy.spatial import cKDTree
 
 from racing import config, track_gen, tracks
-from racing.track_gen import candidate_track, circuit_points, fillet_path, make_track, map_width, runs_clockwise
+from racing.track_gen import (candidate_track, circuit_points, fillet_path, geometry_ok, make_track, map_width,
+                               runs_clockwise)
 
 
 def slow_corners(track, radius=40.0):
@@ -27,7 +28,7 @@ def test_easy_maps_are_gentle_loops_that_differ_by_seed():
     maps = [make_track(seed, 1) for seed in range(4)]
     assert len({round(t.length, 3) for t in maps}) == 4                 # no longer one fixed circle
     for t in maps:
-        assert config.WIDTH_RANGE[0] <= t.width <= config.WIDTH_RANGE[1]
+        assert config.WIDTH_RANGE[0] <= t.max_width <= config.WIDTH_RANGE[1]
         assert np.max(np.abs(t.curvature)) <= 1 / spec["min_corner"] + 1e-9
 
 
@@ -52,20 +53,25 @@ def test_maps_respect_width_and_minimum_corner_radius(level):
     spec = config.LEVELS[level]
     for seed in range(8):
         t = make_track(seed, level)
-        assert t.width == map_width(seed, level)
+        assert np.all(t.widths == map_width(seed, level))
         assert np.max(np.abs(t.curvature)) <= 1 / spec["min_corner"] + 1e-9
+
+
+def test_the_corner_check_can_be_left_out(circle_track):
+    """min_corner None checks only that separate parts of the road stay apart (a real circuit's corners are its own)."""
+    assert not geometry_ok(circle_track, 60.0) and geometry_ok(circle_track, None)
 
 
 @pytest.mark.parametrize("level", [1, 2, 3, 4])
 def test_maps_never_overlap_themselves(level):
     for seed in range(8):
         t = make_track(seed, level)
-        pairs = cKDTree(t.centerline).query_pairs(t.width + config.OVERLAP_MARGIN, output_type="ndarray")
+        pairs = cKDTree(t.centerline).query_pairs(t.max_width + config.OVERLAP_MARGIN, output_type="ndarray")
         if len(pairs) == 0:
             continue
         gap = np.abs(pairs[:, 0] - pairs[:, 1]) * t.spacing
         along = np.minimum(gap, t.length - gap)
-        assert np.all(along <= 3 * (t.width + config.OVERLAP_MARGIN))
+        assert np.all(along <= 3 * (t.max_width + config.OVERLAP_MARGIN))
 
 
 @pytest.mark.parametrize("level", [1, 2, 3, 4])
@@ -146,14 +152,14 @@ def test_every_level_generates_drivable_maps():
 
 
 def test_each_map_has_its_own_width_in_the_range():
-    widths = [make_track(seed, level).width for level in (1, 4) for seed in range(8)]
+    widths = [make_track(seed, level).max_width for level in (1, 4) for seed in range(8)]
     low, high = config.WIDTH_RANGE
     assert all(low <= w <= high for w in widths) and len(set(widths)) == len(widths)
 
 
 def test_a_maps_width_is_fixed_by_seed_and_level_for_every_attempt():
     assert map_width(5, 3) == map_width(5, 3) != map_width(6, 3)
-    widths = {t.width for t in (candidate_track(5, 3, a) for a in range(30)) if t is not None}
+    widths = {t.max_width for t in (candidate_track(5, 3, a) for a in range(30)) if t is not None}
     assert widths == {map_width(5, 3)}
 
 
@@ -171,4 +177,4 @@ def test_a_map_can_be_built_with_another_road_width():
     same = candidate_track(seed, level, attempt, width=map_width(seed, level))
     np.testing.assert_array_equal(same.centerline, candidate_track(seed, level, attempt).centerline)
     other = next(t for t in (candidate_track(seed, level, a, width=10.0) for a in range(30)) if t is not None)
-    assert other.width == 10.0
+    assert np.all(other.widths == 10.0)
