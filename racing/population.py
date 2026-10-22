@@ -110,10 +110,11 @@ def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="lok
 
 def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEEDS):
     """The final controller (spec §9.5): of the candidate indices, the car with the most successes on the
-    validation maps at target factor `factor`, then the highest mean fitness, then the earliest candidate. Returns
-    (index into population, validation successes, mean validation fitness)."""
+    validation maps (the validation setting, spec §4.2) at target factor `factor`, then the highest mean fitness, then
+    the earliest candidate. Returns (index into population, validation successes, mean validation fitness)."""
     candidates = np.asarray(candidates, dtype=np.int64)
-    result = evaluate_population(population.subset(candidates), list(seeds), config.MAX_LEVEL, factor, n_jobs=n_jobs)
+    result = evaluate_population(population.subset(candidates), list(seeds), config.VALIDATION_LEVEL, factor,
+                                 n_jobs=n_jobs)
     successes = result.success.sum(axis=0)
     best = int(np.lexsort((-result.fitness, -successes))[0])
     return int(candidates[best]), int(successes[best]), float(result.fitness[best])

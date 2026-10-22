@@ -13,7 +13,9 @@ from racing.tracks import get_track
 
 def expert_controls(track, cars):
     """Continuous steering and throttle chosen by the expert for every car, as fractions of the grip a(v) at the car's
-    speed (spec §7.1)."""
+    speed (spec §7.1). It coasts while its speed is within its band of the target speed: the larger of
+    EXPERT_SPEED_BAND and one step's full speed change a(v) DT, so a step of gas or brake never carries it across the
+    whole band, and in a steady corner it settles at a speed and keeps all of a(v) for turning."""
     m = len(track.centerline)
     here = np.mod(cars.index, m)
     look = config.EXPERT_LOOKAHEAD_BASE + config.EXPERT_LOOKAHEAD_TIME * cars.speed
@@ -21,9 +23,10 @@ def expert_controls(track, cars):
     dx, dy = target[:, 0] - cars.x, target[:, 1] - cars.y
     alpha = np.angle(np.exp(1j * (np.arctan2(dy, dx) - cars.heading)))
     path_curvature = 2.0 * np.sin(alpha) / np.maximum(np.hypot(dx, dy), 1e-6)
-    steer = np.clip(cars.speed ** 2 * path_curvature / sim.grip_at(cars.speed), -1.0, 1.0)
+    grip = sim.grip_at(cars.speed)
+    steer = np.clip(cars.speed ** 2 * path_curvature / grip, -1.0, 1.0)
     target = target_speed(track, here)
-    band = config.EXPERT_SPEED_BAND
+    band = np.maximum(config.EXPERT_SPEED_BAND, grip * config.DT)
     throttle = np.where(cars.speed < target - band, 1.0, np.where(cars.speed > target + band, -1.0, 0.0))
     return steer, throttle
 
@@ -132,7 +135,7 @@ def dataset_seeds():
 
 def default_splits():
     return {"train": dataset_seeds(),
-            "val": [(seed, config.MAX_LEVEL) for seed in config.VAL_SEEDS],
+            "val": [(seed, config.VALIDATION_LEVEL) for seed in config.VAL_SEEDS],
             "test": [(seed, config.MAX_LEVEL) for seed in config.TEST_SEEDS]}
 
 

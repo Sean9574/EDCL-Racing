@@ -154,7 +154,7 @@ def test_a_subset_reproduces_its_cars_results(fake_tracks):
 
 def test_select_final_prefers_successes_then_fitness(monkeypatch):
     def fake(cars, seeds, level, factor, n_jobs=1):
-        assert len(cars) == 4 and seeds == list(config.VAL_SEEDS) and level == config.MAX_LEVEL and factor == 1.1
+        assert len(cars) == 4 and seeds == list(config.VAL_SEEDS) and level == config.VALIDATION_LEVEL and factor == 1.1
         success = np.zeros((len(seeds), 4), dtype=bool)
         success[0, :3] = True
         success[1, 1:3] = True

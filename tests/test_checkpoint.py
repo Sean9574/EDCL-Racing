@@ -12,7 +12,7 @@ def test_settings_record_survives_a_json_round_trip_unchanged():
     record = checkpoint.settings_record()
     assert json.loads(json.dumps(record)) == record
     assert record["VAL_SEEDS"] == list(config.VAL_SEEDS) and record["RUN_SEEDS"] == list(config.RUN_SEEDS)
-    assert set(record["LEVELS"]) == {"1", "2", "3", "4"}                  # int keys read back as strings
+    assert set(record["LEVELS"]) == {"1", "2", "3", "4", "5"}             # int keys read back as strings
     assert record["STEER_LEVELS"] == config.STEER_LEVELS.tolist()
 
 
@@ -21,6 +21,8 @@ def test_settings_keys_hold_the_result_settings_only():
     assert isinstance(keys, tuple) and len(set(keys)) == len(keys)
     assert {"LAPS", "LEVELS", "TARGET_FACTOR", "MASTERY_FRACTION", "GA_MUTATION_P", "MAX_EPOCHS", "RUN_SEEDS"} <= set(keys)
     assert not {"N_JOBS", "TRACK_CACHE_SIZE", "WINDOW_SIZE", "COLORS", "RESULTS_DIR"} & set(keys)
+    assert {"VALIDATION_LEVEL", "WIDTH_VARIATION", "CHICANE_MIN_EDGE", "CHICANE_STEP", "ESSES_MIN_EDGE",
+            "ESSES_SPACING"} <= set(keys) and "WIDTH_RANGE" not in keys            # spec §4.2, §4.3
     assert all(hasattr(config, name) for name in keys)
     assert set(checkpoint.settings_record()) == set(keys) and "N_JOBS" not in checkpoint.settings_record()
 

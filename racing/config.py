@@ -43,22 +43,30 @@ OVERLAP_MARGIN = 6.0         # m of grass required between separate parts of the
 MAX_TRACK_ATTEMPTS = 200
 PROGRESS_BACK = 5.0          # m behind the last matched centerline point
 PROGRESS_AHEAD = 30.0        # m ahead of the last matched centerline point
-LEVELS = {                   # spec Table 1: Easy loops, circuits with F1-style features above it
-    1: {"kind": "loop", "points": (4, 6), "radius": (60.0, 110.0), "min_corner": 45.0},
-    2: {"kind": "circuit", "points": (6, 8), "radius": (60.0, 170.0), "slow": (25.0, 45.0), "fast": (50.0, 80.0),
-        "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 24.0},
-    3: {"kind": "circuit", "points": (9, 12), "radius": (70.0, 220.0), "slow": (16.0, 35.0), "fast": (45.0, 90.0),
-        "main": 170.0, "hairpins": 1, "chicanes": (0, 1), "esses": (0, 1), "min_corner": 14.0},
+LEVELS = {                   # spec Table 1: Easy loops, circuits of Formula 1 size above it, and the validation setting
+    1: {"kind": "loop", "points": (4, 6), "radius": (250.0, 450.0), "min_corner": 120.0, "width": (12.0, 16.0)},
+    2: {"kind": "circuit", "points": (6, 8), "radius": (250.0, 600.0), "slow": (35.0, 60.0), "fast": (100.0, 200.0),
+        "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 35.0, "width": (10.0, 16.0)},
+    3: {"kind": "circuit", "points": (9, 12), "radius": (300.0, 750.0), "slow": (20.0, 45.0), "fast": (80.0, 250.0),
+        "main": 600.0, "hairpins": 1, "chicanes": (0, 1), "esses": (0, 1), "min_corner": 18.0, "width": (9.0, 15.0)},
     4: {"kind": "circuit", "points": (13, 17), "radius": (80.0, 260.0), "slow": (10.0, 30.0), "fast": (45.0, 100.0),
-        "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0},
+        "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0, "width": (10.0, 16.0)},
+    5: {"kind": "circuit", "points": (13, 17), "radius": (350.0, 900.0), "slow": (12.0, 30.0), "fast": (60.0, 250.0),
+        "main": 900.0, "hairpins": 2, "chicanes": (2, 3), "esses": (2, 3), "min_corner": 12.0, "width": (7.5, 12.0)},
 }
-MAX_LEVEL = 4
+MAX_LEVEL = 4                # Extra hard, the curriculum's last level (real circuits from version 3.8, spec §4.2)
+VALIDATION_LEVEL = 5         # the validation setting: generated, harder than any training level (spec §4.2)
+WIDTH_VARIATION = 0.2        # a generated map's width varies by up to ±20% of its base width along the lap
+CHICANE_MIN_EDGE = 250.0     # m, a chicane needs an edge this long (spec §4.3)
+CHICANE_STEP = (20.0, 33.0)  # m between a chicane's four vertices: the shift spans about 60-100 m
+ESSES_MIN_EDGE = 400.0       # m, a run of esses needs an edge this long
+ESSES_SPACING = (70.0, 110.0)  # m between the vertices of a run of esses
 CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (spec §4.3)
 DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (spec §4.4)
-WIDTH_RANGE = (10.0, 16.0)   # m: every map's road width is drawn from this range (spec §4.2)
-WIDTH_SALT = 13              # a map's width: default_rng([seed, level, WIDTH_SALT]), the same for every attempt
-TRACK_CACHE_SIZE = 8         # built tracks kept per process (an Extra hard track holds 10-14 MB); training maps are
-                             # fresh every generation, so a larger cache only costs memory in every worker
+WIDTH_SALT = 13              # a map's widths: default_rng([seed, level, WIDTH_SALT]), the same for every attempt
+TRACK_CACHE_SIZE = 8         # built tracks kept per process (a validation map's distance map holds up to about 80 MB,
+                             # spec §9.10); training maps are fresh every generation, so a larger cache only costs
+                             # memory in every worker
 
 # --- Real circuits (spec §4.7): names of the files in data/racetracks/tracks ---
 F1_CIRCUITS = ("Austin", "Budapest", "Catalunya", "Hockenheim", "Melbourne", "MexicoCity", "Montreal", "Monza",
@@ -81,7 +89,9 @@ BASELINE_HIDDEN = (16,)
 EXPERT_LOOKAHEAD_BASE = 6.0  # m
 EXPERT_LOOKAHEAD_TIME = 0.4  # s
 EXPERT_GRIP_MARGIN = 0.85
-EXPERT_SPEED_BAND = 0.5      # m/s
+EXPERT_SPEED_BAND = 0.5      # m/s, the least of the expert's coasting band (spec §7.1): it coasts within the larger of
+                             # this and one step's speed change a(v) DT (0.9-2.5 m/s), so in a steady corner near 5 g
+                             # it no longer switches between gas and brake every step, which left 1/√2 of a(v) to turn
 EXPERT_SIGHT = SENSOR_START  # m, the expert uses no geometry beyond the starting sensor length
 EXPERT_VALIDATION_TIME = 600.0  # s, time limit when validating a track with the expert
 PERTURB_INTERVAL = (2.0, 4.0)   # s between steering disturbances

@@ -4,6 +4,7 @@ import pytest
 
 from racing import checkpoint, config, expert, sim, tracks
 from racing.actions import class_to_controls, controls_to_class
+from racing.track import build_track
 
 
 def test_expert_finishes_the_circle(circle_track):
@@ -40,6 +41,32 @@ def test_the_target_speed_never_exceeds_the_sight_speed_or_the_top_speed(circle_
     target = expert.target_speed(circle_track, here)
     assert np.all(target <= expert.sight_speed()) and np.all(target <= config.TOP_SPEED)
     assert np.allclose(target, expert.corner_speed(np.abs(circle_track.curvature).max()), rtol=1e-6)
+
+
+def circle(radius, width=14.0):
+    """A counter-clockwise circle of the given radius: one steady corner all the way round."""
+    a = np.linspace(-np.pi / 2, 1.5 * np.pi, int(2 * np.pi * radius / 0.5), endpoint=False)
+    return build_track(np.column_stack([radius * np.cos(a), radius * np.sin(a)]), width / 2, width / 2, seed=0,
+                       level=1)
+
+
+@pytest.mark.parametrize("radius", [50.0, 80.0, 214.0, 400.0])
+def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_steady_corner(radius):
+    """Spec §7.1: in a steady corner the expert settles at its target speed and coasts. One step's speed change is
+    a(v)·DT, up to 2.45 m/s at 5 g, more than the 0.5 m/s band, so a band of 0.5 m/s alone switched between gas and
+    brake on every step and left only 1/√2 of a(v) for turning (on circles of radius 214 m, the ends of a 420 × 300 m
+    ellipse, and 400 m, near 5 g; and of 50 m, near 1.8 g)."""
+    track = circle(radius)
+    throttles, policy = [], expert.expert_policy(track)
+
+    def recording(obs, cars):
+        classes = policy(obs, cars)
+        throttles.append(float(class_to_controls(classes)[1][0]))
+        return classes
+
+    result = sim.simulate(track, recording, 1, time_limit=config.EXPERT_VALIDATION_TIME, laps=config.LAPS)
+    throttles = np.array(throttles)
+    assert result.finished[0] and not np.any(throttles[1:] * throttles[:-1] == -1.0)
 
 
 def test_expert_policy_returns_action_classes(circle_track):
@@ -146,17 +173,25 @@ def test_labels_are_the_expert_choice_during_kicks(monkeypatch, circle_track):
 
 @pytest.mark.slow
 def test_the_first_training_maps_of_every_level_build_at_their_widths():
-    for level in config.LEVELS:
+    for level in range(1, config.MAX_LEVEL + 1):              # the curriculum; the validation setting has fixed seeds
         for seed in range(config.TRAIN_SEED_START, config.TRAIN_SEED_START + 200):
             tracks.get_track(seed, level)
 
 
 @pytest.mark.slow
+def test_the_expert_drives_every_validation_map_and_the_first_maps_of_each_level():
+    for seed in config.VAL_SEEDS:
+        assert tracks.get_track(seed, config.VALIDATION_LEVEL).expert_lap_time > 0
+    for level in (1, 2, 3):
+        for seed in range(config.TRAIN_SEED_START, config.TRAIN_SEED_START + 5):
+            assert tracks.get_track(seed, level).expert_lap_time > 0
+
+
+@pytest.mark.slow
 def test_expert_drives_every_dataset_and_held_out_map():
-    for seed, level in expert.dataset_seeds():
-        tracks.get_track(seed, level)
-    for seed in list(config.VAL_SEEDS) + list(config.TEST_SEEDS):
-        tracks.get_track(seed, config.MAX_LEVEL)
+    for split in expert.default_splits().values():       # the validation maps at the validation setting (spec §4.6)
+        for seed, level in split:
+            tracks.get_track(seed, level)
 
 
 def test_dataset_maps_are_fresh_distinct_seeds_with_the_level_mix():
@@ -175,7 +210,7 @@ def test_dataset_maps_are_fresh_distinct_seeds_with_the_level_mix():
 def test_default_splits_use_the_dataset_maps_and_the_fixed_held_out_maps():
     splits = expert.default_splits()
     assert splits["train"] == expert.dataset_seeds()
-    assert splits["val"] == [(seed, config.MAX_LEVEL) for seed in config.VAL_SEEDS]
+    assert splits["val"] == [(seed, config.VALIDATION_LEVEL) for seed in config.VAL_SEEDS]
     assert splits["test"] == [(seed, config.MAX_LEVEL) for seed in config.TEST_SEEDS]
 
 

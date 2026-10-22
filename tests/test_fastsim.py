@@ -490,9 +490,11 @@ def numpy_expert(track, n=1, time_limit=config.EXPERT_VALIDATION_TIME, laps=1):
 
 @needs_compiler
 def test_the_expert_drives_exactly_as_in_numpy(circle_track):
-    tracks = [circle_track] + [t for t in (track_gen.candidate_track(seed, level, 0)
-                                           for level in range(1, config.MAX_LEVEL + 1) for seed in (3, 4))
+    maps = [(seed, level) for level in range(1, config.MAX_LEVEL + 1) for seed in (3, 4)]
+    maps.append((4, config.VALIDATION_LEVEL))
+    tracks = [circle_track] + [t for t in (track_gen.candidate_track(seed, level, 0) for seed, level in maps)
                                if t is not None]
+    assert tracks[-1].level == config.VALIDATION_LEVEL
     limits = [config.EXPERT_VALIDATION_TIME] * len(tracks)
     for compiled, track in zip(fastsim.simulate_expert(tracks, 1, limits), tracks):
         same_results(compiled, numpy_expert(track))
@@ -539,13 +541,31 @@ def test_the_compiled_expert_matches_numpy_on_a_fast_stadium():
 from racing.track import build_track
 
 
-@needs_compiler
-def test_the_compiled_simulator_matches_numpy_on_uneven_widths_including_lap_times():
+def uneven_ellipse():
+    """A 420 × 300 m ellipse (semi-axes; ends of radius 214 m, taken near 5 g) whose left and right widths differ and
+    change along the lap."""
     a = np.linspace(-np.pi / 2, 1.5 * np.pi, 4000, endpoint=False)
-    points = np.column_stack([300 * np.cos(a) * 1.2, 300 * np.sin(a)])   # an ellipse the expert drives 3 laps on
+    points = np.column_stack([300 * np.cos(a) * 1.4, 300 * np.sin(a)])
     left = 5.0 + 2.0 * np.sin(3 * a)
     right = 6.0 + 1.5 * np.cos(2 * a)
-    track = build_track(points, left, right, seed=0, level=1)
+    return build_track(points, left, right, seed=0, level=1)
+
+
+@needs_compiler
+def test_the_expert_completes_three_laps_of_a_420_by_300_m_ellipse_in_both_simulators():
+    """Spec §7.1: the expert coasts within one step's speed change of its target, so it keeps the grip for turning in
+    long corners near 5 g; with a 0.5 m/s band alone it crashed here on lap 2."""
+    track = uneven_ellipse()
+    compiled = fastsim.simulate_expert([track], 1, [config.EXPERT_VALIDATION_TIME], laps=config.LAPS)[0]
+    reference = sim.simulate(track, expert.expert_policy(track), 1, time_limit=config.EXPERT_VALIDATION_TIME,
+                             laps=config.LAPS)
+    same_results(compiled, reference)
+    assert reference.finished[0] and np.isfinite(reference.lap_times).all()
+
+
+@needs_compiler
+def test_the_compiled_simulator_matches_numpy_on_uneven_widths_including_lap_times():
+    track = uneven_ellipse()                                              # an ellipse the expert drives 3 laps on
     track.expert_lap_time = expert.expert_lap_time(track)
     cars = dense_cars(60, seed=5)
     limits = [3 * track.expert_lap_time * 1.5]

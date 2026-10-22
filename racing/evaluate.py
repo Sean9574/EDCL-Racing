@@ -545,7 +545,7 @@ def driving_selected_table(runs_dir=None, val_seeds=config.VAL_SEEDS, test_seeds
             continue
         trials = pd.read_csv(search / "trials.csv", dtype={"trial_id": str, "config_id": str})
         drivers = {(approach, path.stem): nets.from_keras(keras.models.load_model(path)) for path in exported}
-        validation = driving_results(drivers, val_seeds, n_jobs=n_jobs)
+        validation = driving_results(drivers, val_seeds, level=config.VALIDATION_LEVEL, n_jobs=n_jobs)
         means = validation.groupby("run_seed")["fitness"].mean()
         trial_id = str(means.idxmax())
         test = driving_results({(approach, trial_id): drivers[(approach, trial_id)]}, test_seeds, n_jobs=n_jobs)
@@ -825,7 +825,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
         for seed in seeds:
             models[(approach, seed)], drivers[(approach, seed)] = nets.load_champion(approach, seed, champions_dir)
     per_track = driving_results(drivers, test_seeds, n_jobs=n_jobs)
-    validation = driving_results(drivers, val_seeds, n_jobs=n_jobs)
+    validation = driving_results(drivers, val_seeds, level=config.VALIDATION_LEVEL, n_jobs=n_jobs)
     robust = robustness_results(drivers, test_seeds, n_jobs=n_jobs)
     best = best_seeds(validation)
     paths.best_seeds_path(champions_dir).write_text(json.dumps(best, indent=2))

@@ -310,12 +310,14 @@ int64_t expert_action(const Track& t, const Settings& s, double x, double y, dou
     double turn = std::atan2(dy, dx) - heading;
     double alpha = std::atan2(std::sin(turn), std::cos(turn));       // np.angle(np.exp(1j * turn))
     double path_curvature = 2.0 * std::sin(alpha) / std::max(std::hypot(dx, dy), 1e-6);
-    double steer = std::clamp(speed * speed * path_curvature / grip_at(s, speed), -1.0, 1.0);
+    double grip = grip_at(s, speed);
+    double steer = std::clamp(speed * speed * path_curvature / grip, -1.0, 1.0);
 
     double kappa = 0.0;
     for (int64_t k = 0; k <= t.sight; ++k) kappa = std::max(kappa, std::fabs(t.curvature[wrap(here + k, t.m)]));
     double target = std::min(std::min(corner_speed(s, kappa), s.sight_speed), s.top_speed);
-    double throttle = speed < target - s.speed_band ? 1.0 : (speed > target + s.speed_band ? -1.0 : 0.0);
+    double band = std::max(s.speed_band, grip * s.dt);                 // np.maximum(EXPERT_SPEED_BAND, a(v) DT)
+    double throttle = speed < target - band ? 1.0 : (speed > target + band ? -1.0 : 0.0);
 
     return nearest(s.steer_levels, s.n_steer, steer) * s.n_throttle +
            nearest(s.throttle_levels, s.n_throttle, throttle);

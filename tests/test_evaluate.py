@@ -13,6 +13,14 @@ def fake_tracks(monkeypatch, circle_track):
     return circle_track
 
 
+@pytest.fixture
+def requested_maps(monkeypatch, circle_track):
+    """Like fake_tracks, and records the (seed, level) of every map asked for."""
+    requested = []
+    monkeypatch.setattr(evaluate, "get_track", lambda seed, level: requested.append((seed, level)) or circle_track)
+    return requested
+
+
 def drivers(n=3, seed=0):
     flats = nets.init_population(np.random.default_rng(seed), n)
     return {("ga", k): nets.from_flat(flats[k]) for k in range(n)}
@@ -455,6 +463,14 @@ def test_driving_selected_picks_the_best_validation_driver(fake_tracks, tmp_path
     assert table.loc[0, "Parameters"] == 431
 
 
+def test_driving_selected_validates_on_the_validation_setting(requested_maps, tmp_path):
+    """Spec §4.6, §8.3: the validation maps are seeds 80-99 at the validation setting, not at Extra hard."""
+    export_search(tmp_path, "kt_random", nets.init_population(np.random.default_rng(8), 2))
+    evaluate.driving_selected_table(tmp_path, val_seeds=[80, 81], test_seeds=[1000])
+    assert set(requested_maps) == {(80, config.VALIDATION_LEVEL), (81, config.VALIDATION_LEVEL),
+                                   (1000, config.MAX_LEVEL)}
+
+
 def test_driving_selected_without_exported_models(tmp_path):
     assert evaluate.driving_selected_table(tmp_path, val_seeds=[80], test_seeds=[1000]).empty
 
@@ -485,7 +501,7 @@ def test_main_without_champions_raises(tmp_path):
         evaluate.main(champions_dir=tmp_path, runs_dir=tmp_path, data_path=tmp_path / "none.npz", out_dir=tmp_path)
 
 
-def test_main_with_partial_results(fake_tracks, tmp_path):
+def test_main_with_partial_results(requested_maps, tmp_path):
     champions, runs = tmp_path / "champions", tmp_path / "runs"
     rng = np.random.default_rng(5)
     for approach, seed in (("ga", 0), ("ga", 2), ("es", 1)):
@@ -514,13 +530,14 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
     assert results["figures"][-1] == tmp_path / "out" / "figures" / "networks.png" and results["figures"][-1].exists()
     assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "150 · – · 150 · – (150 ± 0)"
     assert list(results["results"]["Best run"]) == [results["best_seeds"]["es"], results["best_seeds"]["ga"]]
+    assert (80, config.VALIDATION_LEVEL) in requested_maps and (80, config.MAX_LEVEL) not in requested_maps
 
 
 # ----- spec §11.1: robustness table -----
 
 def test_a_widened_map_keeps_the_centerline_and_is_timed_by_the_expert(monkeypatch, fake_tracks):
     monkeypatch.setattr(evaluate.expert, "expert_lap_time", lambda track: 21.5)
-    wide = evaluate.widened_track(80, 18.0, level=1)
+    wide = evaluate.widened_track(80, 18.0, level=2)                # the 50 m circle is within Medium's tightest corner
     assert np.all(wide.widths == 18.0) and wide.expert_lap_time == 21.5
     assert np.allclose(wide.centerline, fake_tracks.centerline, atol=1e-6)
 
