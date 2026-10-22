@@ -167,9 +167,19 @@ def test_an_unreadable_record_uses_its_own_checkpoint_name(tmp_path):
 
 def test_the_setup_settings_are_recorded():
     record = checkpoint.settings_record()
-    for name in ("SENSOR_LENGTH_LIMITS", "STEER_GAIN_LIMITS", "DEFAULT_SETUP", "SETUP_MUTATION_P", "SETUP_MUTATION_SD"):
+    for name in ("SENSOR_START", "SENSOR_LENGTH_LIMITS", "STEER_GAIN_LIMITS", "DEFAULT_SETUP", "SETUP_MUTATION_P",
+                 "SETUP_MUTATION_SD"):
         assert name in record
     assert not {"APP_GRIPS", "APP_CHAMPIONS_DIR", "N_JOBS"} & set(record)
+
+
+def test_the_formula_1_car_settings_are_recorded():
+    """Spec §5.1, §5.2 (version 3.8): the grip curve, the top speed and the input scales affect every result."""
+    record = checkpoint.settings_record()
+    for name in ("G", "GRIP_LOW", "GRIP_MAX", "GRIP_FULL_SPEED", "GRIP_RISE", "TOP_SPEED", "RAY_SCALE",
+                 "RAY_TRACE_LENGTH", "SENSOR_START"):
+        assert name in record
+    assert not {"GRIP", "RAY_RANGE"} & set(record)
 
 
 def test_the_machine_record_names_the_thread_setting_and_the_worker_count(monkeypatch):

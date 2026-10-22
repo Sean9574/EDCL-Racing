@@ -244,11 +244,11 @@ def test_results_table_reports_the_final_setups(tmp_path):
     finals = drivers(n=2)
     finals[("ga", 0)].setup = np.array([40.0, 2.0])
     finals[("ga", 1)].setup = np.array([60.0, 1.0])
-    finals[("es", 0)] = nets.from_flat(nets.init_population(np.random.default_rng(9), 1)[0])   # revision 3 setup
+    finals[("es", 0)] = nets.from_flat(nets.init_population(np.random.default_rng(9), 1)[0])   # the default setup
     table = evaluate.results_table(per_track, tmp_path, finals).set_index("Method")
     assert table.loc["GA", "Sensor length (m)"] == "40 · 60 · – · – (50 ± 14)"
     assert table.loc["GA", "Steering sensitivity"] == "2.00 · 1.00 · – · – (1.50 ± 0.71)"
-    assert table.loc["ES", "Sensor length (m)"] == "50 · – · – · – (50)"
+    assert table.loc["ES", "Sensor length (m)"] == "150 · – · – · – (150)"
     assert table.loc["ES", "Steering sensitivity"] == "1.00 · – · – · – (1.00)"
     columns = list(table.columns)
     assert columns.index("Steering sensitivity") == columns.index("Sensor length (m)") + 1
@@ -511,7 +511,7 @@ def test_main_with_partial_results(fake_tracks, tmp_path):
         assert (tmp_path / "out" / "tables" / f"{name}.md").exists()
     assert (tmp_path / "out" / "tables" / "robustness_per_track.csv").exists()
     assert results["figures"][-1] == tmp_path / "out" / "figures" / "networks.png" and results["figures"][-1].exists()
-    assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "50 · – · 50 · – (50 ± 0)"
+    assert results["results"].set_index("Method").loc["GA", "Sensor length (m)"] == "150 · – · 150 · – (150 ± 0)"
     assert list(results["results"]["Best run"]) == [results["best_seeds"]["es"], results["best_seeds"]["ga"]]
 
 

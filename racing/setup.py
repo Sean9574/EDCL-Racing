@@ -16,7 +16,7 @@ def _limits():
 
 
 def default(n):
-    """n rows of revision 3's setup (config.DEFAULT_SETUP)."""
+    """n rows of the default setup (config.DEFAULT_SETUP: 150 m sensors, k = 1)."""
     return np.tile(np.asarray(config.DEFAULT_SETUP, dtype=float), (int(n), 1))
 
 
@@ -32,14 +32,16 @@ def as_rows(values, n):
 
 
 def as_row(value):
-    """The (2,) float64 setup of one car: a copy of `value`, or revision 3's for None."""
+    """The (2,) float64 setup of one car: a copy of `value`, or the default setup for None."""
     return as_rows(None if value is None else np.asarray(value, dtype=float)[None, :], 1)[0]
 
 
 def random(rng, n):
-    """n setups drawn uniformly on the log scale within the limits (spec §9.11): one rng.uniform call."""
-    low, high = _limits()
-    return np.exp(rng.uniform(np.log(low), np.log(high), (int(n), 2)))
+    """n setups of a random-start population (spec §9.11): every car's sensor length is SENSOR_START, and its steering
+    sensitivity is drawn uniformly on the log scale within STEER_GAIN_LIMITS (one rng.uniform call)."""
+    low, high = config.STEER_GAIN_LIMITS
+    gain = np.exp(rng.uniform(np.log(low), np.log(high), int(n)))
+    return np.column_stack([np.full(int(n), config.SENSOR_START), gain])
 
 
 def clip(values):

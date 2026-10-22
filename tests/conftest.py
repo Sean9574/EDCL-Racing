@@ -30,6 +30,19 @@ def shaped_cars():
     return make_shaped_cars
 
 
+def stadium(straight=300.0, radius=60.0, width=12.0):
+    """Two straights joined by semicircles, counter-clockwise from the start of the bottom straight."""
+    s = np.arange(0.0, straight, 0.5)
+    a = np.arange(-np.pi / 2, np.pi / 2, 0.5 / radius)
+    points = np.vstack([np.column_stack([s - straight / 2, np.full(len(s), -radius)]),
+                        np.column_stack([straight / 2 + radius * np.cos(a), radius * np.sin(a)]),
+                        np.column_stack([straight / 2 - s, np.full(len(s), radius)]),
+                        np.column_stack([-straight / 2 - radius * np.cos(a), -radius * np.sin(a)])])
+    track = build_track(points, width, seed=0, level=4)
+    track.expert_lap_time = 60.0
+    return track
+
+
 @pytest.fixture
 def circle_track():
     """A counter-clockwise circle (radius 50 m, width 16 m) with a fixed expert lap time, built without the generator."""

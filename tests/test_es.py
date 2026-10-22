@@ -143,7 +143,8 @@ def test_dagger_baseline_missing(tmp_path):
 
 def test_random_start_setups_spread_but_a_trained_start_uses_the_default():
     spread = started(pop_size=100).setup
-    assert np.std(np.log(spread), axis=0).min() > 0.4
+    assert np.all(spread[:, 0] == config.SENSOR_START)                 # every car starts with 150 m sensors
+    assert np.std(np.log(spread[:, 1])) > 0.4                          # and a log-uniform steering sensitivity
     flat = np.random.default_rng(1).normal(size=463)
     seeded = started(pop_size=50, initial=flat, approach="es_seeded").setup
     assert np.array_equal(seeded, np.tile(config.DEFAULT_SETUP, (50, 1)))

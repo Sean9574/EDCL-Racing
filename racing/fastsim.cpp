@@ -38,8 +38,9 @@ struct Track {
 };
 
 struct Settings {
-    double dt, grip, yaw_min_speed, speed_scale, ray_range, width_scale, ray_min_step, grid_res, stall_time, time_eps;
-    double expert_grip, lookahead_base, lookahead_time, grip_margin, speed_band, expert_sight;
+    double dt, grip_scale, grip_low, grip_rise, grip_max, top_speed, yaw_min_speed, speed_scale, ray_scale,
+        ray_trace_length, width_scale, ray_min_step, grid_res, stall_time, time_eps;
+    double lookahead_base, lookahead_time, grip_margin, speed_band, sight_speed;
     int64_t ray_max_iterations, laps, n_inputs;
     const double* ray_angles;
     int64_t n_rays;
@@ -285,6 +286,17 @@ int64_t nearest(const double* levels, int64_t n, double value) {
     return best;
 }
 
+// sim.grip_at: a(v) = min(a0 + c v v, a_max)
+double grip_at(const Settings& s, double v) { return std::min(s.grip_low + s.grip_rise * v * v, s.grip_max); }
+
+// expert.corner_speed for one curvature
+double corner_speed(const Settings& s, double kappa) {
+    double k = std::max(kappa, 1e-9);
+    double excess = k - s.grip_margin * s.grip_rise;
+    double rising = excess > 0.0 ? std::sqrt(s.grip_margin * s.grip_low / std::max(excess, 1e-12)) : INFINITY;
+    return std::min(rising, std::sqrt(s.grip_margin * s.grip_max / k));
+}
+
 // expert.expert_controls and expert.target_speed, quantized to an action class (expert.expert_policy)
 int64_t expert_action(const Track& t, const Settings& s, double x, double y, double heading, double speed,
                       int64_t index) {
@@ -295,13 +307,11 @@ int64_t expert_action(const Track& t, const Settings& s, double x, double y, dou
     double turn = std::atan2(dy, dx) - heading;
     double alpha = std::atan2(std::sin(turn), std::cos(turn));       // np.angle(np.exp(1j * turn))
     double path_curvature = 2.0 * std::sin(alpha) / std::max(std::hypot(dx, dy), 1e-6);
-    double steer = std::clamp(speed * speed * path_curvature / s.expert_grip, -1.0, 1.0);
+    double steer = std::clamp(speed * speed * path_curvature / grip_at(s, speed), -1.0, 1.0);
 
     double kappa = 0.0;
     for (int64_t k = 0; k <= t.sight; ++k) kappa = std::max(kappa, std::fabs(t.curvature[wrap(here + k, t.m)]));
-    double corner_speed = std::sqrt(s.grip_margin * s.expert_grip / std::max(kappa, 1e-9));
-    double sight_speed = std::sqrt(2.0 * s.grip_margin * s.expert_grip * s.expert_sight);
-    double target = std::min(corner_speed, sight_speed);
+    double target = std::min(std::min(corner_speed(s, kappa), s.sight_speed), s.top_speed);
     double throttle = speed < target - s.speed_band ? 1.0 : (speed > target + s.speed_band ? -1.0 : 0.0);
 
     return nearest(s.steer_levels, s.n_steer, steer) * s.n_throttle +
@@ -312,7 +322,7 @@ int64_t expert_action(const Track& t, const Settings& s, double x, double y, dou
 void drive(const Track& t, const Settings& s, const Programs* p, const double* setup, int64_t car, int64_t job,
            const Results& out) {
     double ray_length = setup[2 * car], steer_gain = setup[2 * car + 1];
-    int64_t cap = (int64_t)std::ceil(s.ray_max_iterations * ray_length / s.ray_range);   // sim.ray_caps
+    int64_t cap = (int64_t)std::ceil(s.ray_max_iterations * ray_length / s.ray_trace_length);   // sim.ray_caps
 
     double x = t.start_x, y = t.start_y, heading = t.start_heading, speed = 0.0, time = 0.0;
     int64_t index = 0, laps_done = 0, steps = 0;
@@ -326,7 +336,7 @@ void drive(const Track& t, const Settings& s, const Programs* p, const double* s
             action = expert_action(t, s, x, y, heading, speed, index);
         } else {
             for (int64_t k = 0; k < s.n_rays; ++k)                                     // sim.sense
-                obs[k] = cast_ray(t, s, x, y, heading + s.ray_angles[k], ray_length, cap) / s.ray_range;
+                obs[k] = cast_ray(t, s, x, y, heading + s.ray_angles[k], ray_length, cap) / s.ray_scale;
             obs[s.n_rays] = speed / s.speed_scale;
             int64_t i = wrap(index, t.m);                                               // sim.road_position
             double dx = x - t.centerline[2 * i], dy = y - t.centerline[2 * i + 1];
@@ -338,14 +348,15 @@ void drive(const Track& t, const Settings& s, const Programs* p, const double* s
         double steer = s.steer_levels[action / s.n_throttle];                          // actions.class_to_controls
         double throttle = s.throttle_levels[action % s.n_throttle];
 
-        double a_lat = std::clamp(steer * steer_gain, -1.0, 1.0) * s.grip;              // sim.step
-        double a_long = std::clamp(throttle, -1.0, 1.0) * s.grip;
+        double grip = s.grip_scale * grip_at(s, speed);                                 // sim.step
+        double a_lat = std::clamp(steer * steer_gain, -1.0, 1.0) * grip;
+        double a_long = std::clamp(throttle, -1.0, 1.0) * grip;
         double total = std::hypot(a_lat, a_long);
-        double scale = total > s.grip ? s.grip / std::max(total, 1e-12) : 1.0;
+        double scale = total > grip ? grip / std::max(total, 1e-12) : 1.0;
         a_lat = a_lat * scale;
         a_long = a_long * scale;
         double yaw_rate = a_lat / std::max(speed, s.yaw_min_speed);
-        speed = std::max(speed + a_long * s.dt, 0.0);
+        speed = std::min(std::max(speed + a_long * s.dt, 0.0), s.top_speed);
         heading = heading + yaw_rate * s.dt;
         x = x + speed * std::cos(heading) * s.dt;
         y = y + speed * std::sin(heading) * s.dt;

@@ -116,7 +116,7 @@ def test_the_compiled_benchmark_times_the_newest_trained_population(monkeypatch,
     os.utime(tmp_path / "runs/es/seed0/checkpoint.pkl", (time.time() - 30, time.time() - 30))
     built, calls = [], []
     monkeypatch.setattr(bench, "get_track", lambda seed, level: built.append((seed, level)) or circle_track)
-    monkeypatch.setattr(fastsim, "simulate", lambda tracks, cars, limits, laps=1, grip=None, threads=1:
+    monkeypatch.setattr(fastsim, "simulate", lambda tracks, cars, limits, laps=1, grip_scale=1.0, threads=1:
                         calls.append((len(tracks), cars, limits, laps, threads)))
     assert bench.compiled_generation_time(10, 3, repeats=2) >= 0.0
     assert built == [(6, config.MAX_LEVEL), (7, config.MAX_LEVEL), (8, config.MAX_LEVEL)]

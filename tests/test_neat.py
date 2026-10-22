@@ -606,7 +606,8 @@ def test_neat_children_inherit_the_setup_of_their_fitter_parent(monkeypatch):
     rng = np.random.default_rng(41)
     method = neat.NEAT(pop_size=30)
     method.initialize(rng)
-    assert np.std(np.log(method.setup), axis=0).min() > 0.3              # random start: a wide spread
+    assert np.all(method.setup[:, 0] == config.SENSOR_START)            # random start: 150 m sensors ...
+    assert np.std(np.log(method.setup[:, 1])) > 0.3                     # ... and a wide spread of steering
     before = dict(zip(method.ids.tolist(), method.setup.copy()))
     fitness = np.random.default_rng(42).random(30)
     method.advance(rng, result_for(fitness, np.zeros(30)), np.array([3, 7]), None)

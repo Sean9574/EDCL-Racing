@@ -77,11 +77,11 @@ def test_render_graph_follows_the_size():
 
 def test_titles_name_the_method_parameters_and_setup():
     driver = dense_driver()
-    assert netfig.setup_text(driver) == " · 50 m · ×1.00"
+    assert netfig.setup_text(driver) == " · 150 m · ×1.00"
     driver.setup = np.array([123.4, 0.456])
     assert netfig.setup_text(driver) == " · 123 m · ×0.46"
     assert netfig.panel_title("ga", driver) == f"GA · {driver.n_params:,} parameters · 123 m · ×0.46"
-    assert netfig.panel_title("neat", neat_driver()).endswith(" parameters · 50 m · ×1.00")
+    assert netfig.panel_title("neat", neat_driver()).endswith(" parameters · 150 m · ×1.00")
 
 
 def test_a_network_of_an_earlier_revision_shows_only_its_inputs():

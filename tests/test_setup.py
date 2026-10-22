@@ -7,15 +7,15 @@ from racing import config, setup
 
 
 def test_setup_parameters():
-    assert config.SENSOR_LENGTH_LIMITS == (10.0, 150.0) and config.STEER_GAIN_LIMITS == (1.0 / 3.0, 3.0)
+    assert config.SENSOR_LENGTH_LIMITS == (30.0, 1000.0) and config.STEER_GAIN_LIMITS == (1.0 / 3.0, 3.0)
     assert (config.SETUP_MUTATION_P, config.SETUP_MUTATION_SD) == (0.2, 0.1)
     assert setup.COLUMNS == ("sensor_length", "steer_gain")
 
 
-def test_default_rows_are_revision_3s_setup():
+def test_default_rows_are_the_default_setup():
     rows = setup.default(4)
     assert rows.shape == (4, 2) and rows.dtype == np.float64
-    assert np.all(rows == np.asarray(config.DEFAULT_SETUP))
+    assert np.all(rows == np.asarray(config.DEFAULT_SETUP)) and np.all(rows == [config.SENSOR_START, 1.0])
     assert np.array_equal(setup.as_row(None), config.DEFAULT_SETUP)
 
 
@@ -29,24 +29,27 @@ def test_as_rows_copies_and_checks_the_shape():
         setup.as_rows(values, 3)
 
 
-def test_random_setups_are_log_uniform_within_the_limits():
+def test_random_setups_start_at_the_starting_sensor_length_with_log_uniform_steering():
+    """Spec §9.11 (version 3.8): every car of a random-start population starts with 150 m sensors; its steering
+    sensitivity is log-uniform within its limits."""
     rows = setup.random(np.random.default_rng(0), 20000)
-    for column, (low, high) in enumerate((config.SENSOR_LENGTH_LIMITS, config.STEER_GAIN_LIMITS)):
-        values = rows[:, column]
-        assert values.min() >= low and values.max() <= high
-        assert abs(np.mean(values < np.sqrt(low * high)) - 0.5) < 0.02          # median at the geometric mean
-        assert abs(np.mean(values < low * (high / low) ** 0.25) - 0.25) < 0.02  # a quarter in the first log quarter
+    assert rows.shape == (20000, 2) and np.all(rows[:, 0] == config.SENSOR_START)
+    low, high = config.STEER_GAIN_LIMITS
+    values = rows[:, 1]
+    assert values.min() >= low and values.max() <= high
+    assert abs(np.mean(values < np.sqrt(low * high)) - 0.5) < 0.02          # median at the geometric mean
+    assert abs(np.mean(values < low * (high / low) ** 0.25) - 0.25) < 0.02  # a quarter in the first log quarter
 
 
 def test_random_makes_one_uniform_draw():
     a, b = np.random.default_rng(1), np.random.default_rng(1)
     setup.random(a, 5)
-    b.uniform(size=(5, 2))
+    b.uniform(size=5)
     assert a.bit_generator.state == b.bit_generator.state
 
 
 def test_clip_keeps_values_within_the_limits():
-    clipped = setup.clip(np.array([[1.0, 0.1], [500.0, 9.0], [60.0, 1.5]]))
+    clipped = setup.clip(np.array([[1.0, 0.1], [5000.0, 9.0], [60.0, 1.5]]))
     low = [config.SENSOR_LENGTH_LIMITS[0], config.STEER_GAIN_LIMITS[0]]
     high = [config.SENSOR_LENGTH_LIMITS[1], config.STEER_GAIN_LIMITS[1]]
     assert np.array_equal(clipped, [low, high, [60.0, 1.5]])
@@ -147,9 +150,9 @@ def recording_simulate(monkeypatch, seen):
     """Wrap sim.simulate (one module object, seen by every caller) to record each call's setup."""
     real = sim.simulate
 
-    def recording(track, policy, n, time_limit=None, laps=1, setup=None, grip=config.GRIP):
+    def recording(track, policy, n, time_limit=None, laps=1, setup=None, grip_scale=1.0):
         seen.append(None if setup is None else np.array(setup))
-        return real(track, policy, n, time_limit=time_limit, laps=laps, setup=setup, grip=grip)
+        return real(track, policy, n, time_limit=time_limit, laps=laps, setup=setup, grip_scale=grip_scale)
 
     monkeypatch.setattr(sim, "simulate", recording)
 

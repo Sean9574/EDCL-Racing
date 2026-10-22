@@ -6,9 +6,14 @@ import numpy as np
 
 # --- Simulation (spec §5) ---
 DT = 0.05                    # s, fixed time step (20 Hz)
-GRIP = 12.0                  # m/s², friction-circle limit μg; the only vehicle limit
+G = 9.81                     # m/s²
+GRIP_LOW = 1.8 * G           # m/s², the tyres' grip at low speed (spec §5.1)
+GRIP_MAX = 5.0 * G           # m/s², the grip ceiling, reached at GRIP_FULL_SPEED
+GRIP_FULL_SPEED = 250.0 / 3.6   # m/s (250 km/h)
+GRIP_RISE = (GRIP_MAX - GRIP_LOW) / GRIP_FULL_SPEED ** 2   # 1/m: a(v) = min(GRIP_LOW + GRIP_RISE v², GRIP_MAX)
+TOP_SPEED = 105.0            # m/s (378 km/h), the highest speed of a Formula 1 car in an official session (spec §5.1)
 YAW_MIN_SPEED = 1.0          # m/s, speed floor used only in the yaw-rate formula
-SPEED_SCALE = 40.0           # m/s, input normalization only; not a speed limit
+SPEED_SCALE = TOP_SPEED      # m/s, the speed input's scale (spec §5.2)
 STALL_TIME = 5.0             # s without progress ends a run
 TIME_LIMIT_FACTOR = 2.0      # time limit per lap = factor × expert lap time
 LAPS = 3                     # laps per run in training and evaluation (spec §5.4)
@@ -17,13 +22,15 @@ TIME_EPS = 1e-9              # tolerance for comparisons of accumulated simulati
 # --- Sensors (spec §5.2) ---
 N_RAYS = 9
 RAY_ANGLES = np.radians(np.linspace(-90.0, 90.0, N_RAYS))   # index 0 = right, 4 = ahead, 8 = left
-RAY_RANGE = 50.0             # m, revision 3's sensor length and the ray input scale (an input of 1.0 is 50 m)
+RAY_SCALE = 150.0            # m, the ray input scale: an input of 1.0 is 150 m
 RAY_MIN_STEP = 0.5           # m, smallest sphere-tracing step
-RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations of a RAY_RANGE ray; scaled with each ray's length (spec §5.2)
+RAY_TRACE_LENGTH = 50.0      # m: a ray of length L takes at most ceil(RAY_MAX_ITERATIONS × L / RAY_TRACE_LENGTH)
+RAY_MAX_ITERATIONS = 48      # sphere-tracing iterations (spec §5.2)
 
 # --- Car setup (spec §9.11) ---
-DEFAULT_SETUP = (RAY_RANGE, 1.0)   # (sensor length m, steering sensitivity) of every car in revision 3
-SENSOR_LENGTH_LIMITS = (10.0, 150.0)   # m, the sensor lengths evolution may choose (spec §9.11)
+SENSOR_START = 150.0         # m, every car's sensor length at the start, and of every car that does not evolve it
+DEFAULT_SETUP = (SENSOR_START, 1.0)   # (sensor length m, steering sensitivity)
+SENSOR_LENGTH_LIMITS = (30.0, 1000.0)  # m, the sensor lengths evolution may choose (spec §9.11)
 STEER_GAIN_LIMITS = (1.0 / 3.0, 3.0)   # the steering sensitivities evolution may choose
 SETUP_MUTATION_P = 0.2       # chance that each setup value of a child is mutated (spec §9.11)
 SETUP_MUTATION_SD = 0.1      # standard deviation of that mutation on the natural-log scale (about ±10%)
@@ -75,7 +82,7 @@ EXPERT_LOOKAHEAD_BASE = 6.0  # m
 EXPERT_LOOKAHEAD_TIME = 0.4  # s
 EXPERT_GRIP_MARGIN = 0.85
 EXPERT_SPEED_BAND = 0.5      # m/s
-EXPERT_SIGHT = RAY_RANGE     # m, the expert uses no geometry beyond sensor range
+EXPERT_SIGHT = SENSOR_START  # m, the expert uses no geometry beyond the starting sensor length
 EXPERT_VALIDATION_TIME = 600.0  # s, time limit when validating a track with the expert
 PERTURB_INTERVAL = (2.0, 4.0)   # s between steering disturbances
 PERTURB_DURATION = (0.3, 0.6)   # s per disturbance
@@ -255,8 +262,8 @@ DEFAULT_SHOWN = 100
 KT_VIEW_SEED = 80
 RACE_LAPS = LAPS
 DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
-APP_GRIPS = {"Normal": GRIP, "Unlimited": 10.0 * GRIP}   # m/s², display grip of the viewer's own simulations only
-                                                         # (spec §10.5); never a recorded setting
+APP_GRIPS = {"Normal": 1.0, "Unlimited": 10.0}   # multiples of a(v), the display grip of the viewer's own simulations
+                                                 # only (spec §10.5); never a recorded setting
 ROBUSTNESS_WIDTHS = (8.0, 10.0, 14.0, 18.0)   # m, the robustness table's widths (spec §11.1); evaluation only
 REPLAY_POLL_SECONDS = 1.0    # the notebook-run view looks for a newer generation at most this often
 CAMERA_ZOOMS = (1, 2, 4, 8)  # the camera button's steps; above 1 the camera follows the best car or the race leader

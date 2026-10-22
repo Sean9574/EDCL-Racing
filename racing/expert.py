@@ -1,4 +1,5 @@
-"""Scripted expert driver (spec §7.1) and imitation dataset collection on freshly generated maps (spec §7.2-7.3)."""
+"""Scripted expert driver (spec §7.1), whose steering and throttle are fractions of the grip a(v), and imitation
+dataset collection on freshly generated maps (spec §7.2-7.3)."""
 import os
 import time
 from pathlib import Path
@@ -11,7 +12,8 @@ from racing.tracks import get_track
 
 
 def expert_controls(track, cars):
-    """Continuous steering and throttle fractions chosen by the expert for every car."""
+    """Continuous steering and throttle chosen by the expert for every car, as fractions of the grip a(v) at the car's
+    speed (spec §7.1)."""
     m = len(track.centerline)
     here = np.mod(cars.index, m)
     look = config.EXPERT_LOOKAHEAD_BASE + config.EXPERT_LOOKAHEAD_TIME * cars.speed
@@ -19,23 +21,44 @@ def expert_controls(track, cars):
     dx, dy = target[:, 0] - cars.x, target[:, 1] - cars.y
     alpha = np.angle(np.exp(1j * (np.arctan2(dy, dx) - cars.heading)))
     path_curvature = 2.0 * np.sin(alpha) / np.maximum(np.hypot(dx, dy), 1e-6)
-    steer = np.clip(cars.speed ** 2 * path_curvature / config.GRIP, -1.0, 1.0)
+    steer = np.clip(cars.speed ** 2 * path_curvature / sim.grip_at(cars.speed), -1.0, 1.0)
     target = target_speed(track, here)
     band = config.EXPERT_SPEED_BAND
     throttle = np.where(cars.speed < target - band, 1.0, np.where(cars.speed > target + band, -1.0, 0.0))
     return steer, throttle
 
 
+def corner_speed(kappa):
+    """The highest speed v with v² κ ≤ EXPERT_GRIP_MARGIN × a(v) for curvatures κ in 1/m (spec §7.1): below the grip
+    ceiling v² (κ − m c) ≤ m a0, at the ceiling v² κ ≤ m a_max; the lower of the two bounds."""
+    margin = config.EXPERT_GRIP_MARGIN
+    kappa = np.maximum(np.asarray(kappa, dtype=float), 1e-9)
+    excess = kappa - margin * config.GRIP_RISE
+    rising = np.where(excess > 0.0, np.sqrt(margin * config.GRIP_LOW / np.maximum(excess, 1e-12)), np.inf)
+    return np.minimum(rising, np.sqrt(margin * config.GRIP_MAX / kappa))
+
+
+def sight_speed(sight=None):
+    """The highest speed from which the expert stops within `sight` m (EXPERT_SIGHT) braking at EXPERT_GRIP_MARGIN ×
+    a(v) (spec §7.1): below GRIP_FULL_SPEED the braking distance from v is ln(a(v) / a0) / (2 m c), above it the
+    ceiling adds (v² − v_full²) / (2 m a_max). About 98 m/s for 150 m."""
+    sight = config.EXPERT_SIGHT if sight is None else float(sight)
+    margin, low, rise = config.EXPERT_GRIP_MARGIN, config.GRIP_LOW, config.GRIP_RISE
+    full = config.GRIP_FULL_SPEED
+    rising_distance = np.log((low + rise * full * full) / low) / (2.0 * margin * rise)
+    if sight <= rising_distance:
+        return float(np.sqrt(low * np.expm1(2.0 * margin * rise * sight) / rise))
+    return float(np.sqrt(full * full + 2.0 * margin * config.GRIP_MAX * (sight - rising_distance)))
+
+
 def target_speed(track, here):
-    """The expert's target speed at centerline points `here`: the corner speed for the tightest curve in
-    sight, capped by the speed from which it can stop within sight."""
+    """The expert's target speed at centerline points `here` (spec §7.1): the corner speed of the tightest curve within
+    its sight, capped by the speed from which it can stop within its sight and by the top speed."""
     m = len(track.centerline)
     sight = int(round(config.EXPERT_SIGHT / track.spacing))
     window = np.mod(here[:, None] + np.arange(sight + 1)[None, :], m)
     kappa = np.max(np.abs(track.curvature[window]), axis=1)
-    corner_speed = np.sqrt(config.EXPERT_GRIP_MARGIN * config.GRIP / np.maximum(kappa, 1e-9))
-    sight_speed = np.sqrt(2.0 * config.EXPERT_GRIP_MARGIN * config.GRIP * config.EXPERT_SIGHT)
-    return np.minimum(corner_speed, sight_speed)
+    return np.minimum(np.minimum(corner_speed(kappa), sight_speed()), config.TOP_SPEED)
 
 
 def expert_policy(track):

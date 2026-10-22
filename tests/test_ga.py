@@ -341,14 +341,15 @@ def test_initial_setups_spread_within_the_limits():
     method = started(pop_size=200)
     values = method.setup
     assert values.shape == (200, 2) and values is method.population.setup
-    assert np.all((values[:, 0] >= config.SENSOR_LENGTH_LIMITS[0]) & (values[:, 0] <= config.SENSOR_LENGTH_LIMITS[1]))
+    assert np.all(values[:, 0] == config.SENSOR_START)                  # every car starts with 150 m sensors
     assert np.all((values[:, 1] >= config.STEER_GAIN_LIMITS[0]) & (values[:, 1] <= config.STEER_GAIN_LIMITS[1]))
-    assert log_spread(values).min() > 0.5        # log-uniform: about 0.78 for the length, 0.63 for the sensitivity
+    assert log_spread(values)[1] > 0.5           # log-uniform: about 0.63 for the sensitivity
 
 
 def test_children_take_each_setup_value_from_a_parent(monkeypatch):
     monkeypatch.setattr(config, "SETUP_MUTATION_P", 0.0)
     method = started(pop_size=40)
+    method.setup[:, 0] = np.geomspace(40.0, 900.0, 40)                  # evolved sensor lengths, one per car
     before = method.setup.copy()
     kept = np.array([4, 9])
     method.advance(np.random.default_rng(1), result(np.random.default_rng(2).random(40), np.zeros(40)), kept, None)

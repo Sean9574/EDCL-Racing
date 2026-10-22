@@ -8,9 +8,38 @@ from racing.actions import class_to_controls, controls_to_class
 
 def test_expert_finishes_the_circle(circle_track):
     lap = expert.expert_lap_time(circle_track)
-    corner_speed = np.sqrt(config.EXPERT_GRIP_MARGIN * config.GRIP * 50.0)
+    corner_speed = expert.corner_speed(1 / 50.0)                 # the circle's radius is 50 m
     assert lap is not None
-    assert circle_track.length / 23.0 < lap < 2.5 * circle_track.length / corner_speed
+    fastest = corner_speed + config.EXPERT_SPEED_BAND
+    assert circle_track.length / fastest < lap < 2.5 * circle_track.length / corner_speed
+
+
+def test_the_corner_speed_uses_the_grip_at_that_speed():
+    """Spec §7.1: the highest v with v² κ ≤ 0.85 a(v)."""
+    kappa = np.array([1 / 15.0, 1 / 60.0, 1 / 150.0, 1 / 400.0, 1 / 5000.0])
+    v = expert.corner_speed(kappa)
+    margin = config.EXPERT_GRIP_MARGIN
+    bound = kappa < 1 / 300.0                        # gentle curves: the ceiling or nothing binds
+    assert np.allclose((v * v * kappa)[~bound], margin * sim.grip_at(v)[~bound], rtol=1e-12)
+    assert np.all(v * v * kappa <= margin * sim.grip_at(v) * (1 + 1e-12))
+    assert v[-1] > config.TOP_SPEED                  # a 5 km radius does not limit the car
+
+
+def test_the_sight_speed_stops_within_150_m():
+    assert config.EXPERT_SIGHT == config.SENSOR_START == 150.0
+    v = expert.sight_speed()
+    assert 97.5 < v < 98.5                           # about 98 m/s (353 km/h), spec §7.1
+    speeds = np.linspace(v, 0.0, 200001)             # braking at 0.85 a(v) from v covers exactly the sight
+    rate = config.EXPERT_GRIP_MARGIN * sim.grip_at(speeds)
+    distance = np.trapezoid(speeds / rate, -speeds) if hasattr(np, "trapezoid") else np.trapz(speeds / rate, -speeds)
+    assert np.isclose(distance, 150.0, rtol=1e-4)
+
+
+def test_the_target_speed_never_exceeds_the_sight_speed_or_the_top_speed(circle_track):
+    here = np.arange(len(circle_track.centerline))
+    target = expert.target_speed(circle_track, here)
+    assert np.all(target <= expert.sight_speed()) and np.all(target <= config.TOP_SPEED)
+    assert np.allclose(target, expert.corner_speed(np.abs(circle_track.curvature).max()), rtol=1e-6)
 
 
 def test_expert_policy_returns_action_classes(circle_track):

@@ -173,8 +173,9 @@ def test_playback_drives_each_car_with_its_setup_and_the_display_grip(circle_tra
     full_left_gas = lambda obs, cars: np.full(len(cars.x), config.N_ACTIONS - 1)
     cars_setup = np.array([[30.0, 1.0], [150.0, 0.5]])
     normal = viewer.Playback(circle_track, full_left_gas, 2, setup=cars_setup)
-    unlimited = viewer.Playback(circle_track, full_left_gas, 2, setup=cars_setup, grip=config.APP_GRIPS["Unlimited"])
-    assert normal.grip == config.GRIP and unlimited.grip == config.APP_GRIPS["Unlimited"]
+    unlimited = viewer.Playback(circle_track, full_left_gas, 2, setup=cars_setup,
+                                grip_scale=config.APP_GRIPS["Unlimited"])
+    assert normal.grip_scale == 1.0 and unlimited.grip_scale == 10.0
     assert np.array_equal(normal.cars.ray_length, [30.0, 150.0]) and np.array_equal(normal.cars.steer_gain, [1.0, 0.5])
     normal.advance(5)
     unlimited.advance(5)
@@ -187,12 +188,12 @@ def test_the_training_replay_uses_the_report_setups_and_the_display_grip(window)
     window.set_grip("Unlimited")
     window.receive(ga_report(population_=cars))
     window.update(1 / 60)
-    assert window.playback.grip == config.APP_GRIPS["Unlimited"]
+    assert window.playback.grip_scale == 10.0
     assert np.array_equal(window.playback.cars.ray_length, cars.subset(window.indices).setup[:, 0])
     assert np.array_equal(window.playback.cars.steer_gain, cars.subset(window.indices).setup[:, 1])
     window.set_grip("Normal")                                    # the replay restarts with the new grip
     window.update(1 / 60)
-    assert window.playback.grip == config.GRIP
+    assert window.playback.grip_scale == 1.0
 
 
 def test_a_stopped_replay_keeps_its_grip(window):
@@ -202,7 +203,7 @@ def test_a_stopped_replay_keeps_its_grip(window):
     frozen = window.playback
     window.set_grip("Unlimited")
     window.update(1 / 60)
-    assert window.playback is frozen and frozen.grip == config.GRIP and window.grip_name == "Unlimited"
+    assert window.playback is frozen and frozen.grip_scale == 1.0 and window.grip_name == "Unlimited"
 
 
 def test_the_race_uses_driver_setups_and_the_display_grip(window, tmp_path):
@@ -210,18 +211,18 @@ def test_the_race_uses_driver_setups_and_the_display_grip(window, tmp_path):
     window.set_grip("Unlimited")
     window.update(1 / 60)
     drivers = [window.driver(approach, seed) for approach, seed in window.lineup]
-    assert window.race.grip == config.APP_GRIPS["Unlimited"]
+    assert window.race.grip_scale == 10.0
     assert np.array_equal(window.race.cars.ray_length, nets.drivers_setup(drivers)[:, 0])
     window.start_race()
     window.set_grip("Normal")                                    # locked while racing
-    assert window.grip_name == "Unlimited" and window.race.grip == config.APP_GRIPS["Unlimited"]
+    assert window.grip_name == "Unlimited" and window.race.grip_scale == 10.0
 
 
 def test_toggle_grip_cycles_the_display_grips(window):
     names = list(config.APP_GRIPS)
-    assert window.grip_name == names[0] == "Normal" and window.grip == config.GRIP
+    assert window.grip_name == names[0] == "Normal" and window.grip_scale == 1.0
     window.toggle_grip()
-    assert window.grip_name == names[1] and window.grip == config.APP_GRIPS[names[1]]
+    assert window.grip_name == names[1] == "Unlimited" and window.grip_scale == config.APP_GRIPS[names[1]] == 10.0
     window.toggle_grip()
     assert window.grip_name == names[0]
 
@@ -269,8 +270,9 @@ def test_the_display_grip_never_reaches_training(window, monkeypatch, tmp_path):
     reports, running = queue.Queue(), threading.Event()
     running.set()
     viewer.trainer_main("ga", 30, 0, 1, reports, running)
-    assert "grip" not in calls and calls["pop_size"] == 30
-    assert config.GRIP == 12.0 and config.APP_GRIPS["Normal"] == config.GRIP
+    assert "grip" not in calls and "grip_scale" not in calls and calls["pop_size"] == 30
+    assert (config.GRIP_LOW, config.GRIP_MAX) == (1.8 * config.G, 5.0 * config.G)
+    assert config.APP_GRIPS == {"Normal": 1.0, "Unlimited": 10.0}
 
 
 def test_rays_follow_each_cars_sensor_length(window, monkeypatch, tmp_path):
@@ -1674,7 +1676,7 @@ def test_a_new_report_sends_exactly_one_message(net):
     best = int(np.argmax(report["fitness"]))
     assert sent(net)[0]["graph"] == viewer.netwindow.netfig.network_graph(report["population"].driver(best))
     assert sent(net)[0]["title"] == (f"GA · run {net.run_seed} · generation 0 · "
-                                     f"{report['population'].driver(best).n_params:,} parameters · 50 m · ×1.00")
+                                     f"{report['population'].driver(best).n_params:,} parameters · 150 m · ×1.00")
     net.receive(ga_report(1))
     net.update(1 / 60)
     assert len(sent(net)) == 2
@@ -1723,7 +1725,7 @@ def test_network_window_titles_name_the_setup(net, tmp_path):
     net.champions_dir = tmp_path
     net.set_mode("race")
     net.update(1 / 60)
-    assert sent(net)[-1]["title"].endswith(" parameters · 50 m · ×1.00")
+    assert sent(net)[-1]["title"].endswith(" parameters · 150 m · ×1.00")
 
 
 def test_a_reopened_window_gets_the_current_network(net):

@@ -168,12 +168,13 @@ def car_polygon(sx, sy, heading, size):
 
 class Playback:
     """Re-simulates a set of controllers on one track, a few steps at a time, for display. Each car drives with its
-    own setup and every car with the viewer's display grip (spec §10.5); training never uses this class."""
+    own setup and every car with the viewer's display grip, grip_scale × a(v) (spec §10.5); training never uses this
+    class."""
 
-    def __init__(self, track, policy, n, laps=1, time_limit=None, setup=None, grip=config.GRIP):
+    def __init__(self, track, policy, n, laps=1, time_limit=None, setup=None, grip_scale=1.0):
         self.track = track
         self.policy = policy
-        self.grip = float(grip)
+        self.grip_scale = float(grip_scale)
         self.cars = sim.start_cars(track, n, laps, setup)
         self.time_limit = sim.time_limit_for(track, laps) if time_limit is None else time_limit
 
@@ -186,7 +187,7 @@ class Playback:
             if self.over:
                 return
             steer, throttle = class_to_controls(self.policy(sim.sense(self.track, self.cars), self.cars))
-            sim.step(self.track, self.cars, steer, throttle, self.time_limit, grip=self.grip)
+            sim.step(self.track, self.cars, steer, throttle, self.time_limit, grip_scale=self.grip_scale)
 
 
 def report_policy(report, indices):
@@ -287,7 +288,7 @@ def save_app_car(report, champion_dir):
 
 def save_app_model(approach, seed, model, champion_dir):
     """An imitation network saved as the run's app car (spec §10.6). It has no setup file, so it drives with
-    the revision 3 setup. The file is replaced in one step, so the race view never reads half a model."""
+    the default setup. The file is replaced in one step, so the race view never reads half a model."""
     population.clear_champion(approach, seed, champion_dir)
     path = paths.champion_path(approach, seed, champion_dir=champion_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1032,12 +1033,13 @@ class App:
         self.rays = not self.rays
 
     @property
-    def grip(self):
+    def grip_scale(self):
+        """The display grip as a multiple of a(v) (config.APP_GRIPS)."""
         return config.APP_GRIPS[self.grip_name]
 
     def set_grip(self, name):
         """Display grip for the viewer's races and training replays (spec §10.5). Training, evaluation and the
-        expert always use config.GRIP. Locked while a race runs; a running replay restarts with the new grip, a
+        expert always use a(v). Locked while a race runs; a running replay restarts with the new grip, a
         stopped one stays frozen and the next replay uses it."""
         if name not in config.APP_GRIPS or name == self.grip_name or self.racing:
             return
@@ -1061,7 +1063,7 @@ class App:
         fitness = np.asarray(report["fitness"], dtype=float)
         self.indices = select_indices(fitness, self.show, self.shown, sample_seed=report["generation"])
         self.playback = Playback(track, report_policy(report, self.indices), len(self.indices), laps=config.LAPS,
-                                 setup=report_setup(report, self.indices), grip=self.grip)
+                                 setup=report_setup(report, self.indices), grip_scale=self.grip_scale)
         self.best_slot = int(np.argmax(fitness[self.indices]))
         if report is not self.playback_report and self.process is not None:
             self.status = f"Training {config.LABELS[self.approach]}, run {self.run_seed}."
@@ -1243,7 +1245,7 @@ class App:
                         self.status = f"{car_method(car)} run {car[1]} left out: {error}."
                 if drivers:
                     self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS,
-                                         setup=nets.drivers_setup(drivers), grip=self.grip)
+                                         setup=nets.drivers_setup(drivers), grip_scale=self.grip_scale)
 
     def start_race(self):
         self.prepare_race()

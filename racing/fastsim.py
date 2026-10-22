@@ -275,9 +275,10 @@ class Track(ctypes.Structure):
 
 class Settings(ctypes.Structure):
     _fields_ = ([(name, ctypes.c_double) for name in (
-                    "dt", "grip", "yaw_min_speed", "speed_scale", "ray_range", "width_scale", "ray_min_step",
-                    "grid_res", "stall_time", "time_eps", "expert_grip", "lookahead_base", "lookahead_time",
-                    "grip_margin", "speed_band", "expert_sight")]
+                    "dt", "grip_scale", "grip_low", "grip_rise", "grip_max", "top_speed", "yaw_min_speed",
+                    "speed_scale", "ray_scale", "ray_trace_length", "width_scale", "ray_min_step", "grid_res",
+                    "stall_time", "time_eps", "lookahead_base", "lookahead_time", "grip_margin", "speed_band",
+                    "sight_speed")]
                 + [(name, ctypes.c_int64) for name in ("ray_max_iterations", "laps", "n_inputs")]
                 + [("ray_angles", P_DOUBLE), ("n_rays", ctypes.c_int64), ("steer_levels", P_DOUBLE),
                    ("n_steer", ctypes.c_int64), ("throttle_levels", P_DOUBLE), ("n_throttle", ctypes.c_int64)])
@@ -456,18 +457,21 @@ def _forward(lib, population, obs):
     return out
 
 
-def _settings(grip, laps, keep):
+def _settings(grip_scale, laps, keep):
+    from racing import expert                     # expert imports this module
     def doubles(values):
         array = np.ascontiguousarray(values, dtype=np.float64)
         keep.append(array)
         return _pointer(array)
 
-    return Settings(dt=config.DT, grip=grip, yaw_min_speed=config.YAW_MIN_SPEED, speed_scale=config.SPEED_SCALE,
-                    ray_range=config.RAY_RANGE, width_scale=config.WIDTH_SCALE, ray_min_step=config.RAY_MIN_STEP,
-                    grid_res=config.GRID_RES, stall_time=config.STALL_TIME, time_eps=config.TIME_EPS,
-                    expert_grip=config.GRIP, lookahead_base=config.EXPERT_LOOKAHEAD_BASE,
+    return Settings(dt=config.DT, grip_scale=float(grip_scale), grip_low=config.GRIP_LOW, grip_rise=config.GRIP_RISE,
+                    grip_max=config.GRIP_MAX, top_speed=config.TOP_SPEED, yaw_min_speed=config.YAW_MIN_SPEED,
+                    speed_scale=config.SPEED_SCALE, ray_scale=config.RAY_SCALE,
+                    ray_trace_length=config.RAY_TRACE_LENGTH, width_scale=config.WIDTH_SCALE,
+                    ray_min_step=config.RAY_MIN_STEP, grid_res=config.GRID_RES, stall_time=config.STALL_TIME,
+                    time_eps=config.TIME_EPS, lookahead_base=config.EXPERT_LOOKAHEAD_BASE,
                     lookahead_time=config.EXPERT_LOOKAHEAD_TIME, grip_margin=config.EXPERT_GRIP_MARGIN,
-                    speed_band=config.EXPERT_SPEED_BAND, expert_sight=config.EXPERT_SIGHT,
+                    speed_band=config.EXPERT_SPEED_BAND, sight_speed=expert.sight_speed(),
                     ray_max_iterations=config.RAY_MAX_ITERATIONS, laps=laps, n_inputs=config.N_INPUTS,
                     ray_angles=doubles(config.RAY_ANGLES), n_rays=config.N_RAYS,
                     steer_levels=doubles(config.STEER_LEVELS), n_steer=len(config.STEER_LEVELS),
@@ -489,7 +493,7 @@ def _c_track(track, time_limit, keep):
                  sight=int(round(config.EXPERT_SIGHT / track.spacing)), time_limit=float(time_limit))
 
 
-def _run(tracks, programs, setup, time_limits, laps, grip, threads):
+def _run(tracks, programs, setup, time_limits, laps, grip_scale, threads):
     """One library call for every track: programs None drives the expert. A list of sim.RunResult, one per track."""
     tracks, time_limits = list(tracks), list(time_limits)
     if len(time_limits) != len(tracks):
@@ -502,7 +506,7 @@ def _run(tracks, programs, setup, time_limits, laps, grip, threads):
         raise ValueError(f"{len(programs.node_offset) - 1} network programs for {n} cars")
     keep = []
     c_tracks = (Track * max(len(tracks), 1))(*[_c_track(t, limit, keep) for t, limit in zip(tracks, time_limits)])
-    c_settings = _settings(grip, laps, keep)
+    c_settings = _settings(grip_scale, laps, keep)
     c_programs = None if programs is None else ctypes.byref(_c_programs(programs, keep))
     shape = (len(tracks), n)
     finished, crashed = np.zeros(shape, dtype=np.uint8), np.zeros(shape, dtype=np.uint8)
@@ -525,16 +529,16 @@ def _run(tracks, programs, setup, time_limits, laps, grip, threads):
     return results
 
 
-def simulate(tracks, population, time_limits, laps=1, grip=config.GRIP, threads=1):
-    """sim.simulate(track, population.policy(), len(population), time_limit, laps, population.setup, grip) for every
-    track, in one call with `threads` threads (spec §5.7). Returns one sim.RunResult per track."""
-    return _run(tracks, program(population), population.setup, time_limits, laps, grip, threads)
+def simulate(tracks, population, time_limits, laps=1, grip_scale=1.0, threads=1):
+    """sim.simulate(track, population.policy(), len(population), time_limit, laps, population.setup, grip_scale) for
+    every track, in one call with `threads` threads (spec §5.7). Returns one sim.RunResult per track."""
+    return _run(tracks, program(population), population.setup, time_limits, laps, grip_scale, threads)
 
 
 def simulate_expert(tracks, n, time_limits, laps=1, threads=1):
     """sim.simulate(track, expert.expert_policy(track), n, time_limit, laps) for every track: n expert cars with the
     default setup, in one call (spec §5.7). Returns one sim.RunResult per track."""
-    return _run(tracks, None, car_setup.default(n), time_limits, laps, config.GRIP, threads)
+    return _run(tracks, None, car_setup.default(n), time_limits, laps, 1.0, threads)
 
 
 def expert_lap_time(track):

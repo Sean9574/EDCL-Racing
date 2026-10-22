@@ -14,6 +14,8 @@ import pytest
 
 from racing import config, fastsim
 
+from conftest import stadium
+
 needs_compiler = pytest.mark.skipif(shutil.which(fastsim.COMPILER) is None, reason="no g++ on this machine")
 
 
@@ -171,9 +173,9 @@ def same_results(a, b):
     assert a.steps == b.steps
 
 
-def numpy_results(tracks, population, limits, laps, grip=config.GRIP):
+def numpy_results(tracks, population, limits, laps, grip_scale=1.0):
     return [sim.simulate(t, population.policy(), len(population), time_limit=limit, laps=laps,
-                         setup=population.setup, grip=grip) for t, limit in zip(tracks, limits)]
+                         setup=population.setup, grip_scale=grip_scale) for t, limit in zip(tracks, limits)]
 
 
 def dense_cars(n, hidden=config.BASELINE_HIDDEN, activation="relu", n_inputs=config.N_INPUTS, seed=0):
@@ -291,8 +293,8 @@ def test_nan_outputs_choose_actions_as_np_argmax_does(circle_track):
 def test_the_grip_setting_is_passed_through(circle_track):
     cars = dense_cars(30, seed=5)
     limit = sim.time_limit_for(circle_track, 1)
-    same_results(fastsim.simulate([circle_track], cars, [limit], grip=7.0)[0],
-                 numpy_results([circle_track], cars, [limit], 1, grip=7.0)[0])
+    same_results(fastsim.simulate([circle_track], cars, [limit], grip_scale=7.0)[0],
+                 numpy_results([circle_track], cars, [limit], 1, grip_scale=7.0)[0])
 
 
 @needs_compiler
@@ -509,6 +511,28 @@ def test_several_expert_cars_over_three_laps(circle_track):
     limit = sim.target_time(circle_track, 0.4)          # too tight: every car runs out of time partway
     same_results(fastsim.simulate_expert([circle_track], 3, [limit], laps=config.LAPS)[0],
                  numpy_expert(circle_track, 3, limit, config.LAPS))
+
+
+@needs_compiler
+def test_the_compiled_car_matches_numpy_at_formula_1_speeds():
+    track = stadium(straight=1500.0, radius=300.0, width=14.0)
+    cars = dense_cars(40, seed=11)
+    cars.setup[:, 0] = np.linspace(30.0, 1000.0, 40)                    # every sensor length up to 1,000 m
+    limits = [track.expert_lap_time * 3]
+    for grip_scale in (1.0, 10.0):
+        compiled = fastsim.simulate([track], cars, limits, laps=config.LAPS, grip_scale=grip_scale)[0]
+        reference = sim.simulate(track, cars.policy(), len(cars), time_limit=limits[0], laps=config.LAPS,
+                                 setup=cars.setup, grip_scale=grip_scale)
+        same_results(compiled, reference)
+
+
+@needs_compiler
+def test_the_compiled_expert_matches_numpy_on_a_fast_stadium():
+    track = stadium(straight=1500.0, radius=300.0, width=14.0)
+    compiled = fastsim.simulate_expert([track], 3, [600.0], laps=2)[0]
+    reference = sim.simulate(track, expert.expert_policy(track), 3, time_limit=600.0, laps=2)
+    same_results(compiled, reference)
+    assert reference.finished.all()
 
 
 from racing import population
