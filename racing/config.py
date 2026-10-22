@@ -1,8 +1,11 @@
 """Default parameters of EC Racing (design specification §13). Every module reads its constants from here."""
+import hashlib
 import os
 from pathlib import Path
 
 import numpy as np
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 # --- Simulation (spec §5) ---
 DT = 0.05                    # s, fixed time step (20 Hz)
@@ -43,19 +46,19 @@ OVERLAP_MARGIN = 6.0         # m of grass required between separate parts of the
 MAX_TRACK_ATTEMPTS = 200
 PROGRESS_BACK = 5.0          # m behind the last matched centerline point
 PROGRESS_AHEAD = 30.0        # m ahead of the last matched centerline point
-LEVELS = {                   # spec Table 1: Easy loops, circuits of Formula 1 size above it, and the validation setting
+LEVELS = {                   # spec Table 1: Easy loops, circuits of Formula 1 size above it, and the validation
+                             # setting; Extra hard (level 4) is the real training layouts (spec §4.7)
     1: {"kind": "loop", "points": (4, 6), "radius": (250.0, 450.0), "min_corner": 120.0, "width": (12.0, 16.0)},
     2: {"kind": "circuit", "points": (6, 8), "radius": (250.0, 600.0), "slow": (35.0, 60.0), "fast": (100.0, 200.0),
         "main": 0.0, "hairpins": 0, "chicanes": (0, 0), "esses": (0, 0), "min_corner": 35.0, "width": (10.0, 16.0)},
     3: {"kind": "circuit", "points": (9, 12), "radius": (300.0, 750.0), "slow": (20.0, 45.0), "fast": (80.0, 250.0),
         "main": 600.0, "hairpins": 1, "chicanes": (0, 1), "esses": (0, 1), "min_corner": 18.0, "width": (9.0, 15.0)},
-    4: {"kind": "circuit", "points": (13, 17), "radius": (80.0, 260.0), "slow": (10.0, 30.0), "fast": (45.0, 100.0),
-        "main": 210.0, "hairpins": 2, "chicanes": (1, 2), "esses": (1, 2), "min_corner": 9.0, "width": (10.0, 16.0)},
     5: {"kind": "circuit", "points": (13, 17), "radius": (350.0, 900.0), "slow": (12.0, 30.0), "fast": (60.0, 250.0),
         "main": 900.0, "hairpins": 2, "chicanes": (2, 3), "esses": (2, 3), "min_corner": 12.0, "width": (7.5, 12.0)},
 }
-MAX_LEVEL = 4                # Extra hard, the curriculum's last level (real circuits from version 3.8, spec §4.2)
+MAX_LEVEL = 4                # Extra hard: the 38 real training layouts, spec §4.2
 VALIDATION_LEVEL = 5         # the validation setting: generated, harder than any training level (spec §4.2)
+TEST_LEVEL = 6               # the four test circuits in their racing direction (spec §4.6); never trained on
 WIDTH_VARIATION = 0.2        # a generated map's width varies by up to ±20% of its base width along the lap
 CHICANE_MIN_EDGE = 250.0     # m, a chicane needs an edge this long (spec §4.3)
 CHICANE_STEP = (20.0, 33.0)  # m between a chicane's four vertices: the shift spans about 60-100 m
@@ -65,8 +68,8 @@ CIRCUIT_STRETCH = (1.0, 1.5)  # horizontal stretch of a circuit's base polygon (
 DIRECTION_SALT = 7           # per-map direction draw: default_rng([seed, level, DIRECTION_SALT]) (spec §4.4)
 WIDTH_SALT = 13              # a map's widths: default_rng([seed, level, WIDTH_SALT]), the same for every attempt
 TRACK_CACHE_SIZE = 8         # built tracks kept per process (a validation map's distance map holds up to about 80 MB,
-                             # spec §9.10); training maps are fresh every generation, so a larger cache only costs
-                             # memory in every worker
+                             # spec §9.10; a real circuit's is memory-mapped and shared); generated training maps are
+                             # fresh every generation, so a larger cache only costs memory in every worker
 
 # --- Real circuits (spec §4.7): names of the files in data/racetracks/tracks ---
 F1_CIRCUITS = ("Austin", "Budapest", "Catalunya", "Hockenheim", "Melbourne", "MexicoCity", "Montreal", "Monza",
@@ -76,6 +79,9 @@ OTHER_CIRCUITS = ("BrandsHatch", "IMS", "MoscowRaceway", "Norisring", "Nuerburgr
 TEST_CIRCUITS = ("Melbourne", "Sakhir", "Sepang", "Silverstone")   # default_rng(0).choice(sorted F1, 4), sorted
 TRAINING_CIRCUITS = (tuple(c for c in F1_CIRCUITS if c not in TEST_CIRCUITS)
                      + ("BrandsHatch", "MoscowRaceway", "Nuerburgring", "Oschersleben", "Zandvoort"))   # Table 1e
+TEST_TRACKS = tuple(range(len(TEST_CIRCUITS)))   # get_track(k, TEST_LEVEL) is TEST_CIRCUITS[k]
+CIRCUIT_DATA = hashlib.sha256(b"".join(path.read_bytes() for path in sorted(
+    (PROJECT_DIR / "data" / "racetracks" / "tracks").glob("*.csv")))).hexdigest()   # the vendored data's identity
 
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
@@ -100,9 +106,9 @@ DATASET_SALT = 99
 
 # --- Seeds (spec §4.6) ---
 VAL_SEEDS = range(80, 100)
-TEST_SEEDS = range(1000, 1020)
+DISPLAY_SEEDS = range(1000, 1020)             # the race view's generated maps (spec §4.6); never trained or reported
 DATASET_SEED_RANGE = (1_000_000, 2_000_000)   # the imitation dataset's maps are drawn once from this range
-DATASET_TRACKS = {1: 1, 2: 20, 3: 20, 4: 80}  # dataset maps per level (spec §7.3)
+DATASET_TRACKS = {1: 1, 2: 20, 3: 20}         # generated dataset maps per level; the real layouts join (spec §7.3)
 TRAIN_SEED_START = 2_000_000                  # evolutionary and DAgger maps are drawn from here on (spec §4.6)
 SEEDED_RUN = 0               # run 0 uses seed 0 and replays exactly; every other run sets no seed (spec §3.3)
 RUN_SEEDS = (0, 1, 2, 3)  # run 0 uses seed 0, runs 1-3 set no seed (spec §3.3, §11)
@@ -240,7 +246,7 @@ JIT_COMPILE = False          # XLA is ~11% faster per epoch (racing/bench.py, 64
                              # materialize symbols") and stayed broken in that process; reliability wins
 
 # --- DAgger (spec §8.4) ---
-DAGGER_MAPS = 20             # fresh Extra hard maps driven per round, and as many more for the round's check
+DAGGER_MAPS = 20             # real training layouts driven per round, and as many more for the round's check
 DAGGER_EPOCHS = 30           # at most, per round
 DAGGER_HOLDOUT = 0.1         # share of the aggregated rows held out for early stopping
 DAGGER_GOAL = 18             # successful checks out of DAGGER_MAPS ...
@@ -279,10 +285,12 @@ REPLAY_POLL_SECONDS = 1.0    # the notebook-run view looks for a newer generatio
 CAMERA_ZOOMS = (1, 2, 4, 8)  # the camera button's steps; above 1 the camera follows the best car or the race leader
 
 # --- Paths ---
-PROJECT_DIR = Path(__file__).resolve().parent.parent
 FONT_PATH = PROJECT_DIR / "racing" / "fonts" / "DejaVuSansCondensed.ttf"   # the viewer's font, shipped with the project so
                              # every text has the same width on every machine (racing/fonts/LICENSE)
 RESULTS_DIR = PROJECT_DIR / "results"
+CIRCUIT_GRIDS_DIR = Path(os.environ.get("EC_RACING_CIRCUIT_GRIDS") or RESULTS_DIR / "circuit_grids")
+                             # real circuits' road grids, built once per machine and memory-mapped (spec §4.7, §9.10);
+                             # EC_RACING_CIRCUIT_GRIDS names another folder, which worker processes also read
 DATASET_PATH = RESULTS_DIR / "dataset.npz"
 DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"
 RUNS_DIR = RESULTS_DIR / "runs"

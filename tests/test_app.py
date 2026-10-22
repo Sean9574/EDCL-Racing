@@ -1002,7 +1002,7 @@ def test_race_difficulty_sets_the_track_level(monkeypatch, window, tmp_path, cir
     race_window(window, tmp_path)
     window.set_race_level(2)
     window.update(1 / 60)
-    assert (config.TEST_SEEDS[0], 2) in calls
+    assert (config.DISPLAY_SEEDS[0], 2) in calls
 
 
 def test_race_draws_a_leaderboard_and_fits_the_window(window, tmp_path):
@@ -2291,7 +2291,8 @@ def archive_folder(results, name="revision3.1", inputs=10, widths=(16.0, 14.0, 1
     folder = results / "archive" / name
     (folder / "runs").mkdir(parents=True)
     (folder / "champions").mkdir()
-    levels = {str(level): {**spec, "width": width} for (level, spec), width in zip(config.LEVELS.items(), widths)}
+    levels = {str(level): {**config.LEVELS.get(level, {}), "width": width}       # that revision's levels 1-4
+              for level, width in zip(range(1, 5), widths)}
     (folder / "run_info.json").write_text(json.dumps({"settings": {"N_INPUTS": inputs, "LEVELS": levels}}))
     return folder
 
@@ -2399,7 +2400,7 @@ def test_the_race_view_races_an_archives_controllers_on_its_maps(window, tmp_pat
         window.update(1 / 60)
         window.draw()
     assert window.race_cars() == [("ga", 0)] and window.race.cars.time > 0
-    assert (config.MAX_LEVEL, 10.0) in built
+    assert (config.TEST_LEVEL, None) in built            # the test circuits at their own widths (spec §4.7)
 
 
 def test_app_training_ignores_the_shown_folder(window, tmp_path):

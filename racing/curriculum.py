@@ -1,5 +1,5 @@
-"""Curriculum rules (spec §4.6, §9.3-9.4, §9.6-9.7): fresh training seeds, survival, levels with the mastery
-goal, the speed push and the safety stop, GA mutation strength and the ES/NEAT step size."""
+"""Curriculum rules (spec §4.6, §9.3-9.4, §9.6-9.7): fresh training seeds and the real training layouts, survival,
+levels with the mastery goal, the speed push and the safety stop, GA mutation strength and the ES/NEAT step size."""
 import numpy as np
 
 from racing import config
@@ -8,15 +8,21 @@ EVENTS = ("level_up", "goal", "tightened", "end_speed", "end_stalled")
 
 
 class SeedSource:
-    """Seeds of freshly generated training maps (spec §4.6): drawn by the run's random generator from `start`
-    upwards and never repeated within the run. `used` restores the seeds of a resumed run."""
+    """Training maps (spec §4.6): seeds of freshly generated maps, drawn by the run's random generator from `start`
+    upwards and never repeated within the run, and at Extra hard the real training layouts. `used` restores the seeds
+    of a resumed run."""
 
     def __init__(self, rng, start=config.TRAIN_SEED_START, used=()):
         self.rng = rng
         self.start = int(start)
         self.used = {int(seed) for seed in used}
 
-    def draw(self, count):
+    def draw(self, count, level=None):
+        """`count` maps for a generation at `level` (spec §4.6): at Extra hard, distinct layouts of the 38 real
+        training layouts (they repeat between generations); otherwise fresh seeds never used before in the run."""
+        if level == config.MAX_LEVEL:
+            from racing import circuits
+            return [int(k) for k in self.rng.choice(circuits.N_LAYOUTS, count, replace=False)]
         seeds = []
         while len(seeds) < count:
             seed = int(self.rng.integers(self.start, 2 ** 31 - 1))

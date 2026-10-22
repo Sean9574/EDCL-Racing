@@ -1,5 +1,5 @@
 """Scripted expert driver (spec §7.1), whose steering and throttle are fractions of the grip a(v), and imitation
-dataset collection on freshly generated maps (spec §7.2-7.3)."""
+dataset collection on generated maps and the real training layouts (spec §7.2-7.3)."""
 import os
 import time
 from pathlib import Path
@@ -15,7 +15,8 @@ def expert_controls(track, cars):
     """Continuous steering and throttle chosen by the expert for every car, as fractions of the grip a(v) at the car's
     speed (spec §7.1). It coasts while its speed is within its band of the target speed: the larger of
     EXPERT_SPEED_BAND and one step's full speed change a(v) DT, so a step of gas or brake never carries it across the
-    whole band, and in a steady corner it settles at a speed and keeps all of a(v) for turning."""
+    whole band, and in a steady corner it settles at a speed and keeps all of a(v) for turning. While its steering is
+    saturated it does not accelerate, so a corner's exit taken at full lock keeps all of a(v) for turning."""
     m = len(track.centerline)
     here = np.mod(cars.index, m)
     look = config.EXPERT_LOOKAHEAD_BASE + config.EXPERT_LOOKAHEAD_TIME * cars.speed
@@ -27,7 +28,9 @@ def expert_controls(track, cars):
     steer = np.clip(cars.speed ** 2 * path_curvature / grip, -1.0, 1.0)
     target = target_speed(track, here)
     band = np.maximum(config.EXPERT_SPEED_BAND, grip * config.DT)
-    throttle = np.where(cars.speed < target - band, 1.0, np.where(cars.speed > target + band, -1.0, 0.0))
+    full_lock = np.abs(steer) >= 1.0
+    throttle = np.where((cars.speed < target - band) & ~full_lock, 1.0,
+                        np.where(cars.speed > target + band, -1.0, 0.0))
     return steer, throttle
 
 
@@ -121,8 +124,9 @@ def collect_rows(track, rng):
 
 
 def dataset_seeds():
-    """(seed, level) of the imitation dataset's maps (spec §7.3): config.DATASET_TRACKS maps per level, with
-    distinct seeds drawn once from config.DATASET_SEED_RANGE, so every collection uses the same maps."""
+    """(seed, level) of the imitation dataset's training maps (spec §7.3): config.DATASET_TRACKS generated maps per
+    level, with distinct seeds drawn once from config.DATASET_SEED_RANGE, so every collection uses the same maps, then
+    the 38 real training layouts."""
     low, high = config.DATASET_SEED_RANGE
     total = sum(config.DATASET_TRACKS.values())
     seeds = low + np.random.default_rng(config.DATASET_SALT).choice(high - low, total, replace=False)
@@ -130,13 +134,15 @@ def dataset_seeds():
     for level, count in sorted(config.DATASET_TRACKS.items()):
         items += [(int(seed), level) for seed in seeds[position:position + count]]
         position += count
-    return items
+    from racing import circuits
+    return items + [(k, config.MAX_LEVEL) for k in range(circuits.N_LAYOUTS)]
 
 
 def default_splits():
+    """The dataset's splits (spec §7.3): the training maps, the validation maps and the four test circuits."""
     return {"train": dataset_seeds(),
             "val": [(seed, config.VALIDATION_LEVEL) for seed in config.VAL_SEEDS],
-            "test": [(seed, config.MAX_LEVEL) for seed in config.TEST_SEEDS]}
+            "test": [(k, config.TEST_LEVEL) for k in config.TEST_TRACKS]}
 
 
 def _collect_track(seed, level):

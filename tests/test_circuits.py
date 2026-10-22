@@ -1,7 +1,12 @@
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
-from racing import circuits, config
+from racing import circuits, config, tracks
+from racing.track import build_track
 
 USED = config.TRAINING_CIRCUITS + config.TEST_CIRCUITS
 
@@ -81,3 +86,80 @@ def test_the_pole_laps_of_the_test_circuits():
         "Melbourne": 80.486, "Sakhir": 87.866, "Sepang": 90.076, "Silverstone": 85.093}
     assert {lap.season for lap in circuits.POLE_LAPS.values()} == {2019, 2017}
     assert circuits.NAMES["SaoPaulo"] == "São Paulo" and circuits.NAMES["Nuerburgring"] == "Nürburgring"
+
+
+# ----- real circuits as Extra hard and the test circuits (spec §4.6, §4.7, §9.10) -----
+
+def test_test_circuits_start_at_the_data_start_in_racing_direction():
+    for index, name in enumerate(config.TEST_CIRCUITS):
+        track = tracks.get_track(index, config.TEST_LEVEL)
+        x, y, _, _ = circuits.read(name)
+        assert track.name == name and track.level == config.TEST_LEVEL and track.seed == index
+        assert np.allclose(track.centerline[0], [x[0], y[0]], atol=0.6)
+        heading = np.arctan2(y[1] - y[0], x[1] - x[0])
+        assert np.cos(track.start_heading - heading) > 0.95                 # facing the data's next point
+        assert circuits.rotation(track.centerline) == "clockwise"
+        assert abs(track.length / 1000.0 / circuits.OFFICIAL_LENGTH[name] - 1.0) < 0.01
+        assert np.isfinite(track.expert_lap_time) and track.expert_lap_time > 0
+
+
+def test_extra_hard_is_the_38_training_layouts():
+    for k in (0, 1, 37):
+        name, reverse = circuits.layout(k)
+        track = tracks.get_track(k, config.MAX_LEVEL)
+        assert track.name == name and track.seed == k
+        assert circuits.rotation(track.centerline) == (
+            circuits.ROTATION[name] if not reverse else
+            {"clockwise": "counter-clockwise", "counter-clockwise": "clockwise"}[circuits.ROTATION[name]])
+    assert 4 not in config.LEVELS
+    with pytest.raises(ValueError):
+        tracks.get_track(38, config.MAX_LEVEL)
+
+
+def test_both_directions_share_one_memory_mapped_grid():
+    forward = circuits.circuit_track("Monza")
+    backward = circuits.circuit_track("Monza", reverse=True)
+    assert isinstance(forward.dist, np.memmap) and forward.dist.dtype == np.float32
+    assert np.shares_memory(forward.dist, backward.dist) or forward.dist.filename == backward.dist.filename
+    assert not forward.dist.flags.writeable
+    assert forward.dist.nbytes < 60e6                                       # the largest circuit, about 47 MB
+    files = list(config.CIRCUIT_GRIDS_DIR.glob(f"Monza-{circuits.grid_id('Monza')}*"))
+    assert len(files) == 2                                                  # the grid and its origin
+
+
+def test_a_changed_identity_builds_a_new_grid_file(monkeypatch):
+    circuits.circuit_track("Oschersleben")
+    old = circuits.grid_id("Oschersleben")
+    monkeypatch.setattr(config, "GRID_MARGIN", config.GRID_MARGIN + 1.0)
+    assert circuits.grid_id("Oschersleben") != old
+    track = circuits.circuit_track("Oschersleben")
+    assert str(track.dist.filename).endswith(f"Oschersleben-{circuits.grid_id('Oschersleben')}.npy")
+
+
+def test_a_real_track_matches_a_fresh_build_of_its_outline():
+    points, left, right = circuits.outline("Spielberg")
+    fresh = build_track(points, left, right, seed=0, level=config.MAX_LEVEL, name="Spielberg")
+    cached = circuits.circuit_track("Spielberg")
+    assert np.array_equal(np.asarray(cached.dist), fresh.dist) and np.array_equal(cached.origin, fresh.origin)
+    assert np.array_equal(cached.half_left, fresh.half_left) and np.array_equal(cached.centerline, fresh.centerline)
+
+
+def test_worker_processes_find_the_grid_folder_in_the_environment():
+    """A worker process imports config afresh: EC_RACING_CIRCUIT_GRIDS names the folder, results/circuit_grids by
+    default (spec §9.10); this session's folder is passed on so."""
+    def folder(environ):
+        return subprocess.run([sys.executable, "-c", "from racing import config; print(config.CIRCUIT_GRIDS_DIR)"],
+                              cwd=config.PROJECT_DIR, env=environ, capture_output=True, text=True,
+                              check=True).stdout.strip()
+    others = {key: value for key, value in os.environ.items() if key != "EC_RACING_CIRCUIT_GRIDS"}
+    assert folder({**others, "EC_RACING_CIRCUIT_GRIDS": "/elsewhere/grids"}) == "/elsewhere/grids"
+    assert folder(others) == str(config.RESULTS_DIR / "circuit_grids")
+    assert os.environ["EC_RACING_CIRCUIT_GRIDS"] == str(config.CIRCUIT_GRIDS_DIR)
+
+
+@pytest.mark.slow
+def test_the_expert_drives_every_real_circuit_both_ways():
+    for k in range(circuits.N_LAYOUTS):
+        assert tracks.get_track(k, config.MAX_LEVEL).expert_lap_time > 0, circuits.layout(k)
+    for k in config.TEST_TRACKS:
+        assert tracks.get_track(k, config.TEST_LEVEL).expert_lap_time > 0

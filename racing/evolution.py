@@ -233,7 +233,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
 
     while not tracker.done and (max_generations is None or generation < max_generations):
         level, factor = tracker.level, tracker.factor
-        maps = seeds.draw(config.TRACKS_PER_GEN)
+        maps = seeds.draw(config.TRACKS_PER_GEN, level)
         result = population.evaluate_population(method.population, maps, level, factor, n_jobs=n_jobs)
         n = len(method.population)
         evals += n

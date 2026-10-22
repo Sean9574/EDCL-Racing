@@ -26,11 +26,11 @@ def slow_corners(track, radius=40.0):
 
 
 def test_same_seed_gives_same_track():
-    assert np.array_equal(make_track(5, 4).centerline, make_track(5, 4).centerline)
+    assert np.array_equal(make_track(5, 3).centerline, make_track(5, 3).centerline)
 
 
 def test_different_seeds_give_different_tracks():
-    assert make_track(1, 4).length != make_track(2, 4).length
+    assert make_track(1, 3).length != make_track(2, 3).length
 
 
 def test_easy_maps_are_gentle_loops_that_differ_by_seed():
@@ -43,13 +43,13 @@ def test_easy_maps_are_gentle_loops_that_differ_by_seed():
 
 
 def test_direction_is_drawn_per_map_and_fixed_by_its_seed():
-    for level in (1, 2, 3, 4, config.VALIDATION_LEVEL):
+    for level in (1, 2, 3, config.VALIDATION_LEVEL):
         clockwise = [runs_clockwise(seed, level) for seed in range(200)]
         assert 0.35 < np.mean(clockwise) < 0.65
         assert clockwise == [runs_clockwise(seed, level) for seed in range(200)]
 
 
-@pytest.mark.parametrize("level", [1, 2, 3, 4, config.VALIDATION_LEVEL])
+@pytest.mark.parametrize("level", [1, 2, 3, config.VALIDATION_LEVEL])
 def test_track_turns_the_way_its_direction_says(level):
     for seed in range(6):
         t = built_map(seed, level)
@@ -58,7 +58,7 @@ def test_track_turns_the_way_its_direction_says(level):
         assert (turning < 0) == runs_clockwise(seed, level)
 
 
-@pytest.mark.parametrize("level", [1, 2, 3, 4, config.VALIDATION_LEVEL])
+@pytest.mark.parametrize("level", [1, 2, 3, config.VALIDATION_LEVEL])
 def test_maps_respect_width_and_minimum_corner_radius(level):
     spec = config.LEVELS[level]
     for seed in range(8):
@@ -73,7 +73,7 @@ def test_the_corner_check_can_be_left_out(circle_track):
     assert not geometry_ok(circle_track, 60.0) and geometry_ok(circle_track, None)
 
 
-@pytest.mark.parametrize("level", [1, 2, 3, 4, config.VALIDATION_LEVEL])
+@pytest.mark.parametrize("level", [1, 2, 3, config.VALIDATION_LEVEL])
 def test_maps_never_overlap_themselves(level):
     for seed in range(8):
         t = built_map(seed, level)
@@ -85,9 +85,9 @@ def test_maps_never_overlap_themselves(level):
         assert np.all(along <= 3 * (t.max_width + config.OVERLAP_MARGIN))
 
 
-@pytest.mark.parametrize("level", [1, 2, 3, 4, config.VALIDATION_LEVEL])
+@pytest.mark.parametrize("level", [1, 2, 3, config.VALIDATION_LEVEL])
 def test_map_lengths_are_reasonable(level):
-    low, high = (300.0, 2500.0) if level == 4 else (1500.0, 8000.0)    # level 4: version 3.7's generated Extra hard
+    low, high = 1500.0, 8000.0
     for seed in range(5):
         assert low < built_map(seed, level).length < high
 
@@ -123,14 +123,14 @@ def test_fillet_radius_shrinks_on_short_edges():
 
 
 def test_circuit_points_follow_the_spec_and_the_generator():
-    spec = config.LEVELS[4]
-    a = circuit_points(np.random.default_rng([3, 4, 0]), spec, 12.0)
-    b = circuit_points(np.random.default_rng([3, 4, 0]), spec, 12.0)
+    spec = config.LEVELS[3]
+    a = circuit_points(np.random.default_rng([3, 3, 0]), spec, 12.0)
+    b = circuit_points(np.random.default_rng([3, 3, 0]), spec, 12.0)
     assert np.array_equal(a, b) and a.shape[1] == 2 and len(a) > 1000
 
 
 def test_some_candidates_are_valid():
-    assert any(candidate_track(0, 4, a) is not None for a in range(20))
+    assert any(candidate_track(0, 3, a) is not None for a in range(20))
 
 
 def test_track_cache_is_bounded(monkeypatch):
@@ -164,15 +164,15 @@ def test_a_full_cache_of_validation_maps_fits_the_memory_budget():
 
 @pytest.mark.slow
 def test_every_level_generates_drivable_maps():
-    """Calibration (spec §4.2): 50 seeds per level and the validation setting are accepted and completed by the
-    expert, and so are the held-out maps."""
-    for level in (1, 2, 3, 4, config.VALIDATION_LEVEL):
+    """Calibration (spec §4.2): 50 seeds per generated level and the validation setting are accepted and completed by
+    the expert, and so are the validation maps and the test circuits."""
+    for level in (1, 2, 3, config.VALIDATION_LEVEL):
         for seed in range(50):
             assert tracks.get_track(seed, level).expert_lap_time > 0
     for seed in config.VAL_SEEDS:
         assert tracks.get_track(seed, config.VALIDATION_LEVEL).expert_lap_time > 0
-    for seed in config.TEST_SEEDS:
-        assert tracks.get_track(seed, config.MAX_LEVEL).expert_lap_time > 0
+    for k in config.TEST_TRACKS:
+        assert tracks.get_track(k, config.TEST_LEVEL).expert_lap_time > 0
 
 
 GENERATED = (1, 2, 3, config.VALIDATION_LEVEL)
@@ -229,7 +229,7 @@ def test_validation_maps_are_narrower_and_tighter_than_every_training_level():
 
 def test_a_map_can_be_built_with_another_road_width():
     """The viewer rebuilds an earlier revision's maps: the same generator with that revision's road width."""
-    seed, level = 3, 4
+    seed, level = 3, 3
     attempt = next(a for a in range(30) if candidate_track(seed, level, a) is not None)
     same = candidate_track(seed, level, attempt, width=widest(seed, level))
     np.testing.assert_array_equal(same.centerline, candidate_track(seed, level, attempt).centerline)

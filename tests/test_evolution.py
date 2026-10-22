@@ -107,6 +107,8 @@ def test_goal_then_the_speed_push_tightens_the_target(evaluation, tmp_path):
     assert summary["goal_reached"] and math.isclose(summary["target_reduction"], 1 - config.SPEED_STEP)
     assert summary["start_level"] == config.MAX_LEVEL and len(summary["tightenings"]) == 1
     assert [(e["level"], e["generation"]) for e in summary["levels"]] == [(config.MAX_LEVEL, 2)]   # the goal entry
+    for report in reports:                                # three distinct real training layouts per generation
+        assert len(set(report["seeds"])) == config.TRACKS_PER_GEN and set(report["seeds"]) <= set(range(38))
 
 
 class StallsAtOnce(curriculum.MasteryTracker):

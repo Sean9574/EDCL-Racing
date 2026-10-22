@@ -1,7 +1,7 @@
 """Procedural track generation (spec §4.2-4.4): gentle loops on Easy, and circuits of straights and rounded corners
 with hairpins, chicanes and esses on Medium, Hard and the validation setting, at Formula 1 size, with road widths that
-vary along the lap (level 4 keeps version 3.7's generated Extra hard until the real circuits replace it). Every map
-runs clockwise or counter-clockwise, drawn from its seed."""
+vary along the lap (Extra hard is the real training layouts, racing/circuits.py). Every map runs clockwise or
+counter-clockwise, drawn from its seed."""
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial import cKDTree

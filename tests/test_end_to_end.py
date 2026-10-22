@@ -11,8 +11,8 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DAGGER_MAPS", 2)
     monkeypatch.setattr(config, "DAGGER_EPOCHS", 2)
     runs, champions, data_path = tmp_path / "runs", tmp_path / "champions", tmp_path / "dataset.npz"
-    data, _ = expert.collect_dataset(data_path, splits={"train": [(0, 1), (0, 2)], "val": [(80, 4)],
-                                                        "test": [(1000, 4)]}, n_jobs=2)
+    splits = {"train": [(0, 1), (0, 2)], "val": [(80, config.VALIDATION_LEVEL)], "test": [(0, config.TEST_LEVEL)]}
+    data, _ = expert.collect_dataset(data_path, splits=splits, n_jobs=2)
     for seed in (0, 1):
         imitation.train_baseline(data, out_dir=paths.run_dir("baseline", seed, runs),
                                  epochs=2, seed=seed)
@@ -32,7 +32,7 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
     es.run_es(pop_size=20, max_generations=2, seed=1, initial=es.dagger_baseline(1, runs_dir=runs),
               approach="es_seeded", out_dir=paths.run_dir("es_seeded", 1, runs), champion_dir=champions)
     results = evaluate.main(champions_dir=champions, runs_dir=runs, data_path=data_path, out_dir=tmp_path / "out",
-                            test_seeds=[1000], val_seeds=[80], n_jobs=2, latency_calls=20)
+                            test_seeds=[0], val_seeds=[80], n_jobs=2, latency_calls=20)
     assert list(results["comparison"]["Method"]) == ["Baseline", "KT Random", "ES", "GA", "Seeded ES"]
     assert list(results["driving_selected"]["Method"]) == ["KT Random"]
     for name in ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",

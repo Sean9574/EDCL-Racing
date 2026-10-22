@@ -63,6 +63,22 @@ def circle_track():
     return track
 
 
+@pytest.fixture(autouse=True, scope="session")
+def private_circuit_grids(tmp_path_factory):
+    """Real circuits' road grids are built once per test session in a temporary folder, never in results/
+    (spec §4.7); worker processes find the folder in EC_RACING_CIRCUIT_GRIDS."""
+    from racing import config
+    saved, saved_environ = config.CIRCUIT_GRIDS_DIR, os.environ.get("EC_RACING_CIRCUIT_GRIDS")
+    config.CIRCUIT_GRIDS_DIR = tmp_path_factory.mktemp("circuit_grids")
+    os.environ["EC_RACING_CIRCUIT_GRIDS"] = str(config.CIRCUIT_GRIDS_DIR)
+    yield
+    config.CIRCUIT_GRIDS_DIR = saved
+    if saved_environ is None:
+        os.environ.pop("EC_RACING_CIRCUIT_GRIDS", None)
+    else:
+        os.environ["EC_RACING_CIRCUIT_GRIDS"] = saved_environ
+
+
 @pytest.fixture(autouse=True)
 def private_progress_files(tmp_path_factory, monkeypatch):
     """The status file and the run log of every test live in a temporary folder, never in results/

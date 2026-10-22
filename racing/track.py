@@ -76,7 +76,9 @@ def track_shape(points, half_left, half_right):
     chord = np.roll(center, -1, axis=0) - np.roll(center, 1, axis=0)
     tangent = chord / np.linalg.norm(chord, axis=1, keepdims=True)
     normal = np.column_stack([-tangent[:, 1], tangent[:, 0]])             # points left of travel
-    return {"center": center, "spacing": spacing, "half_left": halves[:, 0], "half_right": halves[:, 1],
+    # contiguous copies, made once: the compiled simulator reads them in place on every call (spec §5.7)
+    half_left, half_right = np.ascontiguousarray(halves[:, 0]), np.ascontiguousarray(halves[:, 1])
+    return {"center": center, "spacing": spacing, "half_left": half_left, "half_right": half_right,
             "tangent": tangent, "curvature": curvature, "left": center + normal * halves[:, :1],
             "right": center - normal * halves[:, 1:]}
 

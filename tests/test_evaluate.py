@@ -468,7 +468,7 @@ def test_driving_selected_validates_on_the_validation_setting(requested_maps, tm
     export_search(tmp_path, "kt_random", nets.init_population(np.random.default_rng(8), 2))
     evaluate.driving_selected_table(tmp_path, val_seeds=[80, 81], test_seeds=[1000])
     assert set(requested_maps) == {(80, config.VALIDATION_LEVEL), (81, config.VALIDATION_LEVEL),
-                                   (1000, config.MAX_LEVEL)}
+                                   (1000, config.TEST_LEVEL)}
 
 
 def test_driving_selected_without_exported_models(tmp_path):
@@ -540,6 +540,17 @@ def test_a_widened_map_keeps_the_centerline_and_is_timed_by_the_expert(monkeypat
     wide = evaluate.widened_track(80, 18.0, level=2)                # the 50 m circle is within Medium's tightest corner
     assert np.all(wide.widths == 18.0) and wide.expert_lap_time == 21.5
     assert np.allclose(wide.centerline, fake_tracks.centerline, atol=1e-6)
+
+
+def test_a_widened_test_circuit_has_no_corner_limit(monkeypatch, requested_maps):
+    """Spec §11.1: the test circuits are rebuilt at each width by default; a real circuit's corners are its own, so
+    only the separation of the road's parts is checked."""
+    limits = []
+    monkeypatch.setattr(evaluate, "geometry_ok", lambda track, min_corner: limits.append(min_corner) or True)
+    monkeypatch.setattr(evaluate.expert, "expert_lap_time", lambda track: 21.5)
+    assert evaluate.widened_track(2, 14.0).expert_lap_time == 21.5
+    assert evaluate.widened_track(80, 14.0, level=2).expert_lap_time == 21.5
+    assert requested_maps == [(2, config.TEST_LEVEL), (80, 2)] and limits == [None, config.LEVELS[2]["min_corner"]]
 
 
 def test_a_width_the_map_cannot_take_or_the_expert_cannot_drive_is_left_out(monkeypatch, fake_tracks):

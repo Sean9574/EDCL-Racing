@@ -148,8 +148,9 @@ def test_rounds_reach_the_goal_and_rows_accumulate(monkeypatch, toy_data, traine
         assert len(rows["y"]) == 28
     assert paths.stage_path("baseline", 0, "dagger", trained_runs).exists()
     assert not (run / "dagger_state.pkl").exists()
-    maps = [seed for seeds in collected for seed in seeds]
-    assert len(set(maps)) == len(maps) == 4 * config.DAGGER_MAPS and min(maps) >= config.TRAIN_SEED_START
+    assert len(collected) == 4                          # each round drives 20 distinct real training layouts
+    assert all(len(set(seeds)) == len(seeds) == config.DAGGER_MAPS and set(seeds) <= set(range(38))
+               for seeds in collected)
     status = progress.read_status()
     assert status["stage"] == "dagger" and status["round"] == 4 and status["checks"] == 20
     assert "DAgger goal" in config.RUN_LOG_PATH.read_text()

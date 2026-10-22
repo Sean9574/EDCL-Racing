@@ -50,7 +50,7 @@ def _drive_on(drivers, track, track_seed, factor):
     return rows
 
 
-def driving_results(drivers, track_seeds, level=config.MAX_LEVEL, factor=config.TARGET_FACTOR, n_jobs=1,
+def driving_results(drivers, track_seeds, level=config.TEST_LEVEL, factor=config.TARGET_FACTOR, n_jobs=1,
                     backend="loky"):
     """A three-lap time trial per controller per track. drivers: {(approach, run seed or trial id): driver}. The
     tracks are distributed across worker processes; the result does not depend on n_jobs."""
@@ -66,11 +66,13 @@ def driving_results(drivers, track_seeds, level=config.MAX_LEVEL, factor=config.
     return pd.DataFrame([row for part in parts for row in part], columns=DRIVE_COLUMNS)
 
 
-def widened_track(seed, width, level=config.MAX_LEVEL):
+def widened_track(seed, width, level=config.TEST_LEVEL):
     """Map `seed` rebuilt with the same centerline and a `width` m road, timed by the expert; None if the road would
-    reach another part of the map or the expert cannot drive it (spec §11.1)."""
+    reach another part of the map or the expert cannot drive it (spec §11.1). A test circuit's corners are its own, so
+    only a generated map's are checked against its level's tightest corner."""
     track = build_track(get_track(seed, level).centerline, width / 2, width / 2, seed, level)
-    if not geometry_ok(track, config.LEVELS[level]["min_corner"]):
+    min_corner = None if level == config.TEST_LEVEL else config.LEVELS[level]["min_corner"]
+    if not geometry_ok(track, min_corner):
         return None
     lap_time = expert.expert_lap_time(track)
     if lap_time is None:
@@ -84,7 +86,7 @@ def _drive_widened(drivers, seed, width, level, factor):
     return [] if track is None else [{**row, "width": width} for row in _drive_on(drivers, track, seed, factor)]
 
 
-def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, level=config.MAX_LEVEL,
+def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, level=config.TEST_LEVEL,
                        factor=config.TARGET_FACTOR, n_jobs=1, backend="loky"):
     """Every controller on every map rebuilt at every width (spec §11.1), driven as a test map; maps left out
     at a width have no rows there. The maps are distributed across worker processes."""
@@ -457,7 +459,7 @@ def training_cost_table(runs_dir):
     return pd.DataFrame(rows)
 
 
-def stage_results(runs_dir, per_track, test_seeds=config.TEST_SEEDS, n_jobs=1):
+def stage_results(runs_dir, per_track, test_seeds=config.TEST_TRACKS, n_jobs=1):
     """Test-map results of the imitation methods after initial training and after DAgger (from their stage files)
     and after the speed push (their final controllers, taken from per_track), with a 'stage' column
     (spec §8.6)."""
@@ -532,7 +534,7 @@ def search_cost_table(runs_dir):
     return pd.DataFrame(rows)
 
 
-def driving_selected_table(runs_dir=None, val_seeds=config.VAL_SEEDS, test_seeds=config.TEST_SEEDS, n_jobs=1):
+def driving_selected_table(runs_dir=None, val_seeds=config.VAL_SEEDS, test_seeds=config.TEST_TRACKS, n_jobs=1):
     """Secondary analysis (spec §8.3): for each Keras Tuner method, the exported model (the most-trained of each
     configuration) with the highest mean validation fitness, and its driving on the test tracks."""
     from racing.backend import keras_cpu
@@ -811,7 +813,7 @@ def figures(runs_dir, out_dir):
     return written
 
 
-def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_seeds=config.TEST_SEEDS,
+def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_seeds=config.TEST_TRACKS,
          val_seeds=config.VAL_SEEDS, n_jobs=1, latency_calls=1000):
     champions_dir = Path(champions_dir or config.CHAMPIONS_DIR)
     runs_dir = Path(runs_dir or config.RUNS_DIR)

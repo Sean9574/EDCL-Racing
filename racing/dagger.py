@@ -1,8 +1,8 @@
 """DAgger refinement of the imitation controllers and their speed push (spec §8.4-8.6).
 
-A refinement runs in rounds. The car drives fresh Extra hard maps; at every step the expert labels the car's exact
-state; the rows join the network's dataset and training continues; a time trial on further fresh maps checks the
-result. Every round is checkpointed, and every round starts from a freshly loaded network after seeding Keras for
+A refinement runs in rounds. The car drives real training layouts (Extra hard); at every step the expert labels the
+car's exact state; the rows join the network's dataset and training continues; a time trial on further layouts checks
+the result. Every round is checkpointed, and every round starts from a freshly loaded network after seeding Keras for
 that round, so an interrupted refinement resumes where it stopped and ends exactly like an uninterrupted one."""
 import os
 import time
@@ -178,12 +178,13 @@ def refine(approach, seed, data, runs_dir=None, n_jobs=1, on_round=None, max_rou
             break
         began, number = time.time(), state["round"] + 1
         model = _round_model(imitation_stage, state["weights"], rate, seed, number)
-        x_new, y_new, respawns = collect(nets.from_keras(model), source.draw(config.DAGGER_MAPS), n_jobs=n_jobs)
+        x_new, y_new, respawns = collect(nets.from_keras(model), source.draw(config.DAGGER_MAPS, config.MAX_LEVEL),
+                                         n_jobs=n_jobs)
         x_rows, y_rows = np.concatenate([x_rows, x_new]), np.concatenate([y_rows, y_new])
         _save_rows(rows_path, x_rows, y_rows)
         epochs = _train_round(model, np.concatenate([data["X_train"], x_rows]),
                               np.concatenate([data["y_train"], y_rows]), rng)
-        checks = check(nets.from_keras(model), source.draw(config.DAGGER_MAPS), n_jobs=n_jobs)
+        checks = check(nets.from_keras(model), source.draw(config.DAGGER_MAPS, config.MAX_LEVEL), n_jobs=n_jobs)
         weights = model.get_weights()
         streak = state["streak"] + 1 if checks >= config.DAGGER_GOAL else 0
         if checks > state["best_checks"]:

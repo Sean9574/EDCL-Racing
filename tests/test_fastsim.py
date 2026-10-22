@@ -490,7 +490,7 @@ def numpy_expert(track, n=1, time_limit=config.EXPERT_VALIDATION_TIME, laps=1):
 
 @needs_compiler
 def test_the_expert_drives_exactly_as_in_numpy(circle_track):
-    maps = [(seed, level) for level in range(1, config.MAX_LEVEL + 1) for seed in (3, 4)]
+    maps = [(seed, level) for level in range(1, config.MAX_LEVEL) for seed in (3, 4)]     # the generated levels
     maps.append((4, config.VALIDATION_LEVEL))
     tracks = [circle_track] + [t for t in (track_gen.candidate_track(seed, level, 0) for seed, level in maps)
                                if t is not None]
@@ -580,6 +580,45 @@ def test_the_compiled_simulator_matches_numpy_on_uneven_widths_including_lap_tim
     assert np.isfinite(expert_reference.lap_times).all()
 
 
+@needs_compiler
+def test_the_compiled_simulator_matches_numpy_on_real_circuits():
+    tracks_ = [get_track(0, config.MAX_LEVEL), get_track(1, config.MAX_LEVEL), get_track(3, config.TEST_LEVEL)]
+    cars = dense_cars(24, seed=9)
+    limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks_]
+    for compiled, reference in zip(fastsim.simulate(tracks_, cars, limits, laps=config.LAPS),
+                                   numpy_results(tracks_, cars, limits, config.LAPS)):
+        same_results(compiled, reference)
+
+
+@needs_compiler
+@pytest.mark.slow
+def test_the_expert_drives_three_laps_of_every_real_track_alike_in_both_simulators():
+    """Spec §4.5, §7.1, §12.1: the expert completes the 38 training layouts and the 4 test circuits for config.LAPS
+    laps, with the same result in both simulators (spec §5.7)."""
+    from racing import circuits
+    real = ([(k, config.MAX_LEVEL) for k in range(circuits.N_LAYOUTS)]
+            + [(k, config.TEST_LEVEL) for k in config.TEST_TRACKS])
+    limit = config.LAPS * config.EXPERT_VALIDATION_TIME
+    for seed, level in real:
+        track = circuits.level_track(seed, level)
+        reference = numpy_expert(track, time_limit=limit, laps=config.LAPS)
+        assert reference.finished[0] and np.isfinite(reference.lap_times).all(), (track.name, seed, level)
+        same_results(fastsim.simulate_expert([track], 1, [limit], laps=config.LAPS)[0], reference)
+
+
+def test_the_simulator_reads_a_tracks_arrays_without_copying_them(circle_track):
+    """The arrays the compiled simulator reads are stored contiguous once when a track is built, so a call never copies
+    them; a real circuit's memory-mapped road grid is read in place (spec §5.7, §9.10)."""
+    from racing import circuits
+    for track in (circle_track, circuits.circuit_track("Spielberg"), circuits.circuit_track("Spielberg", True)):
+        keep = []
+        fastsim._c_track(track, 10.0, keep)
+        dist, *arrays = keep[0]
+        assert np.shares_memory(dist, track.dist)
+        for array, name in zip(arrays, ("centerline", "tangent", "curvature", "half_left", "half_right")):
+            assert np.shares_memory(array, getattr(track, name)), name
+
+
 from racing import population
 
 
@@ -605,8 +644,9 @@ def test_unknown_population_types_use_numpy(monkeypatch, circle_track):
 
 @needs_compiler
 @pytest.mark.slow
-def test_a_trained_population_matches_numpy_on_its_last_maps():
-    """Trained cars drive full laps, so every part of the simulator runs for thousands of steps (spec §12.1)."""
+def test_a_trained_population_matches_numpy_on_real_layouts():
+    """Trained cars drive full laps, so every part of the simulator runs for thousands of steps (spec §12.1); they
+    drive three real training layouts, as at Extra hard (a checkpoint records no layouts)."""
     from racing import checkpoint
     state = cars = None
     for path in sorted(config.RESULTS_DIR.glob("runs/*/seed*/checkpoint.pkl")):
@@ -620,7 +660,7 @@ def test_a_trained_population_matches_numpy_on_its_last_maps():
             break
     if state is None:
         pytest.skip("no dense checkpoint in results/")
-    tracks = [get_track(seed, config.MAX_LEVEL) for seed in state["seeds"][-3:]]
+    tracks = [get_track(k, config.MAX_LEVEL) for k in (0, 1, 2)]
     limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks]
     finishers = []
     for compiled, reference in zip(fastsim.simulate(tracks, cars, limits, laps=config.LAPS, threads=6),

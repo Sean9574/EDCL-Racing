@@ -20,7 +20,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import numpy as np
 import pygame
 
-from racing import checkpoint, config, curriculum, netwindow, nets, paths, population, runs, sim
+from racing import checkpoint, circuits, config, curriculum, netwindow, nets, paths, population, runs, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -533,7 +533,7 @@ class App:
         self.net_sent = None                # identity of the network the window shows
         # race view
         self.champions_dir = config.CHAMPIONS_DIR
-        self.race_index = 0                 # into config.TEST_SEEDS
+        self.race_index = 0                 # into race_tracks(): the test circuits or the display seeds
         self.race_level = config.MAX_LEVEL
         self.race_available = {}            # approach -> run seeds with a saved controller
         self.race_runs = "best"             # the runs that race: "best", "all", "seeded" or "unseeded" (spec §10.3)
@@ -1228,8 +1228,16 @@ class App:
             self.drivers[key] = driver
         return self.drivers[key]
 
+    def race_tracks(self):
+        """(seeds, level) of the race view's tracks (spec §4.6, §10.3): the test circuits at Extra hard, otherwise
+        the display seeds at the chosen level."""
+        if self.race_level == config.MAX_LEVEL:
+            return config.TEST_TRACKS, config.TEST_LEVEL
+        return config.DISPLAY_SEEDS, self.race_level
+
     def race_track(self):
-        return self.request_track(config.TEST_SEEDS[self.race_index], self.race_level)
+        seeds, level = self.race_tracks()
+        return self.request_track(seeds[self.race_index % len(seeds)], level)
 
     def prepare_race(self):
         """Build the preview once the track is ready: every selected car on the start line."""
@@ -1260,7 +1268,7 @@ class App:
     def change_race_track(self, direction):
         if self.racing:
             return
-        self.race_index = (self.race_index + direction) % len(config.TEST_SEEDS)
+        self.race_index = (self.race_index + direction) % len(self.race_tracks()[0])
         self.reset_race()
 
     def set_race_level(self, level):
@@ -1615,7 +1623,10 @@ class App:
             return
         self.text("Test track", x, y + 5, self.small, MUTED)
         self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_race_track(-1), enabled=idle)
-        self.text(f"seed {config.TEST_SEEDS[self.race_index]}", x + 150, y + 5)
+        seeds, level = self.race_tracks()
+        seed = seeds[self.race_index % len(seeds)]
+        self.text(circuits.NAMES[config.TEST_CIRCUITS[seed]] if level == config.TEST_LEVEL else f"seed {seed}",
+                  x + 150, y + 5)
         self.button(pygame.Rect(x + 240, y, 30, 28), ">", lambda: self.change_race_track(1), enabled=idle)
         y += 36
         y = self.draw_difficulty(x, y, w, self.race_level, self.set_race_level, idle)

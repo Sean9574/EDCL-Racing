@@ -18,7 +18,7 @@ from joblib import Parallel, delayed
 from racing import checkpoint, config, expert, fastsim, nets, population, sim
 from racing.tracks import get_track
 
-SEEDS = (0, 1, 2)
+SEEDS = (0, 1, 2)            # three real training layouts at Extra hard, the level training spends longest on
 JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (spec §3.3)
 KERAS_STEPS = (1, 4, 16, 64)
 BACKEND = "loky"
@@ -26,7 +26,7 @@ EXPERT_WORKLOAD = "expert cars (no trained population found; lighter than traini
 
 
 def time_full_laps(seed, n):
-    """Seconds for n cars to each drive one full level-4 lap on the given training seed."""
+    """Seconds for n cars to each drive one full lap of Extra hard layout `seed`."""
     track = get_track(seed, config.MAX_LEVEL)
     start = time.perf_counter()
     sim.simulate(track, expert.expert_policy(track), n)
@@ -40,7 +40,7 @@ def run_tasks(tasks, jobs):
 
 
 def generation_time(pop, jobs, repeats=3):
-    """Best of `repeats` wall times for one generation of `pop` cars on three level-4 tracks, divided into tasks
+    """Best of `repeats` wall times for one generation of `pop` cars on three Extra hard layouts, divided into tasks
     exactly as population.evaluate_population divides them. Every car drives the expert, so every car completes a
     lap: the worst case. An untimed pass first builds the tracks in the worker processes."""
     tasks = [(seed, len(idx)) for _, seed, idx in population.split_tasks(pop, SEEDS, jobs)]
@@ -85,7 +85,7 @@ def recommend(times):
 
 def trained_population():
     """The newest checkpoint in results/runs of a dense population whose networks read config.N_INPUTS inputs: (its
-    run folder, the population, the seeds of its last three maps), or None if there is none."""
+    run folder, the population), or None if there is none."""
     paths = sorted(config.RESULTS_DIR.glob("runs/*/seed*/checkpoint.pkl"), key=lambda path: path.stat().st_mtime,
                    reverse=True)
     for path in paths:
@@ -95,7 +95,7 @@ def trained_population():
             continue
         cars = nets.DensePopulation(method["weights"], method["hidden"], method["activation"], method["setup"])
         if cars.n_inputs == config.N_INPUTS:
-            return path.parent, cars, list(state["seeds"][-3:])
+            return path.parent, cars
     return None
 
 
@@ -111,24 +111,22 @@ def workload_label(found):
     """The workload compiled_generation_time times, for the benchmark's output; `found` is trained_population()."""
     if found is None:
         return EXPERT_WORKLOAD
-    return (f"trained population from {shown(found[0])}, {config.LAPS} laps of its last {len(found[2])} maps at "
-            f"level {config.MAX_LEVEL}")
+    return (f"trained population from {shown(found[0])}, {config.LAPS} laps of {len(SEEDS)} Extra hard layouts "
+            f"(level {config.MAX_LEVEL})")
 
 
 def compiled_workload(pop):
     """The generation compiled_generation_time times (spec §9.10): (tracks, cars or None, time limits, laps). With a
     trained population (trained_population), it is the evaluation path of training: pop of its cars (repeated or
-    truncated) drive config.LAPS laps of its last three maps at config.MAX_LEVEL, each ending at the target time of
-    config.TARGET_FACTOR, as population.evaluate_population runs them. Without one, pop expert cars (cars None)
-    each complete one lap of the three level-4 benchmark tracks, which is lighter than training: the expert neither
-    casts rays nor runs a network."""
+    truncated) drive config.LAPS laps of the three Extra hard layouts SEEDS (a run's checkpoint records no layouts,
+    which repeat between generations, spec §4.6), each ending at the target time of config.TARGET_FACTOR, as
+    population.evaluate_population runs them. Without one, pop expert cars (cars None) each complete one lap of the
+    same layouts, which is lighter than training: the expert neither casts rays nor runs a network."""
     found = trained_population()
+    tracks = [get_track(seed, config.MAX_LEVEL) for seed in SEEDS]
     if found is None:
-        tracks = [get_track(seed, config.MAX_LEVEL) for seed in SEEDS]
         return tracks, None, [sim.time_limit_for(track) for track in tracks], 1
-    _, cars, seeds = found
-    tracks = [get_track(seed, config.MAX_LEVEL) for seed in seeds]
-    cars = cars.subset([k % len(cars) for k in range(pop)])
+    cars = found[1].subset([k % len(found[1]) for k in range(pop)])
     return tracks, cars, [sim.target_time(track, config.TARGET_FACTOR) for track in tracks], config.LAPS
 
 
@@ -158,7 +156,7 @@ def generation_main():
         workload = workload_label(trained_population())
     else:
         unit = "process(es)"
-        workload = "expert cars, every car completing a lap on 3 level-4 tracks"
+        workload = "expert cars, every car completing a lap on 3 Extra hard layouts"
         for seed in SEEDS:
             get_track(seed, config.MAX_LEVEL)
     print(f"One generation of {config.GA_POP} cars on the {fastsim.description()} simulator")

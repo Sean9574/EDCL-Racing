@@ -12,7 +12,7 @@ def test_settings_record_survives_a_json_round_trip_unchanged():
     record = checkpoint.settings_record()
     assert json.loads(json.dumps(record)) == record
     assert record["VAL_SEEDS"] == list(config.VAL_SEEDS) and record["RUN_SEEDS"] == list(config.RUN_SEEDS)
-    assert set(record["LEVELS"]) == {"1", "2", "3", "4", "5"}             # int keys read back as strings
+    assert set(record["LEVELS"]) == {"1", "2", "3", "5"}                  # int keys read back as strings
     assert record["STEER_LEVELS"] == config.STEER_LEVELS.tolist()
 
 
@@ -25,6 +25,8 @@ def test_settings_keys_hold_the_result_settings_only():
             "ESSES_SPACING"} <= set(keys) and "WIDTH_RANGE" not in keys            # spec §4.2, §4.3
     assert all(hasattr(config, name) for name in keys)
     assert set(checkpoint.settings_record()) == set(keys) and "N_JOBS" not in checkpoint.settings_record()
+    assert {"TEST_LEVEL", "TRAINING_CIRCUITS", "TEST_CIRCUITS", "CIRCUIT_DATA"} <= set(keys)       # spec §4.6, §4.7
+    assert not {"TEST_SEEDS", "DISPLAY_SEEDS", "CIRCUIT_GRIDS_DIR"} & set(keys) and len(config.CIRCUIT_DATA) == 64
 
 
 def test_own_record_passes_the_check_after_a_json_round_trip():

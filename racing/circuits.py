@@ -1,13 +1,19 @@
 """Real circuits (spec §4.7): the racetrack database of the Technical University of Munich, vendored in
 data/racetracks/ (LGPL-3.0), read at real scale with the road's width to the left and to the right of every point;
 the training and test circuits, their racing direction and official length, and the pole laps the test circuits are
-compared with (spec §11.1)."""
+compared with (spec §11.1). Their tracks are Extra hard's 38 training layouts and the test level's four circuits
+(spec §4.6), whose road grids are built once per machine and memory-mapped by every process (spec §9.10)."""
+import hashlib
+import os
+import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from scipy.interpolate import CubicSpline
 
 from racing import config
+from racing.track import Track, road_grid, track_shape
 
 DATA_DIR = config.PROJECT_DIR / "data" / "racetracks" / "tracks"
 N_LAYOUTS = 2 * len(config.TRAINING_CIRCUITS)        # every training circuit in both directions (spec §4.4)
@@ -120,3 +126,68 @@ def layout(index):
     if not 0 <= index < N_LAYOUTS:
         raise ValueError(f"training layouts are numbered 0 to {N_LAYOUTS - 1}, not {index}")
     return config.TRAINING_CIRCUITS[index // 2], bool(index % 2)
+
+
+_grid_lock = threading.Lock()
+
+
+def grid_id(name):
+    """The identity of circuit `name`'s road grid: the first 16 hexadecimal digits of the SHA-256 of its data file, the
+    grid's settings and the code that builds it. A grid of another identity is never used."""
+    digest = hashlib.sha256((DATA_DIR / f"{name}.csv").read_bytes())
+    for value in (config.GRID_RES, config.GRID_MARGIN, config.CENTERLINE_SPACING):
+        digest.update(repr(float(value)).encode())
+    for source in ("track.py", "circuits.py"):
+        digest.update(Path(__file__).with_name(source).read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def _save(path, array):
+    """np.save to a temporary file in the same folder, then renamed, so no process reads a partly written file."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    with open(temporary, "wb") as f:
+        np.save(f, array)
+    os.replace(temporary, path)
+
+
+def _grid(name, shape):
+    """(origin, dist) of circuit `name` in its racing direction (spec §4.7, §9.10): built once per machine in
+    CIRCUIT_GRIDS_DIR and memory-mapped read-only, so every process and both directions share one copy."""
+    folder = Path(config.CIRCUIT_GRIDS_DIR)
+    stem = f"{name}-{grid_id(name)}"
+    dist_path, origin_path = folder / f"{stem}.npy", folder / f"{stem}.origin.npy"
+    with _grid_lock:
+        if not dist_path.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            origin, dist = road_grid(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"])
+            _save(origin_path, origin)
+            _save(dist_path, dist)                   # written last: its presence means the grid is complete
+    return np.load(origin_path), np.load(dist_path, mmap_mode="r")
+
+
+def circuit_track(name, reverse=False, seed=0, level=config.MAX_LEVEL):
+    """Circuit `name` as a Track at real scale with its widths (spec §4.7), in its racing direction or reversed from
+    the same start; the road grid is that of the racing direction, which is the same road."""
+    points, left, right = outline(name)
+    shape = track_shape(points, left, right)
+    origin, dist = _grid(name, shape)
+    if reverse:
+        shape = track_shape(*reverse_outline(shape["center"], shape["half_left"], shape["half_right"]))
+    m = len(shape["center"])
+    return Track(seed=int(seed), level=int(level), centerline=shape["center"], tangent=shape["tangent"],
+                 curvature=shape["curvature"], half_left=shape["half_left"], half_right=shape["half_right"],
+                 left=shape["left"], right=shape["right"], spacing=shape["spacing"], length=m * shape["spacing"],
+                 origin=origin, dist=dist, name=name)
+
+
+def level_track(seed, level):
+    """The real track of (seed, level) (spec §4.6): at MAX_LEVEL training layout `seed` (0-37, layout()), at TEST_LEVEL
+    test circuit TEST_CIRCUITS[seed] in its racing direction."""
+    if level == config.MAX_LEVEL:
+        name, backwards = layout(seed)
+        return circuit_track(name, backwards, seed, level)
+    if level == config.TEST_LEVEL:
+        if not 0 <= int(seed) < len(config.TEST_CIRCUITS):
+            raise ValueError(f"test circuits are numbered 0 to {len(config.TEST_CIRCUITS) - 1}, not {seed}")
+        return circuit_track(config.TEST_CIRCUITS[int(seed)], False, seed, level)
+    raise ValueError(f"level {level} has no real circuits")

@@ -30,6 +30,16 @@ def test_seed_source_draws_fresh_distinct_seeds():
     assert source.state() == sorted(seeds)
 
 
+def test_extra_hard_draws_distinct_training_layouts_and_levels_below_draw_fresh_seeds():
+    source = SeedSource(np.random.default_rng(0))
+    for _ in range(50):
+        layouts = source.draw(3, config.MAX_LEVEL)
+        assert len(set(layouts)) == 3 and all(0 <= k < 38 for k in layouts)
+    seeds = source.draw(3, 2)
+    assert all(s >= config.TRAIN_SEED_START for s in seeds) and source.state() == sorted(seeds)
+    assert len(set(source.draw(20, config.MAX_LEVEL))) == 20
+
+
 class Scripted:
     """A generator stand-in that returns the given integers in order."""
 

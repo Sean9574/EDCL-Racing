@@ -2,7 +2,7 @@ import json
 import numpy as np
 import pytest
 
-from racing import checkpoint, config, expert, sim, tracks
+from racing import checkpoint, circuits, config, expert, fastsim, sim, tracks
 from racing.actions import class_to_controls, controls_to_class
 from racing.track import build_track
 
@@ -69,6 +69,49 @@ def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_ste
     assert result.finished[0] and not np.any(throttles[1:] * throttles[:-1] == -1.0)
 
 
+def test_the_expert_never_applies_gas_at_full_lock(circle_track):
+    """Spec §7.1 (version 3.8): while its steering is saturated the expert does not accelerate, so the friction circle
+    leaves all of a(v) for turning; below its target speed with the steering short of full lock it still applies gas."""
+    cars = sim.start_cars(circle_track, 2)
+    cars.speed[:] = 20.0                                   # well below the 50 m circle's corner speed of about 32 m/s
+    cars.heading[0] += 1.0                                 # pointing off the line: the steering saturates
+    steer, throttle = expert.expert_controls(circle_track, cars)
+    assert np.all(cars.speed < expert.target_speed(circle_track, cars.index) - 1.5)
+    assert abs(steer[0]) == 1.0 and throttle[0] == 0.0
+    assert abs(steer[1]) < 1.0 and throttle[1] == 1.0
+    cars.speed[0] = 40.0                                   # above the target: it still brakes at full lock
+    assert expert.expert_controls(circle_track, cars)[1][0] == -1.0
+
+
+def test_the_expert_leaves_montreals_hairpin_without_gas_at_full_lock(monkeypatch):
+    """Spec §7.1, §12.1: in Montreal's racing direction the expert left a 30 m right-hander below its target speed at
+    full gas and full lock, which left 0.71 of a(v) for turning where the following curve needed about 0.83, and drifted
+    off the road after 48 s. Without gas at full lock it completes the lap, alike in both simulators."""
+    track = circuits.circuit_track("Montreal")
+    real, saturated_below_target = expert.expert_controls, []
+
+    def recording(track_, cars):
+        steer, throttle = real(track_, cars)
+        full_lock = np.abs(steer) >= 1.0
+        assert not np.any(full_lock & (throttle > 0.0))
+        band = np.maximum(config.EXPERT_SPEED_BAND, sim.grip_at(cars.speed) * config.DT)
+        below = cars.speed < expert.target_speed(track_, np.mod(cars.index, len(track_.centerline))) - band
+        saturated_below_target.append(bool(np.any(full_lock & below)))
+        return steer, throttle
+
+    monkeypatch.setattr(expert, "expert_controls", recording)
+    reference = sim.simulate(track, expert.expert_policy(track), 1, time_limit=config.EXPERT_VALIDATION_TIME)
+    assert reference.finished[0] and 95.0 < reference.finish_time[0] < 110.0
+    assert sum(saturated_below_target) > 0                 # the rule acts on this lap
+    monkeypatch.setattr(config, "SIMULATOR", "auto")
+    if fastsim.available():
+        compiled = fastsim.simulate_expert([track], 1, [config.EXPERT_VALIDATION_TIME])[0]
+        for field in ("fitness", "finished", "crashed", "progress", "laps_done", "steps"):
+            assert np.array_equal(getattr(compiled, field), getattr(reference, field)), field
+        assert np.array_equal(compiled.finish_time, reference.finish_time, equal_nan=True)
+        assert np.array_equal(compiled.lap_times, reference.lap_times, equal_nan=True)
+
+
 def test_expert_policy_returns_action_classes(circle_track):
     cars = sim.start_cars(circle_track, 4)
     classes = expert.expert_policy(circle_track)(sim.sense(circle_track, cars), cars)
@@ -81,7 +124,7 @@ def test_get_track_attaches_lap_time_and_caches():
     assert tracks.get_track(0, 1) is t
 
 
-@pytest.mark.parametrize("level", [2, 3, 4])
+@pytest.mark.parametrize("level", [1, 2, 3])
 def test_expert_drives_generated_tracks(level):
     for seed in range(5):
         assert tracks.get_track(seed, level).expert_lap_time > 0
@@ -173,7 +216,7 @@ def test_labels_are_the_expert_choice_during_kicks(monkeypatch, circle_track):
 
 @pytest.mark.slow
 def test_the_first_training_maps_of_every_level_build_at_their_widths():
-    for level in range(1, config.MAX_LEVEL + 1):              # the curriculum; the validation setting has fixed seeds
+    for level in range(1, config.MAX_LEVEL):                  # the generated levels; Extra hard is the real layouts
         for seed in range(config.TRAIN_SEED_START, config.TRAIN_SEED_START + 200):
             tracks.get_track(seed, level)
 
@@ -194,16 +237,20 @@ def test_expert_drives_every_dataset_and_held_out_map():
             tracks.get_track(seed, level)
 
 
-def test_dataset_maps_are_fresh_distinct_seeds_with_the_level_mix():
+def test_dataset_maps_are_fresh_distinct_seeds_with_the_level_mix_and_the_real_layouts():
+    """Spec §4.6, §7.3: 41 generated maps (1 Easy, 20 Medium, 20 Hard), then the 38 real training layouts."""
     items = expert.dataset_seeds()
-    assert len(items) == sum(config.DATASET_TRACKS.values()) == 121
+    generated = items[:-circuits.N_LAYOUTS]
+    assert len(generated) == sum(config.DATASET_TRACKS.values()) == 41 and len(items) == 79
+    assert items[-circuits.N_LAYOUTS:] == [(k, config.MAX_LEVEL) for k in range(circuits.N_LAYOUTS)]
     for level, count in config.DATASET_TRACKS.items():
-        assert sum(1 for _, map_level in items if map_level == level) == count
-    seeds = [seed for seed, _ in items]
+        assert sum(1 for _, map_level in generated if map_level == level) == count
+    assert config.DATASET_TRACKS == {1: 1, 2: 20, 3: 20}
+    seeds = [seed for seed, _ in generated]
     low, high = config.DATASET_SEED_RANGE
     assert len(set(seeds)) == len(seeds) and all(low <= seed < high for seed in seeds)
     assert high <= config.TRAIN_SEED_START                      # never a training map of an evolutionary run
-    assert not set(seeds) & (set(config.VAL_SEEDS) | set(config.TEST_SEEDS))
+    assert not set(seeds) & (set(config.VAL_SEEDS) | set(config.DISPLAY_SEEDS))
     assert expert.dataset_seeds() == items                       # drawn once: the same maps every time
 
 
@@ -211,7 +258,16 @@ def test_default_splits_use_the_dataset_maps_and_the_fixed_held_out_maps():
     splits = expert.default_splits()
     assert splits["train"] == expert.dataset_seeds()
     assert splits["val"] == [(seed, config.VALIDATION_LEVEL) for seed in config.VAL_SEEDS]
-    assert splits["test"] == [(seed, config.MAX_LEVEL) for seed in config.TEST_SEEDS]
+    assert splits["test"] == [(k, config.TEST_LEVEL) for k in config.TEST_TRACKS]
+
+
+def test_no_test_circuit_is_in_any_training_or_validation_map():
+    splits = expert.default_splits()
+    assert [item for item in splits["train"] if item[1] == config.TEST_LEVEL] == []
+    assert sorted(k for k, level in splits["train"] if level == config.MAX_LEVEL) == list(range(38))
+    assert splits["test"] == [(k, config.TEST_LEVEL) for k in config.TEST_TRACKS]
+    names = {circuits.layout(k)[0] for k in range(38)}
+    assert not names & set(config.TEST_CIRCUITS)
 
 
 SMALL_SPLITS = {"train": [(0, 1)], "val": [(0, 1)], "test": [(0, 1)]}

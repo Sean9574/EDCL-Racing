@@ -106,7 +106,8 @@ def trained_checkpoint(results, method_name, n_cars, n_inputs=config.N_INPUTS, s
 
 def test_the_compiled_benchmark_times_the_newest_trained_population(monkeypatch, capsys, tmp_path, circle_track):
     """With a trained dense population, the compiled benchmark runs training's time trials (spec §9.10): pop of its
-    cars, repeated, over config.LAPS laps of its last 3 maps at level 4, ending at the target time."""
+    cars, repeated, over config.LAPS laps of three Extra hard layouts (bench.SEEDS; a checkpoint records no layouts),
+    ending at the target time."""
     from racing import fastsim, sim
     monkeypatch.setattr(config, "RESULTS_DIR", tmp_path)
     older = trained_checkpoint(tmp_path, "ga", 3)
@@ -119,7 +120,7 @@ def test_the_compiled_benchmark_times_the_newest_trained_population(monkeypatch,
     monkeypatch.setattr(fastsim, "simulate", lambda tracks, cars, limits, laps=1, grip_scale=1.0, threads=1:
                         calls.append((len(tracks), cars, limits, laps, threads)))
     assert bench.compiled_generation_time(10, 3, repeats=2) >= 0.0
-    assert built == [(6, config.MAX_LEVEL), (7, config.MAX_LEVEL), (8, config.MAX_LEVEL)]
+    assert built == [(0, config.MAX_LEVEL), (1, config.MAX_LEVEL), (2, config.MAX_LEVEL)]
     assert len(calls) == 2
     n_tracks, cars, limits, laps, threads = calls[0]
     assert (n_tracks, len(cars), laps, threads) == (3, 10, config.LAPS, 3)
@@ -134,5 +135,5 @@ def test_the_compiled_benchmark_times_the_newest_trained_population(monkeypatch,
     bench.generation_main()
     out = capsys.readouterr().out
     folder = tmp_path / "runs" / "es" / "seed0"
-    assert f"Workload: trained population from {folder}, {config.LAPS} laps of its last 3 maps" in out
+    assert f"Workload: trained population from {folder}, {config.LAPS} laps of 3 Extra hard layouts" in out
 
