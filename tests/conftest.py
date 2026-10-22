@@ -14,14 +14,25 @@ from racing.track import build_track
 SHAPED_ARCHITECTURES = [(), (5,), (8, 3), (1,), (), (4, 4, 2)]
 
 
-def make_shaped_cars(n, seed=0, shapes=SHAPED_ARCHITECTURES):
-    """Random networks of mixed architectures (some without hidden layers) and random setups."""
-    from racing import nets
+def spread_setups(rng, n):
+    """n random-start setups (spec §9.11) whose sensor lengths are spread log-evenly over SENSOR_LENGTH_LIMITS, in a
+    random order: a random start gives every car the same starting length, so tests that need cars of different
+    lengths, such as the simulators' equality checks over every ray-iteration cap (spec §5.2, §5.7), use these."""
+    from racing import config
     from racing import setup as car_setup
+    rows = car_setup.random(rng, n)
+    rows[:, 0] = rng.permutation(np.geomspace(*config.SENSOR_LENGTH_LIMITS, n))
+    return rows
+
+
+def make_shaped_cars(n, seed=0, shapes=SHAPED_ARCHITECTURES):
+    """Random networks of mixed architectures (some without hidden layers) and random setups of spread sensor
+    lengths."""
+    from racing import nets
     rng = np.random.default_rng(seed)
     chosen = [shapes[i % len(shapes)] for i in range(n)]
     weights = [nets.init_population(rng, 1, shape)[0] + rng.normal(0.0, 0.3, nets.n_params(shape)) for shape in chosen]
-    return nets.ShapedPopulation(chosen, weights, "relu", car_setup.random(rng, n))
+    return nets.ShapedPopulation(chosen, weights, "relu", spread_setups(rng, n))
 
 
 @pytest.fixture

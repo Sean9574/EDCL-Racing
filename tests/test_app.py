@@ -285,16 +285,27 @@ def test_rays_follow_each_cars_sensor_length(window, monkeypatch, tmp_path):
 
     monkeypatch.setattr(viewer.sim, "cast_rays", recording)
     rng = np.random.default_rng(6)
-    cars = nets.DensePopulation(nets.init_population(rng, 30), setup=setup.random(rng, 30))
+    rows = setup.random(rng, 30)
+    rows[:, 0] = np.geomspace(30.0, 1000.0, 30)                  # every car its own sensor length (spec §9.11)
+    cars = nets.DensePopulation(nets.init_population(rng, 30), setup=rows)
     window.rays = True
+    window.set_show("all")                                       # cars in index order, so the best is not slot 0
     window.receive(ga_report(population_=cars))
     window.update(1 / 60)
+    lengths = window.playback.cars.ray_length
+    assert len(np.unique(lengths)) == len(lengths) > 1           # another car's length or a constant would differ
     seen.clear()
     window.draw()
     best = window.best_slot
-    assert len(seen) == 1 and np.array_equal(seen[0], window.playback.cars.ray_length[best:best + 1])
-    race_window(window, tmp_path)
+    assert best != 0 and len(seen) == 1 and np.array_equal(seen[0], lengths[best:best + 1])
+    for (approach, seed), length in zip((("es", 0), ("ga", 0), ("ga", 1)), (40.0, 300.0, 900.0)):
+        racer = nets.DensePopulation(nets.init_population(rng, 1), setup=np.array([[length, 1.0]]))
+        population.save_dense_champion(approach, seed, racer, 0, tmp_path)
+    window.champions_dir = tmp_path                               # race_window's lineup, with distinct sensors
+    window.race_runs = "all"
+    window.set_mode("race")
     window.update(1 / 60)
+    assert sorted(window.race.cars.ray_length) == [40.0, 300.0, 900.0]
     window.start_race()
     window.update(1 / 60)
     seen.clear()

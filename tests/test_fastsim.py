@@ -14,7 +14,7 @@ import pytest
 
 from racing import config, fastsim
 
-from conftest import stadium
+from conftest import spread_setups, stadium
 
 needs_compiler = pytest.mark.skipif(shutil.which(fastsim.COMPILER) is None, reason="no g++ on this machine")
 
@@ -161,7 +161,6 @@ def test_threads_that_start_at_once_share_one_library(private_library, capsys):
 
 
 from racing import nets, sim
-from racing import setup as car_setup
 from racing.tracks import get_track
 
 
@@ -179,11 +178,12 @@ def numpy_results(tracks, population, limits, laps, grip_scale=1.0):
 
 
 def dense_cars(n, hidden=config.BASELINE_HIDDEN, activation="relu", n_inputs=config.N_INPUTS, seed=0):
-    """Random dense networks with random biases and random setups, so cars crash at many different points."""
+    """Random dense networks with random biases and random setups of spread sensor lengths (30-1,000 m) and steering
+    sensitivities, so cars crash at many different points and every ray-iteration cap is compared."""
     rng = np.random.default_rng(seed)
     weights = nets.init_population(rng, n, hidden, n_inputs)
     weights = weights + rng.normal(0.0, 0.3, weights.shape)
-    return nets.DensePopulation(weights, hidden, activation, car_setup.random(rng, n))
+    return nets.DensePopulation(weights, hidden, activation, spread_setups(rng, n))
 
 
 ARCHITECTURES = [((16,), "relu", config.N_INPUTS), ((32, 16), "tanh", config.N_INPUTS),
@@ -421,7 +421,7 @@ def test_neat_programs_compute_numpys_outputs():
 def test_neat_time_trials_equal_numpys(circle_track):
     tracks = [circle_track, get_track(0, 1), get_track(1, 2)]
     rng = np.random.default_rng(22)
-    cars = neat.NeatPopulation(grown_genomes(40, seed=23), car_setup.random(rng, 40))
+    cars = neat.NeatPopulation(grown_genomes(40, seed=23), spread_setups(rng, 40))
     limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks]
     for compiled, reference in zip(fastsim.simulate(tracks, cars, limits, laps=config.LAPS),
                                    numpy_results(tracks, cars, limits, config.LAPS)):
@@ -599,7 +599,7 @@ def test_final_selection_with_setups_matches_numpy(monkeypatch, circle_track):
 @needs_compiler
 def test_neat_training_time_trials_match_numpy(monkeypatch, circle_track):
     monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
-    cars = neat.NeatPopulation(grown_genomes(30, seed=24), car_setup.random(np.random.default_rng(25), 30))
+    cars = neat.NeatPopulation(grown_genomes(30, seed=24), spread_setups(np.random.default_rng(25), 30))
     compiled = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=4)
     monkeypatch.setattr(config, "SIMULATOR", "numpy")
     reference = population.evaluate_population(cars, [0, 1, 2], 1, config.TARGET_FACTOR, n_jobs=1)
