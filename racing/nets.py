@@ -337,8 +337,16 @@ def load_champion(approach, seed, directory=None):
         refuse_other_actions(approach, seed, int(np.isin(genome.node_ids, list(neat.OUTPUT_IDS)).sum()))
         driver = neat.NeatNet(genome)
     elif flat_path.exists():
-        driver = from_flat(np.load(flat_path), *dense_spec(model))
-        refuse_other_actions(approach, seed, driver.layers[-1][0].shape[1])
+        flat = np.load(flat_path)
+        hidden, activation = dense_spec(model)
+        try:
+            inputs_of(flat.size, hidden)         # an earlier revision's fewer inputs still fit
+        except ValueError:                       # a weights file of another action set beside a current Keras file
+            last = (hidden[-1] if hidden else config.N_INPUTS) + 1
+            outputs = (flat.size - (n_params(hidden) - last * config.N_ACTIONS)) / last
+            refuse_other_actions(approach, seed, round(outputs))
+            raise
+        driver = from_flat(flat, hidden, activation)
     else:
         driver = from_keras(model)
     setup_path = paths.champion_path(approach, seed, ".setup.json", directory)

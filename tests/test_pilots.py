@@ -42,6 +42,7 @@ def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
             assert row[key] == pytest.approx(log[column].iloc[-1], abs=0.5)
         else:
             assert row[key] is None
+    assert row["target_reduction"] is None or 0.0 <= row["target_reduction"] <= 100.0   # last speed-push target, %
     assert isinstance(row["level_ups"], str) and 0.0 <= row["min_share_last20"] <= 1.0
     low, high = config.SENSOR_LENGTH_LIMITS
     assert low <= row["sensor_last"] <= high                    # the population's mean setup at the end
@@ -50,14 +51,19 @@ def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
     assert (tmp_path / name / "log.csv").exists()
 
 
-def test_revision_3_7_pilots_have_their_own_folder(pilots):
-    assert pilots.OUT == config.PILOTS_DIR / "revision3.8"
+def test_revision_3_9_pilots_have_their_own_folder(pilots):
+    assert pilots.OUT == config.PILOTS_DIR / "revision3.9"
 
 
 def test_a_pilot_always_starts_over(pilots, tmp_path):
     pilots.pilot("ga", tmp_path, max_generations=2, n_jobs=1, pop_size=60)
     row = pilots.pilot("ga", tmp_path, max_generations=3, n_jobs=1, pop_size=60)
     assert row["generations"] == 3 and len(pd.read_csv(tmp_path / "ga" / "log.csv")) == 3
+
+
+def test_last_target_is_percent_shorter_or_blank(pilots):
+    assert pilots.last_target({"target_reduction": 0.4375}) == 43.8
+    assert pilots.last_target({"target_reduction": None}) is None and pilots.last_target({}) is None
 
 
 def test_the_seeded_pilot_is_skipped_without_the_dagger_baseline(pilots, tmp_path, monkeypatch):

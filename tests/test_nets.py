@@ -245,9 +245,10 @@ def test_a_dense_evolved_controller_of_15_actions_is_refused(tmp_path):
 def test_a_dense_weights_file_of_15_actions_is_refused_even_beside_a_current_keras_file(tmp_path):
     population.save_dense_champion("ga", 1, nets.DensePopulation(nets.init_population(np.random.default_rng(0), 1)),
                                    0, tmp_path)
-    flat = np.zeros(config.N_INPUTS * 8 + 8 + 8 * 15 + 15)
+    hidden = config.BASELINE_HIDDEN
+    flat = np.zeros(nets.n_params(hidden) - (config.N_ACTIONS - 15) * (hidden[-1] + 1))
     np.save(paths.champion_path("ga", 1, ".npy", tmp_path), flat)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="ga run 1 was made for 15 actions"):
         nets.load_champion("ga", 1, tmp_path)
 
 

@@ -237,6 +237,14 @@ def check_results(runs_dir):
     its checkpoint is not."""
     runs_dir = Path(runs_dir)
     problems, unreadable = [], []
+    dataset_info = runs_dir.parent / config.DATASET_INFO_PATH.name       # the expert dataset's own record
+    if dataset_info.exists():
+        try:
+            checkpoint.check_settings(checkpoint.read_record(dataset_info).get("settings") or {})
+        except checkpoint.UnreadableRecord:
+            unreadable.append(dataset_info)
+        except checkpoint.SettingsMismatch as error:
+            problems.append(f"{dataset_info.name}: {error}")
     if not runs_dir.exists():
         return problems, unreadable
     for path in sorted(runs_dir.rglob("*")):

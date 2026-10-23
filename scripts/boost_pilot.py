@@ -1,12 +1,14 @@
 """Pilot of the stall boost (spec §12.2): does the boost let the stalled ES run of seed 0 (revision 3.2, 11-12 October)
 break its stall? Each variant continues that run from its final population and its random generator's state, with
-the speed push's patience of 1,000 generations restarting at the next target:
+the speed push's patience restarting at the next target (600 generations in the version 3.6 pilot; the current
+default, version 3.9, is 1,000):
   boost  the stall boost as configured (spec §9.4): after 100 generations without a mastered target the decision
          layer mutates 3 times as hard and the steering sensitivity with probability 0.5 and standard deviation 0.2;
   plain  the same run with the boost set to its off values, which makes exactly the draws of a run without it.
 The variants start from the same random state, so they differ only once the boost acts. Each starts over in
 results/pilots/revision3.6/<variant>/ and adds a row to results/pilots/revision3.6/summary.md. The pilot is not part
-of the reported results.
+of the reported results. The source run is the 15-action ES of revision 3.2, so the pilot cannot be repeated with
+the 45 actions of version 3.9: its variants would delete the 3.6 results before the population fails to load.
 
 Run both variants side by side, in two terminals:
     python scripts/boost_pilot.py boost

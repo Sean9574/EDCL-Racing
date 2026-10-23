@@ -1140,6 +1140,25 @@ def test_trainer_main_uses_the_reported_dataset(monkeypatch, tmp_path):
     assert collected == [] and list(trained[0]["y_train"]) == [7]
 
 
+def test_trainer_main_collects_its_own_copy_when_the_reported_dataset_has_other_settings(monkeypatch, tmp_path):
+    from racing import checkpoint
+    collected, trained = fake_imitation(monkeypatch, tmp_path)
+    old = {"settings": {**checkpoint.settings_record(), "N_ACTIONS": 15}}
+    for folder in (config.DATASET_PATH.parent, tmp_path / "app_runs"):     # both datasets are of version 3.8
+        folder.mkdir(parents=True)
+        np.savez(folder / "dataset.npz", y_train=np.array([3]))
+        checkpoint.write_json(folder / "dataset_info.json", old)
+    run_baseline_trainer()
+    assert collected == [tmp_path / "app_runs" / "dataset.npz"] and list(trained[0]["y_train"]) == [1]
+
+
+def test_the_current_results_of_another_action_set_are_flagged(tmp_path):
+    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": 15}}))
+    assert viewer.other_actions("current", tmp_path)
+    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": config.N_ACTIONS}}))
+    assert not viewer.other_actions("current", tmp_path)
+
+
 def test_trainer_main_trains_imitation_afresh_and_saves_no_final_controller(monkeypatch, tmp_path):
     from racing import imitation
     fake_imitation(monkeypatch, tmp_path)
@@ -2691,7 +2710,7 @@ def test_an_archive_of_another_action_set_is_flagged(tmp_path):
     assert viewer.other_actions("revision3.8", folder)
     with_actions(folder, config.N_ACTIONS)
     assert not viewer.other_actions("revision3.8", folder)
-    assert not viewer.other_actions("current", tmp_path)
+    assert not viewer.other_actions("current", tmp_path)              # the folder has no record of its own
     assert not viewer.other_actions("revision3.1", archive_folder(tmp_path))          # no N_ACTIONS in the record
 
 

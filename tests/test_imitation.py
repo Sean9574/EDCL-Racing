@@ -70,6 +70,19 @@ def test_load_dataset_round_trip(tmp_path, toy_data):
     assert set(loaded) == set(toy_data) and np.array_equal(loaded["y_val"], toy_data["y_val"])
 
 
+def test_load_dataset_refuses_a_dataset_collected_with_other_settings(tmp_path, toy_data):
+    from racing import checkpoint
+    np.savez(tmp_path / "d.npz", **toy_data)
+    record = {"settings": checkpoint.settings_record()}
+    checkpoint.write_json(tmp_path / "d_info.json", record)
+    assert imitation.dataset_matches(tmp_path / "d.npz") and imitation.load_dataset(tmp_path / "d.npz")
+    record["settings"]["N_ACTIONS"] = 15                      # a dataset of version 3.8: labels 0-14
+    checkpoint.write_json(tmp_path / "d_info.json", record)
+    assert not imitation.dataset_matches(tmp_path / "d.npz")
+    with pytest.raises(checkpoint.SettingsMismatch, match="N_ACTIONS"):
+        imitation.load_dataset(tmp_path / "d.npz")
+
+
 def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     seen = []
     summary = imitation.train_baseline(toy_data, out_dir=tmp_path / "run",

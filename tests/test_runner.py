@@ -12,7 +12,7 @@ from pathlib import Path
 import nbformat
 import pytest
 
-from racing import checkpoint, jobs
+from racing import checkpoint, config, jobs
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run_notebooks.py"
 
@@ -810,6 +810,18 @@ def test_version_3_6_runs_of_other_methods_stay_valid_and_its_ga_runs_do_not(run
     (runs / "ga" / "seed0" / "summary.json").write_text(
         json.dumps({"approach": "ga", "settings": checkpoint.settings_record("ga")}))
     assert runner.check_results(runs) == ([], [])
+
+
+def test_a_dataset_record_of_other_settings_is_a_problem_even_without_runs(runner, tmp_path):
+    results = tmp_path / "results"
+    results.mkdir()
+    record = {"settings": {**checkpoint.settings_record(), "N_ACTIONS": 15}}
+    (results / "dataset_info.json").write_text(json.dumps(record))
+    problems, unreadable = runner.check_results(results / "runs")
+    assert not unreadable and len(problems) == 1 and problems[0].startswith("dataset_info.json:")
+    record["settings"]["N_ACTIONS"] = config.N_ACTIONS
+    (results / "dataset_info.json").write_text(json.dumps(record))
+    assert runner.check_results(results / "runs") == ([], [])
 
 
 def make_run_files(results, approach, seed):

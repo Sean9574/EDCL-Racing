@@ -239,7 +239,7 @@ Results are written to `results/`, which is not under version control:
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
-| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths) and 3.8 (Formula 1 car, real circuits) |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits) and 3.9 (45 actions, speed push to 50%) |
 | `results/circuit_grids/` | The real circuits' road grids, built once per machine (23 files, about 570 MB), kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
@@ -281,9 +281,9 @@ searches and runs complete and only reports them.
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
 workers each). The plan follows measured generation times and memory (its comments show the arithmetic) and runs
 every job at once: the desktop the dataset, the three searches, the 16 imitation runs and the 4 seeded ES runs, about
-7.8 h; the server every GA, ES and NEAT run (12 runs), about 7 h (the speed push's patience of 1,000 generations adds
-about 20% to the times of the plan's first estimate, and each stall the boost breaks restarts it, so a run can take
-longer). It runs on the desktop, in its Ubuntu shell with the
+7.8 h; the server every GA, ES and NEAT run (12 runs), about 7 h (these times assume the patience of 600 generations of
+version 3.8; version 3.9's patience of 1,000 lets a stall-free run's speed push last up to 400 generations longer, not
+yet measured, and each stall the boost breaks restarts it, so a run can take longer). It runs on the desktop, in its Ubuntu shell with the
 `ec-racing` environment active. A server is reached with Windows' `ssh.exe`, which goes through the school VPN
 (GlobalProtect); WSL's own `ssh` does not.
 
@@ -387,8 +387,9 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.8/` and are not part of the reported results; their summary includes
-the populations' final mean sensor length and steering sensitivity. Before notebook 03 has run, leave out the seeded
+The pilots write to `results/pilots/revision3.9/` (each pilot deletes only its own folder there, so the 3.8 pilots
+stay) and are not part of the reported results; their summary includes the populations' final mean sensor length and
+steering sensitivity and the last speed-push target (`target_reduction`, percent shorter). Before notebook 03 has run, leave out the seeded
 pilot: it needs a refined baseline of this revision.
 
 ## Viewer

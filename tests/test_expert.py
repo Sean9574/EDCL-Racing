@@ -54,8 +54,8 @@ def circle(radius, width=14.0):
 def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_steady_corner(radius):
     """Spec §7.1: in a steady corner the expert settles at its target speed, its throttle proportional to the speed
     error within the band. One step's speed change is a(v)·DT, up to 2.45 m/s at 5 g, more than the 0.5 m/s band, so
-    a band of 0.5 m/s alone switched between gas and brake on every step and left only 1/√2 of a(v) for turning (on circles of radius 214 m, the ends of a 420 × 300 m
-    ellipse, and 400 m, near 5 g; and of 50 m, near 1.8 g)."""
+    a band of 0.5 m/s alone switched between gas and brake on every step and left only 1/√2 of a(v) for turning (on
+    circles of radius 214 m, the ends of a 420 × 300 m ellipse, and 400 m, near 5 g; and of 50 m, near 1.8 g)."""
     track = circle(radius)
     throttles, policy = [], expert.expert_policy(track)
 

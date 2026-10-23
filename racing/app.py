@@ -258,11 +258,12 @@ def before_real_circuits(name, folder):
 
 
 def other_actions(name, folder):
-    """Whether an archive was made with another action set (spec §10.3): 15 classes up to version 3.8. This
+    """Whether a results folder, the current one included, was made with another action set (spec §10.3): 15
+    classes up to version 3.8. This
     version's 45-class table would misread its networks' outputs, so they are neither raced nor replayed. A record
     without an action count is not flagged; nets.load_champion still refuses any controller with another output
     count."""
-    settings = None if name == "current" else folder_record(folder)
+    settings = folder_record(folder)
     if settings is None:
         return False
     try:
@@ -385,8 +386,10 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
         return 0
     paths.remove(out_dir)                   # imitation training in the viewer is never resumed
     path = config.DATASET_PATH
-    if not path.exists():
+    if not (path.exists() and imitation.dataset_matches(path)):    # a dataset of other settings is never trained on
         path = app_runs_dir / "dataset.npz"     # never write the reported dataset
+        if path.exists() and not imitation.dataset_matches(path):
+            paths.remove(path, path.with_name(imitation.dataset_info_name(path)))
         if not path.exists():
             collect_dataset(path)
     data = imitation.load_dataset(path)

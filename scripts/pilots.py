@@ -1,7 +1,7 @@
-"""Pilot runs of revision 3.8 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
+"""Pilot runs of revision 3.9 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
 which show whether the 90% requirement can be reached with the reported settings, now with the Formula 1 car, the
 scaled levels and the real circuits, before the reported run starts. Each pilot starts over in
-results/pilots/revision3.8/<name>/ and adds a row to results/pilots/revision3.8/summary.md, with the population's mean
+results/pilots/revision3.9/<name>/ and adds a row to results/pilots/revision3.9/summary.md, with the population's mean
 sensor length and steering sensitivity and, for the GA, its network size at the end. Pilots are not part of the
 reported results.
 
@@ -24,7 +24,7 @@ from racing import config, es, ga, neat, paths  # noqa: E402
 
 PILOTS = ("ga", "es", "neat", "seeded")
 NAMES = {"ga": "GA", "es": "ES", "neat": "NEAT", "seeded": "Seeded ES"}
-OUT = config.PILOTS_DIR / "revision3.8"
+OUT = config.PILOTS_DIR / "revision3.9"
 
 
 def level_ups(log):
@@ -45,6 +45,13 @@ def last_value(log, column, digits):
         return None
     value = round(float(log[column].dropna().iloc[-1]), digits)
     return int(value) if digits == 0 else value
+
+
+def last_target(summary):
+    """The speed push's last mastered target in percent shorter than the starting target, or None (a blank in the
+    table) when no target was mastered."""
+    reduction = summary.get("target_reduction")
+    return None if reduction is None else round(100 * float(reduction), 1)
 
 
 def run_pilot(name, out, max_generations, n_jobs, pop_size):
@@ -75,6 +82,7 @@ def pilot(name, out_root=None, max_generations=300, n_jobs=None, pop_size=None):
             "level_reached": int(summary["level_reached"]), "level_ups": level_ups(log),
             "min_share_last20": round(float(log["min_share"].tail(20).mean()), 3),
             "sensor_last": round(float(log["sensor_mean"].iloc[-1]), 1),
+            "target_reduction": last_target(summary),
             "steer_last": round(float(log["steer_mean"].iloc[-1]), 2),
             "mean hidden units": last_value(log, "mean_nodes", 1),
             "largest parameters": last_value(log, "max_params", 0),

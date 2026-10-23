@@ -33,7 +33,10 @@
 # The speed-push patience going from 300 to 600 generations (spec §9.4) adds at least 300 generations to every run: in
 # the revision-3.2 logs about 16-19% for GA, 19-23% for NEAT, 24-31% for ES and 17-28% for the imitation speed pushes.
 # Both machines grow by about 20% (x 1.2): the server about 7.0 h (5.8 x 1.2), the desktop about 7.8 h (6.5 x 1.2).
-# Each stall the boost breaks (spec §9.4) restarts the 600-generation patience, so a run can take longer still.
+# Version 3.9 raises the patience again, from 600 to 1,000 generations (spec §14 item 25), so a stall-free run's speed
+# push can take up to 400 generations longer than these figures; that increase is not measured, and the 45-output
+# networks do more work per step. Each stall the boost breaks (spec §9.4) restarts the 1,000-generation patience, so
+# a run can take longer still.
 
 [machines.desktop]
 at_once = 20

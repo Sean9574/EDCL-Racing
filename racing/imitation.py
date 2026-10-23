@@ -14,8 +14,27 @@ from racing.backend import keras_cpu
 TUNER_CLASSES = {"kt_random": "RandomSearch", "kt_hyperband": "Hyperband", "kt_bayesian": "BayesianOptimization"}
 
 
+def dataset_info_name(path):
+    return f"{Path(path).stem}_info.json"
+
+
+def dataset_matches(path):
+    """Whether the dataset at `path` was collected with the current settings (its <stem>_info.json). A dataset
+    without a record is not judged here; one made with other settings, or whose record cannot be read, does not
+    match."""
+    path = Path(path)
+    try:
+        checkpoint.completed(path.parent, name=dataset_info_name(path))
+    except (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord):
+        return False
+    return True
+
+
 def load_dataset(path=None):
+    """The dataset's arrays. A dataset collected with other settings, such as the 15 action labels of version 3.8,
+    raises checkpoint.SettingsMismatch: its labels would train a network of another action set without any error."""
     path = config.DATASET_PATH if path is None else Path(path)
+    checkpoint.completed(path.parent, name=dataset_info_name(path))
     with np.load(path) as data:
         return {key: data[key] for key in data.files}
 

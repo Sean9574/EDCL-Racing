@@ -84,9 +84,8 @@ def recommend(times):
 
 
 def trained_population():
-    """The newest checkpoint in results/runs of a dense population whose networks read config.N_INPUTS inputs and have
-    config.N_ACTIONS outputs: (its
-    run folder, the population), or None if there is none."""
+    """The newest checkpoint in results/runs of a dense population whose networks read config.N_INPUTS inputs and
+    have config.N_ACTIONS outputs: (its run folder, the population), or None if there is none."""
     paths = sorted(config.RESULTS_DIR.glob("runs/*/seed*/checkpoint.pkl"), key=lambda path: path.stat().st_mtime,
                    reverse=True)
     for path in paths:
@@ -95,8 +94,8 @@ def trained_population():
         if not all(key in method for key in ("weights", "hidden", "activation", "setup")):
             continue
         cars = nets.DensePopulation(method["weights"], method["hidden"], method["activation"], method["setup"])
-        try:
-            fits = cars.n_inputs == config.N_INPUTS and cars.weights.shape[1] == nets.n_params(cars.hidden)
+        try:       # n_inputs divides the weights by the layer sizes of this version, so it fails for 15 outputs
+            fits = cars.n_inputs == config.N_INPUTS
         except ValueError:                  # networks of another action set (15 outputs up to version 3.8) fit none
             continue
         if fits:
