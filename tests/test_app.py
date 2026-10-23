@@ -10,7 +10,7 @@ import pygame
 import pytest
 
 from racing import app as viewer
-from racing import checkpoint, config, neat, nets, paths, population, setup, sim
+from racing import checkpoint, circuits, config, neat, nets, paths, population, setup, sim
 
 
 @pytest.fixture
@@ -1034,7 +1034,7 @@ def test_leaderboard_orders_by_distance(circle_track):
     rows = viewer.leaderboard(playback, 2)
     assert [r[1] for r in rows] == [1, 0] and rows[1][5] == "crashed" and [r[0] for r in rows] == [1, 2]
     ready = viewer.leaderboard(None, 2)
-    assert [(r[0], r[1], r[2], r[5]) for r in ready] == [(1, 0, 0, "ready"), (2, 1, 0, "ready")]
+    assert [(r[0], r[1], r[2], r[5], r[6]) for r in ready] == [(1, 0, 0, "ready", "–"), (2, 1, 0, "ready", "–")]
 
 
 def test_champions_saved_later_are_picked_up(window, tmp_path):
@@ -1363,7 +1363,11 @@ def test_a_race_of_both_runs_of_every_method_fits_the_panel(window, tmp_path, mo
     for label, *_, rect in buttons:
         assert window.small.size(label)[0] <= rect.width - 10, label             # each label fits its button
     rows = [string for string, _, _, _ in drawn if string[:1].isdigit() and ". " in string]
-    assert len(rows) == 16 and not any(string.startswith("… ") for string, _, _, _ in drawn)
+    more = [string for string, _, _, _ in drawn if string.startswith("… ")]
+    if size == config.WINDOW_SIZE:      # the track name and five difficulties take rows: the rest is counted (§10.3)
+        assert len(rows) >= 12 and more == [f"… {16 - len(rows)} more"]
+    else:
+        assert len(rows) == 16 and not more
     switches = method_switches(buttons)
     assert [label for label, _, _ in switches] == [config.LABELS[approach] for approach in config.APPROACHES]
     assert len({rect.left for _, _, rect in switches}) == 3 and len({rect.top for _, _, rect in switches}) == 3
@@ -1522,7 +1526,7 @@ def test_map_text_names_the_track(window, circle_track):
     window.receive(ga_report())
     window.update(1 / 60)
     assert window.map_text() == (f"Map: seed {circle_track.seed}, level {circle_track.level}, "
-                                 f"road {circle_track.widths.mean():.1f} m")
+                                 f"road {circle_track.widths.min():.1f}-{circle_track.widths.max():.1f} m")
 
 
 def test_imitation_preview_uses_the_difficulty(monkeypatch, window, circle_track):
@@ -2324,11 +2328,11 @@ def test_the_notebook_view_replays_an_archived_run_on_its_revisions_maps(window,
     notebook_view(window, tmp_path)
     window.cycle_folder()
     assert window.runs_dir == folder / "runs" and window.folder_label() == "Runs: revision3.1 ▸"
-    save_replay(window, ga_report(5, level=4, population_=old_population()))
+    save_replay(window, ga_report(5, level=3, population_=old_population()))
     for _ in range(10):
         window.update(1 / 60)
         window.draw()
-    assert window.latest["generation"] == 5 and built == [10.0] and window.playback.cars.time > 0
+    assert window.latest["generation"] == 5 and built == [12.0] and window.playback.cars.time > 0
     window.cycle_folder()                                                   # back to the current results
     assert window.runs_dir == tmp_path / "runs" and window.latest is None
 
@@ -2581,3 +2585,92 @@ def test_a_race_of_all_32_runs_shows_the_rows_that_fit_then_a_count(window, tmp_
     window.cycle_race_runs()                                                # all
     rows, more = panel(32)
     assert 0 < len(rows) < 32 and more == [f"… {32 - len(rows)} more"]
+
+
+def recording_tracks(monkeypatch, circle_track):
+    """viewer.get_track replaced by a recorder: every (seed, level) asked for, and circle_track named like the real
+    circuit it stands for."""
+    requested = []
+
+    def fake(seed, level):
+        requested.append((seed, level))
+        circle_track.name = config.TEST_CIRCUITS[seed] if level == config.TEST_LEVEL else ""
+        return circle_track
+
+    monkeypatch.setattr(viewer, "get_track", fake)
+    return requested
+
+
+def test_extra_hard_races_on_the_test_circuits_with_their_pole_laps(window, tmp_path, monkeypatch, circle_track):
+    requested = recording_tracks(monkeypatch, circle_track)
+    race_window(window, tmp_path)
+    window.set_race_level(config.MAX_LEVEL)
+    for k, name in enumerate(config.TEST_CIRCUITS):
+        window.race_track()
+        assert requested[-1] == (k, config.TEST_LEVEL)
+        assert circuits.NAMES[name] in window.race_name()
+        assert f"{circuits.POLE_LAPS[name].seconds:.3f}" in window.race_name()
+        window.change_race_track(1)
+
+
+def test_the_validation_difficulty_races_on_validation_setting_display_maps(window, tmp_path, monkeypatch,
+                                                                           circle_track):
+    requested = recording_tracks(monkeypatch, circle_track)
+    race_window(window, tmp_path)
+    window.set_race_level(config.VALIDATION_LEVEL)
+    window.race_track()
+    assert requested[-1] == (config.DISPLAY_SEEDS[0], config.VALIDATION_LEVEL)
+    assert config.APP_DIFFICULTIES[config.VALIDATION_LEVEL] == "Validation"
+    assert "Validation" in window.race_name()
+
+
+def test_the_training_view_offers_the_curriculum_levels_only():
+    assert set(config.DIFFICULTIES) == {1, 2, 3, 4} and set(config.APP_DIFFICULTIES) == {1, 2, 3, 4, 5}
+
+
+def test_the_leaderboard_shows_the_flying_laps_gap_to_pole(circle_track):
+    playback = viewer.Playback(circle_track, lambda obs, cars: np.zeros(len(cars.x), dtype=np.int64), 2, laps=3)
+    playback.cars.lap_times[:] = [[90.0, 80.0, 81.0], [95.0, np.nan, np.nan]]
+    rows = viewer.leaderboard(playback, 2, pole=80.486)
+    gaps = {row[1]: row[-1] for row in rows}
+    assert gaps[0] == "-0.486" and gaps[1] == "–"
+    assert all(row[-1] == "–" for row in viewer.leaderboard(playback, 2))           # no pole: not a test circuit
+
+
+def test_the_race_and_training_panels_draw_with_every_difficulty(window, tmp_path, monkeypatch, circle_track):
+    recording_tracks(monkeypatch, circle_track)
+    race_window(window, tmp_path)
+    for level in config.APP_DIFFICULTIES:
+        window.set_race_level(level)
+        window.update(1 / 60)
+        window.draw()
+    window.set_mode("train")
+    window.draw()
+    assert "Grip: Normal" in viewer.GRIP_LABELS["Normal"] or viewer.GRIP_LABELS["Unlimited"] == "Unlimited (10×)"
+
+
+def test_the_imitation_view_at_extra_hard_drives_the_first_training_layout(monkeypatch, window, circle_track):
+    calls = []
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level: calls.append((seed, level)) or circle_track)
+    window.select_approach("baseline")
+    window.set_difficulty(config.MAX_LEVEL)
+    window.draw()
+    assert (0, config.MAX_LEVEL) in calls and (config.KT_VIEW_SEED, config.MAX_LEVEL) not in calls
+
+
+def test_an_archives_input_count_is_read_whatever_its_level_widths(tmp_path):
+    folder = archive_folder(tmp_path, name="revision3.7", inputs=10)
+    record = json.loads((folder / "run_info.json").read_text())
+    record["settings"]["LEVELS"] = {"1": {"width": [12.0, 16.0]}, "2": {"width": [10.0, 16.0]}}   # ranges
+    (folder / "run_info.json").write_text(json.dumps(record))
+    assert viewer.folder_profile("revision3.7", folder) == (10, None)
+
+
+def test_a_run_from_before_the_real_circuits_is_noted_not_replayed_at_extra_hard(window, tmp_path):
+    folder = archive_folder(tmp_path)
+    assert viewer.before_real_circuits("revision3.1", folder) and not viewer.before_real_circuits("current", tmp_path)
+    window.results_dir = tmp_path
+    notebook_view(window, tmp_path)
+    window.cycle_folder()
+    assert window.request_track(0, config.MAX_LEVEL) is None and "earlier car" in window.status
+    assert not window.building

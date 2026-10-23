@@ -278,6 +278,7 @@ DEFAULT_SHOWN = 100
 KT_VIEW_SEED = 80
 RACE_LAPS = LAPS
 DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
+APP_DIFFICULTIES = {**DIFFICULTIES, VALIDATION_LEVEL: "Validation"}   # the race view's difficulty choices (spec §10.4)
 APP_GRIPS = {"Normal": 1.0, "Unlimited": 10.0}   # multiples of a(v), the display grip of the viewer's own simulations
                                                  # only (spec §10.5); never a recorded setting
 ROBUSTNESS_WIDTHS = (8.0, 10.0, 14.0, 18.0)   # m, the robustness table's widths (spec §11.1); evaluation only

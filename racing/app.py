@@ -219,21 +219,48 @@ def run_folders(results_dir=config.RESULTS_DIR):
     return folders
 
 
-def folder_profile(name, folder):
-    """(inputs, road widths) of a results folder's networks and maps: this revision's (config.N_INPUTS, None: each
-    map draws its own width) for the current results; an archive's from its run_info.json settings, where an earlier
-    revision names one road width per level (revision 3.1). An archive without a readable record is taken as current."""
-    if name == "current":
-        return config.N_INPUTS, None
+GRIP_LABELS = {"Normal": "Normal", "Unlimited": "Unlimited (10×)"}      # config.APP_GRIPS on the grip button
+
+
+def folder_record(folder):
+    """The settings an archive recorded in its run_info.json, or None without a readable record."""
     try:
         settings = json.loads((Path(folder) / config.RUN_INFO_PATH.name).read_text())["settings"]
-        inputs = int(settings["N_INPUTS"])
-        levels = settings["LEVELS"]
-        widths = ({int(level): float(spec["width"]) for level, spec in levels.items()}
-                  if all("width" in spec for spec in levels.values()) else None)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return settings if isinstance(settings, dict) else None
+
+
+def folder_profile(name, folder):
+    """(inputs, road widths) of a results folder's networks and maps: this revision's (config.N_INPUTS, None: each
+    map draws its own width) for the current results; an archive's from its own run_info.json settings: its input
+    count, and the road width per level where an earlier revision names one number per level (revision 3.1). An
+    archive without a readable record is taken as current."""
+    settings = None if name == "current" else folder_record(folder)
+    if settings is None:
         return config.N_INPUTS, None
+    try:
+        inputs = int(settings["N_INPUTS"])
+    except (KeyError, TypeError, ValueError):
+        return config.N_INPUTS, None
+    try:
+        widths = {int(level): float(spec["width"]) for level, spec in settings["LEVELS"].items()}
+    except (KeyError, TypeError, ValueError, AttributeError):       # no widths, or ranges: each map draws its own
+        widths = None
     return inputs, widths
+
+
+def before_real_circuits(name, folder):
+    """Whether an archive was made before version 3.8 (spec §4.7), when Extra hard was a generated map and the car
+    had other grip: its record has no test circuits. Such runs cannot be replayed on the real circuits."""
+    settings = None if name == "current" else folder_record(folder)
+    return settings is not None and "TEST_CIRCUITS" not in settings
+
+
+def view_seed(level):
+    """The map the imitation approaches are driven on in the training view (spec §10.2): the first training layout
+    at Extra hard, validation map 80 at the generated levels."""
+    return 0 if level == config.MAX_LEVEL else config.KT_VIEW_SEED
 
 
 def report_setup(report, indices):
@@ -244,12 +271,19 @@ def report_setup(report, indices):
     return nets.drivers_setup([report["nets"][i] for i in indices])
 
 
-def leaderboard(playback, count):
-    """Rows (position, car index, laps completed, last lap, best lap, status), ordered by distance covered."""
+def pole_gap(flying_lap, pole):
+    """A flying lap's difference to the pole lap as in the pole table ('-0.486', '+1.234'); '–' without either."""
+    return "–" if pole is None or np.isnan(flying_lap) else f"{flying_lap - pole:+.3f}"
+
+
+def leaderboard(playback, count, pole=None):
+    """Rows (position, car index, laps completed, last lap, best lap, status, gap to pole), ordered by distance
+    covered. On a test circuit (`pole` in seconds) the gap is the car's flying lap minus the pole lap (spec §10.3)."""
     nan = float("nan")
     if playback is None:
-        return [(k + 1, k, 0, nan, nan, "ready") for k in range(count)]
+        return [(k + 1, k, 0, nan, nan, "ready", "–") for k in range(count)]
     cars = playback.cars
+    flying = sim.flying_laps(cars.lap_times)
     rows = []
     for position, i in enumerate(np.argsort(-cars.progress, kind="stable")):
         if cars.crashed[i]:
@@ -261,7 +295,7 @@ def leaderboard(playback, count):
         else:
             status = "racing"
         rows.append((position + 1, int(i), int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]),
-                     status))
+                     status, pole_gap(float(flying[i]), pole)))
     return rows
 
 
@@ -351,7 +385,7 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
         scores.append(val_accuracy)
         fitness = np.array(scores)
         send({"approach": approach, "generation": int(number), "level": level,
-              "seeds": [config.KT_VIEW_SEED], "nets": list(members), "fitness": fitness,
+              "seeds": [view_seed(level)], "nets": list(members), "fitness": fitness,
               "best": float(fitness.max()), "mean": float(fitness.mean()), "worst": float(fitness.min()),
               "leveled_up": False})
 
@@ -399,10 +433,12 @@ def car_name(approach, seed, app=False, archived=False):
     return f"{label} r{seed}"
 
 
-def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False):
-    """One leaderboard row: position, car name, laps completed, last/best lap time (s), status."""
+def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False, gap=None):
+    """One leaderboard row: position, car name, laps completed, last/best lap time (s), status and, on a test
+    circuit (`gap` given), the flying lap's difference to the pole lap."""
     times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
-    return f"{position}. {car_name(approach, seed, app, archived)} lap {laps} {times} {status}"
+    line = f"{position}. {car_name(approach, seed, app, archived)} lap {laps} {times} {status}"
+    return line if gap is None else f"{line} {gap}"
 
 
 def percent(value):
@@ -499,6 +535,7 @@ class App:
         self.results_dir = config.RESULTS_DIR           # the current results; archives are in its archive folder
         self.folder_name = "current"                    # the results folder whose runs and controllers are shown
         self.folder_inputs, self.folder_widths = config.N_INPUTS, None      # folder_profile of that folder
+        self.folder_old = False                         # an archive made before the real circuits (spec §4.7)
         self.runs_dir = config.RUNS_DIR                 # the shown folder's notebook runs
         self.train_runs_dir = config.RUNS_DIR           # where the seeded ES trained here finds the DAgger baseline
         self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (spec §10.6)
@@ -554,6 +591,10 @@ class App:
         """The track if it is built; otherwise start building it and return None (spec §10.2). Without background
         building, the track is built at once."""
         key = (int(seed), int(level), self.map_width(level))
+        if self.replays_old_archive() and int(level) == config.MAX_LEVEL:
+            self.status = (f"{self.folder_name}: made with the earlier car; its Extra hard maps were generated and "
+                           f"cannot be replayed on the real circuits.")
+            return None
         if key in self.tracks:
             return self.tracks[key]
         if not self.background_tracks:
@@ -563,6 +604,10 @@ class App:
             self.building.add(key)
             threading.Thread(target=self.build_track, args=(key,), daemon=True).start()
         return None
+
+    def replays_old_archive(self):
+        """Whether the training view shows a run of an archive made before the real circuits (spec §4.7)."""
+        return self.folder_old and self.mode == "train" and self.source == "notebook"
 
     def map_width(self, level):
         """Road width of the maps shown for the selected results folder: an earlier revision's width for the level, or
@@ -708,6 +753,7 @@ class App:
         k = (names.index(self.folder_name) + 1) % len(folders) if self.folder_name in names else 0
         self.folder_name, folder = folders[k]
         self.folder_inputs, self.folder_widths = folder_profile(self.folder_name, folder)
+        self.folder_old = before_real_circuits(self.folder_name, folder)
         self.runs_dir, self.champions_dir = folder / "runs", folder / "champions"
         if self.mode == "race":
             self.load_race()
@@ -1077,13 +1123,17 @@ class App:
         if self.playback is not None:
             return self.playback.track
         if self.approach not in config.EVOLUTION_APPROACHES and self.source == "app":
-            return self.request_track(config.KT_VIEW_SEED, self.difficulty)
+            return self.request_track(view_seed(self.difficulty), self.difficulty)
         return None
 
     def map_text(self):
         track = self.shown_track()
         if track is not None:
-            return f"Map: seed {track.seed}, level {track.level}, road {track.widths.mean():.1f} m"
+            if track.level in (config.MAX_LEVEL, config.TEST_LEVEL) and track.name:
+                reversed_ = " (reversed)" if track.level == config.MAX_LEVEL and track.seed % 2 else ""
+                return f"Map: {circuits.NAMES.get(track.name, track.name)}{reversed_}"
+            return (f"Map: seed {track.seed}, level {track.level}, "
+                    f"road {track.widths.min():.1f}-{track.widths.max():.1f} m")
         if self.source == "notebook" and self.latest is None:
             return "Map: shown with the run's latest generation"
         if self.approach in config.EVOLUTION_APPROACHES and self.latest is None:
@@ -1238,6 +1288,24 @@ class App:
     def race_track(self):
         seeds, level = self.race_tracks()
         return self.request_track(seeds[self.race_index % len(seeds)], level)
+
+    def pole_lap(self):
+        """The pole lap in seconds of the selected test circuit, or None at the generated levels."""
+        seeds, level = self.race_tracks()
+        if level != config.TEST_LEVEL:
+            return None
+        return circuits.POLE_LAPS[config.TEST_CIRCUITS[seeds[self.race_index % len(seeds)]]].seconds
+
+    def race_name(self):
+        """The selected race track as shown in the panel (spec §10.3): a test circuit with its pole lap, otherwise
+        the display seed and the difficulty."""
+        seeds, level = self.race_tracks()
+        seed = seeds[self.race_index % len(seeds)]
+        if level == config.TEST_LEVEL:
+            name = config.TEST_CIRCUITS[seed]
+            pole = circuits.POLE_LAPS[name]
+            return f"{circuits.NAMES[name]} · pole {pole.seconds:.3f} s ({pole.driver}, {pole.season})"
+        return f"seed {seed} · {config.APP_DIFFICULTIES[level]}"
 
     def prepare_race(self):
         """Build the preview once the track is ready: every selected car on the start line."""
@@ -1478,14 +1546,15 @@ class App:
             self.draw_race_panel(x, y, w)
         self.text(self.status[:56], x, self.panel.bottom - 26, self.small, MUTED)
 
-    def draw_difficulty(self, x, y, w, level, action, enabled):
-        """Easy / Medium / Hard / Extra hard buttons (spec §10.4). Returns the next free y."""
+    def draw_difficulty(self, x, y, w, level, action, enabled, choices=config.DIFFICULTIES):
+        """One button per difficulty of `choices` (spec §10.4). Returns the next free y."""
         y = self.text("Difficulty", x, y, self.small, MUTED)
-        quarter = (w - 24) // 4
-        for k, (value, name) in enumerate(config.DIFFICULTIES.items()):
-            self.button(pygame.Rect(x + k * (quarter + 8), y, quarter, 26), name, lambda v=value: action(v),
-                        level == value, enabled=enabled)
-        return y + 34
+        per_row = 4 if len(choices) <= 4 else 3             # five choices wrap so each label fits its button
+        width = (w - 8 * (per_row - 1)) // per_row
+        for k, (value, name) in enumerate(choices.items()):
+            rect = pygame.Rect(x + (k % per_row) * (width + 8), y + (k // per_row) * 32, width, 26)
+            self.button(rect, name, lambda v=value: action(v), level == value, enabled=enabled)
+        return y + 32 * -(-len(choices) // per_row) + 2
 
     def draw_train_panel(self, x, y, w):
         idle = self.process is None
@@ -1551,7 +1620,7 @@ class App:
         half = (w - 8) // 2
         self.button(pygame.Rect(x, y, half, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
                     self.rays)
-        self.button(pygame.Rect(x + half + 8, y, half, 26), f"Grip: {self.grip_name}", self.toggle_grip,
+        self.button(pygame.Rect(x + half + 8, y, half, 26), f"Grip: {GRIP_LABELS[self.grip_name]}", self.toggle_grip,
                     self.grip_name != "Normal", enabled=not self.racing)
         return y + 34
 
@@ -1621,15 +1690,11 @@ class App:
                         self.folder_name != "current", enabled=idle)
             self.text("No trained controllers found.", x, y + 30, self.small, MUTED)
             return
-        self.text("Test track", x, y + 5, self.small, MUTED)
+        self.text("Track", x, y + 5, self.small, MUTED)
         self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_race_track(-1), enabled=idle)
-        seeds, level = self.race_tracks()
-        seed = seeds[self.race_index % len(seeds)]
-        self.text(circuits.NAMES[config.TEST_CIRCUITS[seed]] if level == config.TEST_LEVEL else f"seed {seed}",
-                  x + 150, y + 5)
-        self.button(pygame.Rect(x + 240, y, 30, 28), ">", lambda: self.change_race_track(1), enabled=idle)
-        y += 36
-        y = self.draw_difficulty(x, y, w, self.race_level, self.set_race_level, idle)
+        self.button(pygame.Rect(x + 150, y, 30, 28), ">", lambda: self.change_race_track(1), enabled=idle)
+        y = self.text(self.race_name(), x, y + 34, self.small) + 2
+        y = self.draw_difficulty(x, y, w, self.race_level, self.set_race_level, idle, config.APP_DIFFICULTIES)
         half = (w - 8) // 2
         self.button(pygame.Rect(x, y, half, 32), "Start race", self.start_race, self.racing,
                     enabled=idle and bool(self.race_cars()))
@@ -1664,16 +1729,17 @@ class App:
             y += 26 * -(-len(self.race_available) // 3)
         y += 4
         y = self.draw_speed_buttons(x, y, w)
-        y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)", x, y, self.small, MUTED)
+        y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)" + (", vs pole" if self.pole_lap() else ""), x, y, self.small, MUTED)
         cars = self.race_cars()
-        rows = leaderboard(self.race, len(cars))
+        pole = self.pole_lap()
+        rows = leaderboard(self.race, len(cars), pole)
         room = max((self.panel.bottom - 30 - y) // (self.small.get_linesize() + 4), 1)
         shown = rows if len(rows) <= room else rows[:room - 1]
-        for position, i, laps, last, best, status in shown:
+        for position, i, laps, last, best, status, gap in shown:
             car = cars[i]
             self.swatch(car[0], pygame.Rect(x, y + 3, 10, 10))
             y = self.text(leaderboard_line(position, car[0], car[1], laps, last, best, status, app=is_app(car),
-                                           archived=self.archived()), x + 16, y, self.small)
+                                           archived=self.archived(), gap=gap if pole else None), x + 16, y, self.small)
         if len(shown) < len(rows):
             self.text(f"… {len(rows) - len(shown)} more", x + 16, y, self.small, MUTED)
 
