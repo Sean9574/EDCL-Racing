@@ -1,9 +1,9 @@
 # EC Racing
 
-EC Racing compares methods for finding small neural network driving controllers. Eight controllers race in a
-top-down 2D simulator. The cars have the grip and top speed of a Formula 1 car (1.8 g at low speed, rising to 5 g at
-250 km/h; at most 378 km/h; no engine power or drag model). Easy to Hard are generated circuits at Formula 1 size;
-Extra hard is 19 real circuits, driven in both directions. Four held-out circuits (Melbourne, Sakhir, Sepang and
+EC Racing compares methods for finding small neural network driving controllers. Eight controllers race in a top-down
+2D simulator. The cars have the grip and top speed of a Formula 1 car (1.8 g at low speed, rising to 5 g at 250 km/h;
+at most 378 km/h; no engine power or drag model). Easy to Hard are generated circuits at Formula 1 size; Extra hard is
+19 real training circuits, driven in both directions. Four held-out circuits (Melbourne, Sakhir, Sepang and
 Silverstone) form the test, where each final controller's best flying lap is compared with the circuit's pole lap:
 
 - **Imitation learning:** a hand-designed baseline and three Keras Tuner searches (random search, Hyperband,
@@ -14,27 +14,27 @@ Silverstone) form the test, where each final controller's best flying lap is com
   and connections.
 - **Hybrid:** a seeded evolution strategy starts from the DAgger-refined baseline and continues by driving.
 
-Every method trains until it masters the curriculum: on every map of a generation (generated, or real circuits drawn from the 38 training layouts), at least 90% of
-its population must complete three laps within the target time, three generations in a row, on each level from Easy
-to Extra hard. In the speed push that follows, the target time is shortened by 2% at a time whenever 75% of the
-population beats it three generations in a row, until 600 generations pass without that. Every method is trained four
-times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ every
-time; results are reported for each run and their mean. Every evolved car also evolves its own setup next to its
-network: the length of its distance sensors (30–1,000 m, 150 m at the start) and its steering sensitivity (⅓–3), judged only by success and
-lap time.
+Every method trains until it masters the curriculum: on every map of a generation (generated, or real circuits drawn
+from the 38 training layouts), at least 90% of its population must complete three laps within the target time, three
+generations in a row, on each level from Easy to Extra hard. In the speed push that follows, the target time is
+shortened by 2% at a time whenever 75% of the population beats it three generations in a row, until 600 generations
+pass without that. Every method is trained four times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set
+no seed, so their random choices differ every time; results are reported for each run and their mean. Every evolved
+car also evolves its own setup next to its network: the length of its distance sensors (30–1,000 m, 150 m at the
+start) and its steering sensitivity (⅓–3), judged only by success and lap time.
 
 **Stall boost:** after 100 speed-push generations without a mastered target, the decision layer (the output layer's
-weights and biases; NEAT's connections into output nodes) mutates three times as hard, and the steering sensitivity mutates with
-probability 0.5 and standard deviation 0.2, until the next target is mastered; the speed push ends after 600 such
-generations (spec §9.4). The boost only scales random draws that are made anyway, so run 0 still replays exactly.
-`python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with and without
-it (spec §12.2); the results are in `results/pilots/revision3.6/`.
+weights and biases; NEAT's connections into output nodes) mutates three times as hard, and the steering sensitivity
+mutates with probability 0.5 and standard deviation 0.2, until the next target is mastered; the speed push ends after
+600 such generations (spec §9.4). The boost only scales random draws that are made anyway, so run 0 still replays
+exactly. `python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with
+and without it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 
-Generated maps have a road width that changes along the lap, and the networks see their position across the road and the
-road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
-they trained on. The evaluation adds a robustness table: the validation maps rebuilt at other road widths, two of which no
-controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.8, which incorporates every
-revision).
+Generated maps have a road width that changes along the lap, and the networks see their position across the road and
+the road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than
+the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at constant road
+widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification is
+`docs/ec-racing-design.pdf` (version 3.8, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -108,13 +108,14 @@ runs side by side share them through the operating system at no cost (specificat
 fixes the number, to keep processors free for other work.
 
 6. **Keep Windows awake and without restarts.** WSL pauses while Windows sleeps. Set Settings → System → Power →
-   *Screen and sleep* → "When plugged in, put my device to sleep after" to *Never* (or run
-   `powercfg /change standby-timeout-ac 0` in PowerShell) for the duration of the run. Pause Windows Update for the
-   duration of the run as well (Settings → Windows Update → *Pause updates*): an update restart stops the run, which
-   then has to be resumed by hand.
+   *Screen and sleep* → "When plugged in, put my device to sleep after" to *Never* (or run `powercfg /change
+   standby-timeout-ac 0` in PowerShell) for the duration of the run. Pause Windows Update for the duration of the run
+   as well (Settings → Windows Update → *Pause updates*): an update restart stops the run, which then has to be
+   resumed by hand.
 7. **Give WSL enough memory.** WSL 2 may use only about half of the machine's memory by default, and every worker
-   process holds its own Python, NumPy and track cache (up to 8 built tracks; a generated map of Formula 1 size takes up to about 80 MB; a real circuit's road grid is memory-mapped and shared, see Several machines).
-   To raise the limit, create `%UserProfile%\.wslconfig` in Windows with, for example,
+   process holds its own Python, NumPy and track cache (up to 8 built tracks, about 0.8 GB; a real circuit's road grid
+   takes up to about 105 MB and is loaded from the cache, its distance map memory-mapped; see Several machines). To
+   raise the limit, create `%UserProfile%\.wslconfig` in Windows with, for example,
 
    ```ini
    [wsl2]
@@ -379,55 +380,56 @@ python -m racing.app
 
 On Windows 11 the window opens through WSLg.
 
-- **Training view:** choose an approach, run (*0 (seeded)* or *1*), difficulty and population size, then press Play (or
-  Space). Training follows the mastery rules and continues until Stop, which freezes the cars where they are. Training
-  runs in step with the replay: each generation is replayed once, then the next one trains, so the generation on screen
-  is the one just trained. The playback speed sets the pace; Pause freezes both. In the race view training runs at full
-  speed. The panel shows the level, each map's success share against 90%, the streak, the target reduction and the
-  population's mean sensor length and steering sensitivity.
+- **Training view:** choose an approach, run (*0 (seeded)* or *1*), difficulty and population size, then press Play
+  (or Space). Training follows the mastery rules and continues until Stop, which freezes the cars where they are.
+  Training runs in step with the replay: each generation is replayed once, then the next one trains, so the generation
+  on screen is the one just trained. The playback speed sets the pace; Pause freezes both. In the race view training
+  runs at full speed. The panel shows the level, each map's success share against 90%, the streak, the target
+  reduction and the population's mean sensor length and steering sensitivity.
 - **Saved viewer training:** training started here is kept in `results/app_runs/<method>/seed<k>/`, separate from the
-  reported results. For GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and run where it
-  stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a saved
-  run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New run.
-  Baseline and Keras Tuner training always start afresh.
+  reported results. For GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and run where
+  it stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a
+  saved run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New
+  run. Baseline and Keras Tuner training always start afresh.
 - **Watching a notebook run:** **Source: Notebook run** replays the latest generation of the reported run of the
   selected method and run (`scripts/run_notebooks.py`), with the same panel, plot and Show selector, so you can watch
-  the whole population or just the best car (Best, 1 car). When a replay ends, the newest generation is loaded, so a run
-  in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline and Keras
-  Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars instead.
+  the whole population or just the best car (Best, 1 car). When a replay ends, the newest generation is loaded, so a
+  run in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline and
+  Keras Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars instead.
 - **Earlier revisions' runs:** the **Runs** button (beside Source, and in the race view beside the Race control)
   switches between the current results and each archive in `results/archive/` (for example `revision3.1`). An archived
-  run is replayed, and its controllers race, on its own revision's maps (revision 3.1: one road width per level, 16, 14,
-  12 and 10 m, read from the archive's `run_info.json`), and its networks read only the inputs they were trained with
-  (revision 3.1: the nine rays and the speed). Every run of an archive was seeded: the Run control reaches each of its
-  runs (an earlier revision may also hold run 2), and its cars are named by their seeds (*GA s0*, *GA s1*, …) and carry
-  no stripe. A run whose networks do not match the selected folder is named in the status line instead. Training started
-  in the viewer always uses the current results.
-- **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start line.
-  The **Race** control chooses the runs that race: *best runs* (each method's best run; the default), *all runs*
-  (every saved run of every method, up to 32 cars), *seeded runs* (run 0 of every method) or *unseeded runs* (runs 1 to
-  3), and each method's button below it switches that method on or off; both are kept while the viewer is open. All
-  runs of a method drive in its color; runs 1 to 3 cars carry a white stripe, and the leaderboard names run 0
-  *GA (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race; Stop returns to
-  the start line. The **Controllers** button switches the list to the **app runs**: the best car of each viewer training
-  run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App
-  cars start switched off, race next to the reported controllers when switched on (drawn with a white border), and are
-  never part of the reported results. When many cars race, the leaderboard lists as many as fit.
-- **Grip:** *Normal* (a(v), 1.8 g rising to 5 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the cars you watch in
-  both views. It never affects training or results.
+  run is replayed, and its controllers race, on its own revision's maps (revision 3.1: one road width per level, 16,
+  14, 12 and 10 m, read from the archive's `run_info.json`), and its networks read only the inputs they were trained
+  with (revision 3.1: the nine rays and the speed). Every run of an archive was seeded: the Run control reaches each
+  of its runs (an earlier revision may also hold run 2), and its cars are named by their seeds (*GA s0*, *GA s1*, …)
+  and carry no stripe. A run whose networks do not match the selected folder is named in the status line instead.
+  Training started in the viewer always uses the current results.
+- **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
+  line. The **Race** control chooses the runs that race: *best runs* (each method's best run; the default), *all runs*
+  (every saved run of every method, up to 32 cars), *seeded runs* (run 0 of every method) or *unseeded runs* (runs 1
+  to 3), and each method's button below it switches that method on or off; both are kept while the viewer is open. All
+  runs of a method drive in its color; runs 1 to 3 cars carry a white stripe, and the leaderboard names run 0 *GA
+  (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race; Stop returns to the start line. The **Controllers**
+  button switches the list to the **app runs**: the best car of each viewer training run (saved after every
+  generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App cars start switched
+  off, race next to the reported controllers when switched on (drawn with a white border), and are never part of the
+  reported results. When many cars race, the leaderboard lists as many as fit.
+- **Grip:** *Normal* (a(v), 1.8 g rising to 5 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the
+  cars you watch in both views. It never affects training or results.
 - **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.
 - **Camera:** *Whole map*, or *Follow 2×*, *4×* or *8×*: zoomed in and following the best car (the outlined one) in
   the training view, or the race leader (the car furthest along that is still racing) in the race view. The mouse
   wheel over the map zooms in and out, and the C key cycles the camera as the button does.
-- **Full screen:** the Full screen button or F11 fills the display; Windowed, F11 or Esc returns to a window, which can
-  also be resized by dragging its border. The map and panel follow the window's size.
-- **Network window:** the Network window button opens a separate window (movable to another monitor, resizable,
-  closed with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
+- **Full screen:** the Full screen button or F11 fills the display; Windowed, F11 or Esc returns to a window, which
+  can also be resized by dragging its border. The map and panel follow the window's size.
+- **Network window:** the Network window button opens a separate window (movable to another monitor, resizable, closed
+  with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
   generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in
   the race view the Network of button cycles through the cars in the race.
 - **Difficulty:** Easy (gentle loops), Medium (circuits), Hard (circuits with a main straight into a hairpin,
-  sometimes a chicane or esses), Extra hard (the 19 real circuits, in both directions, with their real widths; the test circuits are the four held-out
-  ones). Generated maps run clockwise or counter-clockwise and the panel's map line names the road width.
+  sometimes a chicane or esses), Extra hard (the 19 real training circuits, in both directions, with their real
+  widths; the test circuits are the four held-out ones). Generated maps run clockwise or counter-clockwise and the
+  panel's map line names the road width.
 - **Controllers of earlier revisions** have 10 inputs instead of 12; the race view leaves them out and says so.
 - **Playback speed:** 1× is twice real time.
 
