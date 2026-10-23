@@ -104,6 +104,18 @@ def trained_checkpoint(results, method_name, n_cars, n_inputs=config.N_INPUTS, s
     return path
 
 
+def test_a_checkpoint_of_15_actions_is_skipped_and_the_expert_workload_is_the_fallback(monkeypatch, tmp_path):
+    """Networks of version 3.8 (463 weights: 12 inputs, 16 hidden, 15 outputs) fit no network of this version."""
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path)
+    state = {"seeds": [5], "method": {"weights": np.zeros((3, 12 * 16 + 16 + 16 * 15 + 15)), "hidden": (16,),
+                                      "activation": "relu", "setup": np.ones((3, 2))}}
+    checkpoint.save(tmp_path / "runs" / "old" / "seed0" / "checkpoint.pkl", state)
+    assert bench.trained_population() is None
+    trained_checkpoint(tmp_path, "ga", 3)
+    os.utime(tmp_path / "runs/ga/seed0/checkpoint.pkl", (time.time() - 60, time.time() - 60))
+    assert bench.trained_population()[0] == tmp_path / "runs/ga/seed0"          # the older, current one is found
+
+
 def test_the_compiled_benchmark_times_the_newest_trained_population(monkeypatch, capsys, tmp_path, circle_track):
     """With a trained dense population, the compiled benchmark runs training's time trials (spec §9.10): pop of its
     cars, repeated, over config.LAPS laps of three Extra hard layouts (bench.SEEDS; a checkpoint records no layouts),
