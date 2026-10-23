@@ -150,7 +150,7 @@ def test_speed_push_ends_after_patience_without_mastery(monkeypatch):
     t = MasteryTracker(level=config.MAX_LEVEL)
     for _ in range(3):
         t.update(1.0)
-    assert [t.update(0.5) for _ in range(4)] == [None, None, None, "end_speed"]
+    assert [t.update(0.4) for _ in range(4)] == [None, None, None, "end_speed"]
     assert t.done and t.outcome == "speed_limit" and t.update(1.0) is None
 
 
@@ -240,15 +240,17 @@ def at_goal():
     return tracker
 
 
-def test_the_speed_push_passes_at_75_percent_and_the_levels_need_90():
-    assert curriculum.mastery_fraction(False) == 0.9 and curriculum.mastery_fraction(True) == 0.75
+def test_the_speed_push_passes_at_50_percent_and_the_levels_need_90():
+    """Spec §9.4 (version 3.9): a speed-push generation passes when half of the population meets the target on every
+    map; the levels still need 90%."""
+    assert curriculum.mastery_fraction(False) == 0.9 and curriculum.mastery_fraction(True) == 0.5
     level = MasteryTracker(level=1)
     level.update(0.8)
     assert level.streak == 0
     tracker = at_goal()
-    tracker.update(0.75)
+    tracker.update(0.5)
     assert tracker.streak == 1
-    tracker.update(0.74)
+    tracker.update(0.499)
     assert tracker.streak == 0
 
 
@@ -260,10 +262,10 @@ def test_each_mastered_target_is_2_percent_shorter():
     assert event == "tightened" and math.isclose(tracker.factor, first * 0.98)
 
 
-def test_the_speed_push_ends_after_600_generations_without_a_mastery():
+def test_the_speed_push_ends_after_1000_generations_without_a_mastery():
     tracker = at_goal()
-    events = [tracker.update(0.5) for _ in range(600)]
-    assert events[-1] == "end_speed" and events[:-1] == [None] * 599
+    events = [tracker.update(0.4) for _ in range(1000)]
+    assert events[-1] == "end_speed" and events[:-1] == [None] * 999
 
 
 # ----- the stall boost (spec §9.4, version 3.6) -----
@@ -283,7 +285,7 @@ def test_the_speed_push_is_stalled_after_stall_generations_without_a_mastered_ta
     assert tracker.stalled                                    # and the next 100 start another
 
 
-def test_no_stall_before_the_goal_or_after_the_push_and_the_patience_is_600():
+def test_no_stall_before_the_goal_or_after_the_push_and_the_patience_is_1000():
     tracker = MasteryTracker()
     for _ in range(config.STALL_GENERATIONS + 5):
         tracker.update(0.0)
@@ -291,7 +293,7 @@ def test_no_stall_before_the_goal_or_after_the_push_and_the_patience_is_600():
     ended = at_goal()
     events = [ended.update(0.0) for _ in range(config.SPEED_PATIENCE)]
     assert events[-1] == "end_speed" and ended.done and not ended.stalled
-    assert config.SPEED_PATIENCE == 600 and config.STALL_GENERATIONS == 100 and config.STALL_BOOST == 3.0
+    assert config.SPEED_PATIENCE == 1000 and config.STALL_GENERATIONS == 100 and config.STALL_BOOST == 3.0
     assert (config.STALL_STEER_P, config.STALL_STEER_SD) == (0.5, 0.2)
 
 

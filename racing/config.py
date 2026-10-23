@@ -120,8 +120,9 @@ TARGET_FACTOR = 1.3          # time trial: starting target = TARGET_FACTOR × LA
 MASTERY_FRACTION = 0.9       # lowest map success share for a passing generation (spec §9.4)
 MASTERY_STREAK = 3           # consecutive passing generations to advance a level or master a target
 SPEED_STEP = 0.98            # target factor multiplier per mastered target in the speed push (spec §9.4)
-SPEED_MASTERY_FRACTION = 0.75  # lowest map success share of a passing speed-push generation (spec §9.4)
-SPEED_PATIENCE = 600         # generations without mastering the current target that end the speed push (300 to 3.5)
+SPEED_MASTERY_FRACTION = 0.5   # lowest map success share of a passing speed-push generation (spec §9.4; 0.75 to 3.8)
+SPEED_PATIENCE = 1000        # generations without mastering the current target that end the speed push (600 in
+                             # versions 3.6–3.8, 300 up to 3.5)
 STALL_GENERATIONS = 100      # generations of the speed push without a mastered target after which it is stalled
 STALL_BOOST = 3.0            # in a stall, the decision layer's mutation is this many times as strong (spec §9.4)
 STALL_STEER_P = 0.5          # in a stall, a child's steering sensitivity mutates with this probability ...
