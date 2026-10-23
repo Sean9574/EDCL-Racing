@@ -8,6 +8,12 @@
 #   run 0.3 GB, a Keras Tuner search 1.0 GB, an imitation run with DAgger's 6 workers 2.0 GB. Every job of a machine
 #   fits at once: the desktop's 24 at most about 38 GB of 54 (16 imitation runs x 2.0 GB), the server's 12 about 4 GB
 #   of 245.
+#   Version 3.8: the real circuits' grids are memory-mapped and shared by every process; generated maps of Formula 1
+#   size hold up to about 80 MB each, so the peaks above are measured again before the reported run (spec §9.10).
+#   Measured in version 3.8: building one real circuit's road grid peaks near 1 GB (Monza 976 MB, about 1 s), once
+#   per machine, cached in results/circuit_grids/ (23 files, about 570 MB); a run using cached grids peaks near
+#   167 MB; building one validation map or a robustness-width map peaks at 1.2-1.4 GB. The at_once bounds below are
+#   therefore not yet valid for version 3.8: re-measure them in the version 3.8 pilots before the run.
 #   workers: worker processes of a job (EC_RACING_JOBS): DAgger's driving, the dataset and the numpy fallback.
 # The split follows measured generation times (python -m racing.bench generation, 1000 expert cars, every thread):
 # desktop 0.11 s on 24 threads, server 0.13 s on 16, so the server has about 85% of the desktop's speed. Work in

@@ -1,7 +1,10 @@
 # EC Racing
 
-EC Racing compares methods for finding small neural network driving controllers. Eight controllers race on freshly
-generated circuits, whose harder levels borrow features of Formula 1 circuits, in a top-down 2D simulator:
+EC Racing compares methods for finding small neural network driving controllers. Eight controllers race in a
+top-down 2D simulator. The cars have the grip and top speed of a Formula 1 car (1.8 g at low speed, rising to 5 g at
+250 km/h; at most 378 km/h; no engine power or drag model). Easy to Hard are generated circuits at Formula 1 size;
+Extra hard is 19 real circuits, driven in both directions. Four held-out circuits (Melbourne, Sakhir, Sepang and
+Silverstone) form the test, where each final controller's best flying lap is compared with the circuit's pole lap:
 
 - **Imitation learning:** a hand-designed baseline and three Keras Tuner searches (random search, Hyperband,
   Bayesian optimization) are trained to imitate a scripted expert driver, refined by DAgger and then pushed for speed
@@ -11,13 +14,13 @@ generated circuits, whose harder levels borrow features of Formula 1 circuits, i
   and connections.
 - **Hybrid:** a seeded evolution strategy starts from the DAgger-refined baseline and continues by driving.
 
-Every method trains until it masters the curriculum: on every freshly generated map of a generation, at least 90% of
+Every method trains until it masters the curriculum: on every map of a generation (generated, or real circuits drawn from the 38 training layouts), at least 90% of
 its population must complete three laps within the target time, three generations in a row, on each level from Easy
 to Extra hard. In the speed push that follows, the target time is shortened by 2% at a time whenever 75% of the
 population beats it three generations in a row, until 600 generations pass without that. Every method is trained four
 times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ every
 time; results are reported for each run and their mean. Every evolved car also evolves its own setup next to its
-network: the length of its distance sensors (10–150 m) and its steering sensitivity (⅓–3), judged only by success and
+network: the length of its distance sensors (30–1,000 m, 150 m at the start) and its steering sensitivity (⅓–3), judged only by success and
 lap time.
 
 **Stall boost:** after 100 speed-push generations without a mastered target, the decision layer (the output layer's
@@ -27,11 +30,17 @@ generations (spec §9.4). The boost only scales random draws that are made anywa
 `python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with and without
 it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 
-Every map has its own road width, from 10 to 16 m, and the networks see their position across the road and the
+Generated maps have a road width that changes along the lap, and the networks see their position across the road and the
 road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than the one
-they trained on. The evaluation adds a robustness table: the test maps rebuilt at 8, 10, 14 and 18 m, two of which no
-controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.7, which incorporates every
+they trained on. The evaluation adds a robustness table: the validation maps rebuilt at other road widths, two of which no
+controller trained on. The design specification is `docs/ec-racing-design.pdf` (version 3.8, which incorporates every
 revision).
+
+The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
+
+**Data and licences:** the real circuits come from the racetrack database of the Technical University of Munich
+(https://github.com/TUMFTM/racetrack-database), LGPL-3.0, vendored in `data/racetracks/` (see
+`data/racetracks/SOURCE.md`).
 
 ## Setup on a Windows desktop (WSL 2)
 
@@ -104,7 +113,7 @@ fixes the number, to keep processors free for other work.
    duration of the run as well (Settings → Windows Update → *Pause updates*): an update restart stops the run, which
    then has to be resumed by hand.
 7. **Give WSL enough memory.** WSL 2 may use only about half of the machine's memory by default, and every worker
-   process holds its own Python, NumPy and track cache (up to 8 built tracks; an Extra hard track takes 10–14 MB).
+   process holds its own Python, NumPy and track cache (up to 8 built tracks; a generated map of Formula 1 size takes up to about 80 MB; a real circuit's road grid is memory-mapped and shared, see Several machines).
    To raise the limit, create `%UserProfile%\.wslconfig` in Windows with, for example,
 
    ```ini
@@ -197,7 +206,7 @@ python -m racing.progress                            # live status; Ctrl+C stops
 
 | Notebook | Purpose |
 |---|---|
-| `01_dataset` | Expert dataset on freshly generated maps |
+| `01_dataset` | Expert dataset on the generated levels and the real layouts |
 | `02_imitation` | Baseline, Keras Tuner searches, training of runs 0 to 3 |
 | `03_dagger` | DAgger refinement and speed push of the four imitation methods, runs 0 to 3 each |
 | `04_ga` | Genetic algorithm, runs 0 to 3 |
@@ -226,7 +235,8 @@ Results are written to `results/`, which is not under version control:
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
-| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/` | Pilot runs of revisions 3, 3.1 (with setup evolution) and 3.2 (with road widths) |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths) and 3.8 (Formula 1 car, real circuits) |
+| `results/circuit_grids/` | The real circuits' road grids, built once per machine (23 files, about 570 MB), kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
 | `results/archive/revision3.1/` | The revision 3.1 results (runs, controllers, dataset, run record), shown by the viewer's **Runs** button |
@@ -294,7 +304,23 @@ python scripts/fleet.py archive revision3.1   # every machine moves its earlier 
 python scripts/fleet.py finish     # once all 32 runs have finished: collect, then notebooks 02 to 08 here
 ```
 
-Version 3.7 trains only the GA again; the runs of the other methods made with 3.6 stay valid:
+**Version 3.8** changes every setting that affects results, so every result of version 3.7 and earlier is refused by
+`run_notebooks.py --check` and is set aside before the new run:
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/fleet.py archive revision3.6
+python scripts/fleet.py start
+```
+
+Each machine builds the real circuits' road grids once, in `results/circuit_grids/` (23 files, about 570 MB, kept
+between runs). Memory measured in version 3.8: building one real circuit's grid peaks near 1 GB (Monza 976 MB, about
+1 s); a run using cached grids peaks near 167 MB; building one validation map or a robustness-width map peaks at
+1.2–1.4 GB. The `at_once` bounds in `scripts/fleet.toml` were measured for the earlier car and must be measured again
+in the version 3.8 pilots before the reported run.
+
+Version 3.7 trained only the GA again; the runs of the other methods made with 3.6 stay valid:
 
 ```bash
 python scripts/fleet.py stop
@@ -341,7 +367,7 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.7/` and are not part of the reported results; their summary includes
+The pilots write to `results/pilots/revision3.8/` and are not part of the reported results; their summary includes
 the populations' final mean sensor length and steering sensitivity. Before notebook 03 has run, leave out the seeded
 pilot: it needs a refined baseline of this revision.
 
@@ -387,7 +413,7 @@ On Windows 11 the window opens through WSLg.
   run (saved after every generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App
   cars start switched off, race next to the reported controllers when switched on (drawn with a white border), and are
   never part of the reported results. When many cars race, the leaderboard lists as many as fit.
-- **Grip:** *Normal* (12 m/s², the training grip) or *Unlimited* (120 m/s²) sets the grip of the cars you watch in
+- **Grip:** *Normal* (a(v), 1.8 g rising to 5 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the cars you watch in
   both views. It never affects training or results.
 - **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.
 - **Camera:** *Whole map*, or *Follow 2×*, *4×* or *8×*: zoomed in and following the best car (the outlined one) in
@@ -400,8 +426,8 @@ On Windows 11 the window opens through WSLg.
   generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in
   the race view the Network of button cycles through the cars in the race.
 - **Difficulty:** Easy (gentle loops), Medium (circuits), Hard (circuits with a main straight into a hairpin,
-  sometimes a chicane or esses), Extra hard (circuits with two hairpins, chicanes, esses and fast sweepers). Maps run
-  clockwise or counter-clockwise, and every map has its own road width, 10 to 16 m, named in the panel's map line.
+  sometimes a chicane or esses), Extra hard (the 19 real circuits, in both directions, with their real widths; the test circuits are the four held-out
+  ones). Generated maps run clockwise or counter-clockwise and the panel's map line names the road width.
 - **Controllers of earlier revisions** have 10 inputs instead of 12; the race view leaves them out and says so.
 - **Playback speed:** 1× is twice real time.
 
