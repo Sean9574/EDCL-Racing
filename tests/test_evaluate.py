@@ -497,6 +497,18 @@ def test_chosen_trial_star_with_zero_padded_ids(monkeypatch, tmp_path):
     assert [len(c.get_offsets()) for c in scatter] == [12, 1, 12, 1]
 
 
+def test_main_refuses_a_controller_of_another_action_set(tmp_path):
+    """Spec §10.3: the evaluation of a folder holding a controller of 15 actions stops with the same message."""
+    from racing.backend import keras_cpu
+    keras = keras_cpu()
+    model = keras.Sequential([keras.Input((config.N_INPUTS,)), keras.layers.Dense(15, activation="softmax")])
+    path = paths.champion_path("baseline", 0, champion_dir=tmp_path)
+    path.parent.mkdir(parents=True)
+    model.save(path)
+    with pytest.raises(ValueError, match="baseline run 0 was made for 15 actions, this version has 45"):
+        evaluate.main(champions_dir=tmp_path, runs_dir=tmp_path, data_path=tmp_path / "none.npz", out_dir=tmp_path)
+
+
 def test_main_without_champions_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         evaluate.main(champions_dir=tmp_path, runs_dir=tmp_path, data_path=tmp_path / "none.npz", out_dir=tmp_path)

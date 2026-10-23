@@ -52,9 +52,9 @@ def circle(radius, width=14.0):
 
 @pytest.mark.parametrize("radius", [50.0, 80.0, 214.0, 400.0])
 def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_steady_corner(radius):
-    """Spec §7.1: in a steady corner the expert settles at its target speed and coasts. One step's speed change is
-    a(v)·DT, up to 2.45 m/s at 5 g, more than the 0.5 m/s band, so a band of 0.5 m/s alone switched between gas and
-    brake on every step and left only 1/√2 of a(v) for turning (on circles of radius 214 m, the ends of a 420 × 300 m
+    """Spec §7.1: in a steady corner the expert settles at its target speed, its throttle proportional to the speed
+    error within the band. One step's speed change is a(v)·DT, up to 2.45 m/s at 5 g, more than the 0.5 m/s band, so
+    a band of 0.5 m/s alone switched between gas and brake on every step and left only 1/√2 of a(v) for turning (on circles of radius 214 m, the ends of a 420 × 300 m
     ellipse, and 400 m, near 5 g; and of 50 m, near 1.8 g)."""
     track = circle(radius)
     throttles, policy = [], expert.expert_policy(track)
@@ -70,7 +70,7 @@ def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_ste
 
 
 def test_the_expert_never_applies_gas_at_full_lock(circle_track):
-    """Spec §7.1 (version 3.8): while its steering is saturated the expert does not accelerate, so the friction circle
+    """Spec §7.1: while its steering is saturated the expert's throttle is at most 0, so the friction circle
     leaves all of a(v) for turning; below its target speed with the steering short of full lock it still applies gas."""
     cars = sim.start_cars(circle_track, 2)
     cars.speed[:] = 20.0                                   # well below the 50 m circle's corner speed of about 32 m/s

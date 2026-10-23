@@ -2674,3 +2674,52 @@ def test_a_run_from_before_the_real_circuits_is_noted_not_replayed_at_extra_hard
     window.cycle_folder()
     assert window.request_track(0, config.MAX_LEVEL) is None and "earlier car" in window.status
     assert not window.building
+
+
+def with_actions(folder, n_actions):
+    """Give an archive's run record an action count (records of versions up to 3.8 hold 15)."""
+    record = json.loads((folder / "run_info.json").read_text())
+    record["settings"]["N_ACTIONS"] = n_actions
+    (folder / "run_info.json").write_text(json.dumps(record))
+    return folder
+
+
+def test_an_archive_of_another_action_set_is_flagged(tmp_path):
+    """Spec §10.3 (version 3.9): an archive whose record has another action count is flagged; a record without one
+    (test fixtures, unreadable records) is judged by its controllers' output counts instead."""
+    folder = with_actions(archive_folder(tmp_path, name="revision3.8", inputs=config.N_INPUTS), 15)
+    assert viewer.other_actions("revision3.8", folder)
+    with_actions(folder, config.N_ACTIONS)
+    assert not viewer.other_actions("revision3.8", folder)
+    assert not viewer.other_actions("current", tmp_path)
+    assert not viewer.other_actions("revision3.1", archive_folder(tmp_path))          # no N_ACTIONS in the record
+
+
+def test_an_archive_of_another_action_set_is_not_replayed(window, tmp_path):
+    with_actions(archive_folder(tmp_path, name="revision3.8", inputs=config.N_INPUTS), 15)
+    window.results_dir = tmp_path
+    notebook_view(window, tmp_path)
+    window.cycle_folder()
+    save_replay(window, ga_report(3))
+    window.update(1 / 60)
+    assert "15 actions" in window.status and window.latest is None
+
+
+def test_a_controller_of_another_action_set_is_refused(window, tmp_path):
+    """Spec §10.3: a saved controller with 15 outputs is refused with a message and left out of the race."""
+    from racing.backend import keras_cpu
+    keras = keras_cpu()
+    model = keras.Sequential([keras.Input((config.N_INPUTS,)), keras.layers.Dense(16, activation="relu"),
+                              keras.layers.Dense(15, activation="softmax")])
+    path = paths.champion_path("baseline", 0, champion_dir=tmp_path)
+    path.parent.mkdir(parents=True)
+    model.save(path)
+    save_race_champions(tmp_path, approaches=[("ga", 0)])
+    window.champions_dir = tmp_path
+    with pytest.raises(ValueError, match="15 actions"):
+        window.driver("baseline", 0)
+    window.race_runs = "all"
+    window.set_mode("race")
+    window.start_race()
+    window.update(1 / 60)
+    assert ("baseline", 0) not in window.race_cars() and ("ga", 0) in window.race_cars()

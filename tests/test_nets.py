@@ -1,7 +1,8 @@
+import json
 import numpy as np
 import pytest
 
-from racing import config, nets, population
+from racing import config, nets, paths, population
 
 
 def test_baseline_parameter_count():
@@ -214,3 +215,60 @@ def test_a_dense_population_names_each_cars_network():
     cars = nets.DensePopulation(np.arange(2 * nets.n_params(), dtype=float).reshape(2, nets.n_params()))
     flat, hidden = cars.network(1)
     assert np.array_equal(flat, cars.weights[1]) and hidden == config.BASELINE_HIDDEN
+
+
+def old_actions_keras(path, outputs=15):
+    """A Keras controller of version 3.8 (15 outputs) saved at `path`."""
+    from racing.backend import keras_cpu
+    keras = keras_cpu()
+    model = keras.Sequential([keras.Input((config.N_INPUTS,)), keras.layers.Dense(8, activation="relu"),
+                              keras.layers.Dense(outputs, activation="softmax")])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(path)
+    return model
+
+
+def test_an_imitation_controller_of_15_actions_is_refused(tmp_path):
+    """Spec §10.3: a controller whose output count is not config.N_ACTIONS is refused, naming it and its count."""
+    old_actions_keras(paths.champion_path("baseline", 2, champion_dir=tmp_path))
+    with pytest.raises(ValueError, match=r"baseline run 2 was made for 15 actions, this version has 45"):
+        nets.load_champion("baseline", 2, tmp_path)
+
+
+def test_a_dense_evolved_controller_of_15_actions_is_refused(tmp_path):
+    old_actions_keras(paths.champion_path("ga", 1, champion_dir=tmp_path))
+    np.save(paths.champion_path("ga", 1, ".npy", tmp_path), np.zeros(config.N_INPUTS * 8 + 8 + 8 * 15 + 15))
+    with pytest.raises(ValueError, match="ga run 1 was made for 15 actions"):
+        nets.load_champion("ga", 1, tmp_path)
+
+
+def test_a_dense_weights_file_of_15_actions_is_refused_even_beside_a_current_keras_file(tmp_path):
+    population.save_dense_champion("ga", 1, nets.DensePopulation(nets.init_population(np.random.default_rng(0), 1)),
+                                   0, tmp_path)
+    flat = np.zeros(config.N_INPUTS * 8 + 8 + 8 * 15 + 15)
+    np.save(paths.champion_path("ga", 1, ".npy", tmp_path), flat)
+    with pytest.raises(ValueError):
+        nets.load_champion("ga", 1, tmp_path)
+
+
+def test_a_neat_genome_of_15_actions_is_refused(tmp_path):
+    """A 3.8 genome has 15 output nodes (ids 12-26); 3.9 would read its hidden nodes as outputs."""
+    from racing import neat
+    old_actions_keras(paths.champion_path("neat", 0, champion_dir=tmp_path))
+    old = neat.Genome(node_ids=np.arange(config.N_INPUTS, config.N_INPUTS + 15), bias=np.zeros(15),
+                      innov=np.array([0]), src=np.array([0]), dst=np.array([config.N_INPUTS]),
+                      weight=np.array([1.0]), enabled=np.array([True]))
+    paths.champion_path("neat", 0, ".json", tmp_path).write_text(json.dumps(old.to_dict()))
+    with pytest.raises(ValueError, match="neat run 0 was made for 15 actions"):
+        nets.load_champion("neat", 0, tmp_path)
+
+
+def test_a_neat_genome_of_15_actions_is_refused_beside_a_current_keras_file(tmp_path):
+    from racing import neat
+    neat.save_neat_champion("neat", 0, neat.initial_genome(np.random.default_rng(0), neat.Innovations()), tmp_path)
+    old = neat.Genome(node_ids=np.arange(config.N_INPUTS, config.N_INPUTS + 15), bias=np.zeros(15),
+                      innov=np.array([0]), src=np.array([0]), dst=np.array([config.N_INPUTS]),
+                      weight=np.array([1.0]), enabled=np.array([True]))
+    paths.champion_path("neat", 0, ".json", tmp_path).write_text(json.dumps(old.to_dict()))
+    with pytest.raises(ValueError, match="15 actions"):
+        nets.load_champion("neat", 0, tmp_path)

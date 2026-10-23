@@ -76,6 +76,11 @@ def node_positions(columns):
             for c, labels in enumerate(columns)]
 
 
+def _label_size(column):
+    """Label size in points: smaller for a column of 45 actions than for the 12 inputs."""
+    return 6 if len(column) <= 20 else 4.5
+
+
 def _draw_graph(ax, graph):
     import matplotlib.colors as mcolors
     from matplotlib.collections import LineCollection
@@ -92,9 +97,9 @@ def _draw_graph(ax, graph):
         xs, ys = zip(*column)
         ax.scatter(xs, ys, s=10 if len(column) <= 20 else 4, color="0.25", zorder=3)
     for (x, y), label in zip(xy[0], columns[0]):
-        ax.text(x - 0.03, y, label, ha="right", va="center", fontsize=6, color="0.15")
+        ax.text(x - 0.03, y, label, ha="right", va="center", fontsize=_label_size(columns[0]), color="0.15")
     for (x, y), label in zip(xy[-1], columns[-1]):
-        ax.text(x + 0.03, y, label, ha="left", va="center", fontsize=6, color="0.15")
+        ax.text(x + 0.03, y, label, ha="left", va="center", fontsize=_label_size(columns[-1]), color="0.15")
     ax.set_xlim(-0.25, 1.3)
     ax.set_ylim(0.0, 1.0)
     ax.axis("off")
@@ -124,7 +129,7 @@ def draw_networks(drivers, path):
         raise ValueError("no controllers to draw")
     ncols = min(4, len(approaches))
     nrows = -(-len(approaches) // ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 4.8 * nrows), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 6.0 * nrows), squeeze=False)
     for ax in axes.flat[len(approaches):]:
         ax.set_visible(False)
     for ax, approach in zip(axes.flat, approaches):

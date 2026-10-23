@@ -93,3 +93,11 @@ def test_a_network_of_an_earlier_revision_shows_only_its_inputs():
     driver = nets.from_flat(nets.init_population(np.random.default_rng(0), 1, n_inputs=10)[0])
     graph = netfig.network_graph(driver)
     assert graph["columns"][0] == netfig.input_labels()[:10] and graph["columns"][0][-1] == "speed"
+
+
+def test_the_network_figure_fits_45_labels(tmp_path):
+    driver = nets.from_flat(np.random.default_rng(0).normal(size=nets.n_params()))
+    path = netfig.draw_networks({"baseline": driver}, tmp_path / "n.png")
+    from PIL import Image                                   # matplotlib's dependency
+    height = Image.open(path).size[1]
+    assert height >= 6.0 * 200 * 0.95                      # 6 inches per row at 200 dpi

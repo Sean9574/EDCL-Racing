@@ -1,6 +1,6 @@
 """Pilot of the stall boost (spec §12.2): does the boost let the stalled ES run of seed 0 (revision 3.2, 11-12 October)
 break its stall? Each variant continues that run from its final population and its random generator's state, with
-the speed push's patience of 600 generations restarting at the next target:
+the speed push's patience of 1,000 generations restarting at the next target:
   boost  the stall boost as configured (spec §9.4): after 100 generations without a mastered target the decision
          layer mutates 3 times as hard and the steering sensitivity with probability 0.5 and standard deviation 0.2;
   plain  the same run with the boost set to its off values, which makes exactly the draws of a run without it.

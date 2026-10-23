@@ -257,6 +257,20 @@ def before_real_circuits(name, folder):
     return settings is not None and "TEST_CIRCUITS" not in settings
 
 
+def other_actions(name, folder):
+    """Whether an archive was made with another action set (spec §10.3): 15 classes up to version 3.8. This
+    version's 45-class table would misread its networks' outputs, so they are neither raced nor replayed. A record
+    without an action count is not flagged; nets.load_champion still refuses any controller with another output
+    count."""
+    settings = None if name == "current" else folder_record(folder)
+    if settings is None:
+        return False
+    try:
+        return int(settings["N_ACTIONS"]) != config.N_ACTIONS
+    except (KeyError, TypeError, ValueError):
+        return False                       # no count recorded: each controller's own output count decides
+
+
 def view_seed(level):
     """The map the imitation approaches are driven on in the training view (spec §10.2): the first training layout
     at Extra hard, validation map 80 at the generated levels."""
@@ -536,6 +550,7 @@ class App:
         self.folder_name = "current"                    # the results folder whose runs and controllers are shown
         self.folder_inputs, self.folder_widths = config.N_INPUTS, None      # folder_profile of that folder
         self.folder_old = False                         # an archive made before the real circuits (spec §4.7)
+        self.folder_actions = False                     # an archive made with another action set (spec §10.3)
         self.runs_dir = config.RUNS_DIR                 # the shown folder's notebook runs
         self.train_runs_dir = config.RUNS_DIR           # where the seeded ES trained here finds the DAgger baseline
         self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (spec §10.6)
@@ -754,6 +769,7 @@ class App:
         self.folder_name, folder = folders[k]
         self.folder_inputs, self.folder_widths = folder_profile(self.folder_name, folder)
         self.folder_old = before_real_circuits(self.folder_name, folder)
+        self.folder_actions = other_actions(self.folder_name, folder)
         self.runs_dir, self.champions_dir = folder / "runs", folder / "champions"
         if self.mode == "race":
             self.load_race()
@@ -774,6 +790,11 @@ class App:
         self.replay_polled = now
         path = self.replay_file()
         name = f"{config.LABELS[self.approach]} run {self.run_seed}"
+        if self.folder_actions:
+            record = folder_record(self.runs_dir.parent) or {}
+            self.status = (f"{self.folder_name}: made with {record.get('N_ACTIONS', 'another number of')} actions; "
+                           f"this version has {config.N_ACTIONS}, so its runs are not replayed.")
+            return
         try:
             stamp = path.stat().st_mtime_ns
         except OSError:

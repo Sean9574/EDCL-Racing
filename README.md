@@ -17,16 +17,19 @@ Silverstone) form the test, where each final controller's best flying lap is com
 Every method trains until it masters the curriculum: on every map of a generation (generated, or real circuits drawn
 from the 38 training layouts), at least 90% of its population must complete three laps within the target time, three
 generations in a row, on each level from Easy to Extra hard. In the speed push that follows, the target time is
-shortened by 2% at a time whenever 75% of the population beats it three generations in a row, until 600 generations
+shortened by 2% at a time whenever half of the population beats it three generations in a row, until 1,000 generations
 pass without that. Every method is trained four times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set
 no seed, so their random choices differ every time; results are reported for each run and their mean. Every evolved
 car also evolves its own setup next to its network: the length of its distance sensors (30–1,000 m, 150 m at the
 start) and its steering sensitivity (⅓–3), judged only by success and lap time.
 
+Every car chooses one of 45 actions: nine steering levels in steps of 0.25 (full lock left to full lock right) and five
+throttle levels (full and half brake, coast, half and full gas), so a network has 45 outputs (spec §6).
+
 **Stall boost:** after 100 speed-push generations without a mastered target, the decision layer (the output layer's
 weights and biases; NEAT's connections into output nodes) mutates three times as hard, and the steering sensitivity
 mutates with probability 0.5 and standard deviation 0.2, until the next target is mastered; the speed push ends after
-600 such generations (spec §9.4). The boost only scales random draws that are made anyway, so run 0 still replays
+1,000 such generations (spec §9.4). The boost only scales random draws that are made anyway, so run 0 still replays
 exactly. `python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with
 and without it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 
@@ -34,7 +37,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 the road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than
 the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at constant road
 widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification is
-`docs/ec-racing-design.pdf` (version 3.8, which incorporates every revision).
+`docs/ec-racing-design.pdf` (version 3.9, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -278,7 +281,7 @@ searches and runs complete and only reports them.
 reached from it, following `scripts/fleet.toml` (which machine runs which jobs, how many at a time, with how many
 workers each). The plan follows measured generation times and memory (its comments show the arithmetic) and runs
 every job at once: the desktop the dataset, the three searches, the 16 imitation runs and the 4 seeded ES runs, about
-7.8 h; the server every GA, ES and NEAT run (12 runs), about 7 h (the speed push's patience of 600 generations adds
+7.8 h; the server every GA, ES and NEAT run (12 runs), about 7 h (the speed push's patience of 1,000 generations adds
 about 20% to the times of the plan's first estimate, and each stall the boost breaks restarts it, so a run can take
 longer). It runs on the desktop, in its Ubuntu shell with the
 `ec-racing` environment active. A server is reached with Windows' `ssh.exe`, which goes through the school VPN
@@ -323,8 +326,19 @@ Each machine builds the real circuits' road grids once, in `results/circuit_grid
 process: building one real circuit's grid peaks near 1 GB (Monza 976 MB, about 1 s); one generation's three maps
 0.34 GB at Easy, 0.39 GB at Medium and 0.69 GB at Hard; the final selection, which holds all 20 validation maps at
 once, about 2.4 GB; building one validation map or a robustness-width map peaks at 1.2–1.4 GB.
-The `at_once` bounds in `scripts/fleet.toml` were measured for the earlier car and must be measured again, per machine,
-with the step above before the reported run.
+The `at_once` bounds in `scripts/fleet.toml` were set for version 3.8 from the pilots (desktop 20 jobs at once, server
+12); version 3.9 changes only the output layers, so they hold.
+
+**Version 3.9** changes the actions (45 instead of 15) and the speed push (50%, patience 1,000), so every result of
+version 3.8 is refused by `run_notebooks.py --check` and is set aside before the new run; the pole check of the 3.8
+controllers stays with it:
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/fleet.py archive revision3.8
+python scripts/fleet.py start
+```
 
 Version 3.7 trained only the GA again; the runs of the other methods made with 3.6 stay valid:
 

@@ -235,7 +235,7 @@ def test_strength_floor_follows_the_configured_ratio(monkeypatch):
 
 
 def test_operators_solve_the_sphere_function(fixed_shapes):
-    method = started(pop_size=100, s_max=0.03)                 # 585 genes: three times 3.8's, so a smaller step
+    method = started(pop_size=100, s_max=0.03)                 # s_max 0.03 = 0.05/sqrt(3): 585 genes get the per-genome mutation variance 195 genes got at 0.05
     rng = np.random.default_rng(3)
     norms = lambda: np.array([np.sum(w ** 2) for w in method.population.weights])
     start = norms().min()

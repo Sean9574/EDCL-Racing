@@ -576,14 +576,28 @@ def uneven_ellipse():
 
 @needs_compiler
 def test_the_expert_completes_three_laps_of_a_420_by_300_m_ellipse_in_both_simulators():
-    """Spec §7.1: the expert coasts within one step's speed change of its target, so it keeps the grip for turning in
-    long corners near 5 g; with a 0.5 m/s band alone it crashed here on lap 2."""
+    """Spec §7.1: the expert's throttle is proportional to its speed error within a band of at least one step's speed
+    change, so it keeps the grip for turning in long corners near 5 g; with a 0.5 m/s band alone it crashed here on
+    lap 2."""
     track = uneven_ellipse()
     compiled = fastsim.simulate_expert([track], 1, [config.EXPERT_VALIDATION_TIME], laps=config.LAPS)[0]
     reference = sim.simulate(track, expert.expert_policy(track), 1, time_limit=config.EXPERT_VALIDATION_TIME,
                              laps=config.LAPS)
     same_results(compiled, reference)
     assert reference.finished[0] and np.isfinite(reference.lap_times).all()
+
+
+@needs_compiler
+def test_all_45_action_classes_decode_identically_in_both_simulators(circle_track):
+    """Spec §6, §5.7: one car fixed on each class (steering index = class // 5, throttle index = class % 5) ends
+    every step in the same state in numpy and in the compiled simulator, so the two decode every class alike."""
+    weights = np.zeros((config.N_ACTIONS, nets.n_params((1,))))
+    weights[np.arange(config.N_ACTIONS), -config.N_ACTIONS + np.arange(config.N_ACTIONS)] = 10.0   # the output biases
+    cars = nets.DensePopulation(weights, (1,), "relu")
+    compiled = fastsim.simulate([circle_track], cars, [12.0], laps=config.LAPS)[0]
+    reference = numpy_results([circle_track], cars, [12.0], config.LAPS)[0]
+    same_results(compiled, reference)
+    assert len(np.unique(reference.progress)) > 5                      # the classes really differ on the track
 
 
 @needs_compiler

@@ -312,20 +312,33 @@ def champion_seeds(directory=None):
     return found
 
 
+def refuse_other_actions(approach, seed, outputs):
+    """Raises ValueError unless a saved controller has config.N_ACTIONS outputs (spec §10.3): the 45-class table
+    would misread the outputs of one made for another action set."""
+    if int(outputs) != config.N_ACTIONS:
+        raise ValueError(f"{approach} run {seed} was made for {int(outputs)} actions, "
+                         f"this version has {config.N_ACTIONS}")
+
+
 def load_champion(approach, seed, directory=None):
     """(Keras model, driver) of one final controller. A NEAT controller drives with its genome (<seed>.json,
     spec §9.9); an evolved dense controller with its float64 weights (.npy) and the architecture of its Keras
     file (dense_spec); an imitation controller with the Keras weights (spec §6). The driver has the setup saved in
-    <seed>.setup.json, or revision 3's without that file (spec §6)."""
+    <seed>.setup.json, or revision 3's without that file (spec §6). A controller whose output count is not
+    config.N_ACTIONS (15 up to version 3.8) is refused with a ValueError naming it (spec §10.3)."""
     keras_path = paths.champion_path(approach, seed, champion_dir=directory)
     model = keras_cpu().models.load_model(keras_path)
+    refuse_other_actions(approach, seed, model.output_shape[-1])
     genome_path = paths.champion_path(approach, seed, ".json", directory)
     flat_path = paths.champion_path(approach, seed, ".npy", directory)
     if genome_path.exists():
         from racing import neat                    # neat imports evolution lazily; nets stays import-light
-        driver = neat.NeatNet(neat.Genome.from_dict(json.loads(genome_path.read_text())))
+        genome = neat.Genome.from_dict(json.loads(genome_path.read_text()))
+        refuse_other_actions(approach, seed, int(np.isin(genome.node_ids, list(neat.OUTPUT_IDS)).sum()))
+        driver = neat.NeatNet(genome)
     elif flat_path.exists():
         driver = from_flat(np.load(flat_path), *dense_spec(model))
+        refuse_other_actions(approach, seed, driver.layers[-1][0].shape[1])
     else:
         driver = from_keras(model)
     setup_path = paths.champion_path(approach, seed, ".setup.json", directory)
