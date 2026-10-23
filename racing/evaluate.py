@@ -386,6 +386,8 @@ def pole_laps_table(per_track):
             continue
         groups = [(str(seed), sub[sub["run_seed"] == seed]) for seed in run_order(sub["run_seed"].unique())]
         for run, races in groups + [("best", sub)]:
+            if races.empty:                                  # a run that was never driven has no row
+                continue
             row, beaten = {"Method": config.LABELS[approach], "Run": run}, 0
             for name in config.TEST_CIRCUITS:
                 laps = races.loc[races["circuit"] == name, "flying_lap"].astype(float)
@@ -414,14 +416,19 @@ def pole_figure(per_track, path):
     for ax, name in zip(np.atleast_1d(axes), config.TEST_CIRCUITS):
         laps = per_track[per_track["circuit"] == name].groupby("approach")["flying_lap"].min()
         methods = [a for a in config.APPROACHES if a in laps.index and np.isfinite(laps[a])]
-        ax.barh([config.LABELS[a] for a in methods], [laps[a] for a in methods],
-                color=[config.COLORS[a] for a in methods], edgecolor="0.3", linewidth=0.5)
-        ax.axvline(circuits.POLE_LAPS[name].seconds, color="0.1", linewidth=1.2, linestyle="--", label="pole lap")
+        pole = circuits.POLE_LAPS[name].seconds
+        bars = ax.barh([config.LABELS[a] for a in methods], [laps[a] for a in methods],
+                       color=[config.COLORS[a] for a in methods], edgecolor="0.3", linewidth=0.5)
+        ax.bar_label(bars, labels=[f"{laps[a] - pole:+.2f} s" for a in methods], padding=2, fontsize=7)
+        ax.set_xlim(0, 1.15 * pole)
+        ax.invert_yaxis()                                    # the tables' order, first method on top
+        ax.axvline(pole, color="0.1", linewidth=1.2, linestyle="--", label="pole lap")
         ax.set_title(circuits.NAMES[name], fontsize=10)
         ax.set_xlabel("Flying lap (s)", fontsize=8)
         ax.tick_params(labelsize=7)
-    np.atleast_1d(axes)[0].legend(frameon=False, fontsize=7)
-    fig.tight_layout()
+    handles, labels = np.atleast_1d(axes)[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=7)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
     fig.savefig(path, dpi=150)
     plt.close(fig)
     return path
@@ -915,7 +922,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
         frame.to_csv(folder / f"{name}.csv", index=False)
         (folder / f"{name}.md").write_text(to_markdown(frame))
     drawn = figures(runs_dir, out_dir / "figures")
-    if per_track["finished"].astype(bool).any():
+    if per_track["flying_lap"].notna().any():
         drawn.append(pole_figure(per_track, out_dir / "figures" / "pole_laps.png"))
     if best:                                            # each method's best final controller (spec §11.4)
         drawn.append(netfig.draw_networks({approach: drivers[(approach, seed)] for approach, seed in best.items()},

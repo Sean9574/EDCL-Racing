@@ -676,6 +676,7 @@ def test_the_pole_table_compares_each_runs_flying_lap_with_the_pole_lap():
     assert best["Melbourne flying lap (s)"] == "79.900" and best["Poles beaten"] == 1
     es0 = table[(table["Method"] == "ES") & (table["Run"] == "0")].iloc[0]
     assert es0["Melbourne flying lap (s)"] == "–" and es0["Poles beaten"] == 0
+    assert set(table.loc[table["Method"] == "GA", "Run"]) == {"0", "1", "best"}   # runs 2 and 3 were never driven
 
 
 def test_a_race_row_records_every_lap_and_the_flying_lap(circle_track, monkeypatch):
