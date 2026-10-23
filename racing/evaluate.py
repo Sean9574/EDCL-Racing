@@ -13,8 +13,8 @@ from racing.track import build_track
 from racing.track_gen import geometry_ok
 from racing.tracks import get_track
 
-DRIVE_COLUMNS = ["approach", "run_seed", "track", "finished", "success", "crashed", "race_time", "lap_time",
-                 "progress", "fitness"]
+DRIVE_COLUMNS = ["approach", "run_seed", "track", "circuit", "finished", "success", "crashed", "race_time",
+                 "lap_time", "progress", "fitness", "lap_1", "lap_2", "lap_3", "flying_lap"]
 PER_SEED_COLUMNS = ["approach", "run_seed", "maps", "finished", "success", "lap_time", "race_time", "best_lap",
                     "crashes"]
 STAGES = (("imitation", "After imitation"), ("dagger", "After DAgger"), ("speed push", "After speed push"))
@@ -38,15 +38,18 @@ def _drive_on(drivers, track, track_seed, factor):
     result = sim.simulate(track, nets.mixed_policy(chosen), len(keys), laps=config.LAPS,
                           setup=nets.drivers_setup(chosen))      # every controller with its own setup (revision 3.1)
     target = sim.target_time(track, factor)
+    flying = sim.flying_laps(result.lap_times)
     rows = []
     for i, (approach, run_seed) in enumerate(keys):
         race_time = float(result.finish_time[i])
         finished = bool(result.finished[i])
-        rows.append({"approach": approach, "run_seed": run_seed, "track": track_seed, "finished": finished,
-                     "success": finished and race_time <= target + config.TIME_EPS,
+        rows.append({"approach": approach, "run_seed": run_seed, "track": track_seed, "circuit": track.name,
+                     "finished": finished, "success": finished and race_time <= target + config.TIME_EPS,
                      "crashed": bool(result.crashed[i]), "race_time": race_time,
                      "lap_time": race_time / config.LAPS, "progress": float(result.progress[i]),
-                     "fitness": float(result.fitness[i])})
+                     "fitness": float(result.fitness[i]),
+                     **{f"lap_{n + 1}": float(result.lap_times[i, n]) for n in range(3)},
+                     "flying_lap": float(flying[i])})
     return rows
 
 
@@ -287,7 +290,7 @@ def hours(seconds):
 
 def per_seed(per_track):
     """One row per (approach, run seed): maps driven, finished and succeeded, mean lap and race time and best lap
-    time over the finished maps, and crashes."""
+    time over the finished maps, best lap time (the fastest flying lap, spec §11.1), and crashes."""
     rows = []
     for (approach, seed), runs in per_track.groupby(["approach", "run_seed"]):
         done = runs[runs["finished"].astype(bool)]
@@ -296,7 +299,7 @@ def per_seed(per_track):
                      "success": int(runs["success"].astype(bool).sum()),
                      "lap_time": float(done["lap_time"].mean()) if len(done) else float("nan"),
                      "race_time": float(done["race_time"].mean()) if len(done) else float("nan"),
-                     "best_lap": float(done["lap_time"].min()) if len(done) else float("nan"),
+                     "best_lap": float(runs["flying_lap"].min()) if runs["flying_lap"].notna().any() else float("nan"),
                      "crashes": int(runs["crashed"].astype(bool).sum())})
     return pd.DataFrame(rows, columns=PER_SEED_COLUMNS)
 
@@ -365,6 +368,63 @@ def results_table(per_track, runs_dir, drivers=None, best=None):
                      "Target reduction (per run)": reduction_cells(
                          [run_summary(approach, s, runs_dir) for s in order])})
     return pd.DataFrame(rows)
+
+
+def _lap(seconds):
+    return "–" if not np.isfinite(seconds) else f"{seconds:.3f}"
+
+
+def pole_laps_table(per_track):
+    """Spec §11.3 table 2: per method and run, the flying lap on each test circuit, its difference to the circuit's
+    pole lap in seconds and percent, and the test circuits on which the pole lap was beaten; per method a row "best"
+    with the fastest flying lap on each circuit over its runs."""
+    from racing import circuits
+    rows = []
+    for approach in config.APPROACHES:
+        sub = per_track[per_track["approach"] == approach]
+        if sub.empty:
+            continue
+        groups = [(str(seed), sub[sub["run_seed"] == seed]) for seed in run_order(sub["run_seed"].unique())]
+        for run, races in groups + [("best", sub)]:
+            row, beaten = {"Method": config.LABELS[approach], "Run": run}, 0
+            for name in config.TEST_CIRCUITS:
+                laps = races.loc[races["circuit"] == name, "flying_lap"].astype(float)
+                lap = float(laps.min()) if np.isfinite(laps).any() else float("nan")
+                pole = circuits.POLE_LAPS[name].seconds
+                label = circuits.NAMES[name]
+                row[f"{label} flying lap (s)"] = _lap(lap)
+                row[f"{label} vs pole (s)"] = "–" if np.isnan(lap) else f"{lap - pole:+.3f}"
+                row[f"{label} vs pole (%)"] = "–" if np.isnan(lap) else f"{100.0 * (lap - pole) / pole:+.2f}"
+                beaten += int(np.isfinite(lap) and lap < pole)
+            row["Poles beaten"] = beaten
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def pole_figure(per_track, path):
+    """Spec §11.4: for each test circuit, each method's fastest flying lap over its runs as a horizontal bar, the
+    pole lap as a vertical line. Returns the file's path."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from racing import circuits
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, len(config.TEST_CIRCUITS), figsize=(3.4 * len(config.TEST_CIRCUITS), 3.2))
+    for ax, name in zip(np.atleast_1d(axes), config.TEST_CIRCUITS):
+        laps = per_track[per_track["circuit"] == name].groupby("approach")["flying_lap"].min()
+        methods = [a for a in config.APPROACHES if a in laps.index and np.isfinite(laps[a])]
+        ax.barh([config.LABELS[a] for a in methods], [laps[a] for a in methods],
+                color=[config.COLORS[a] for a in methods], edgecolor="0.3", linewidth=0.5)
+        ax.axvline(circuits.POLE_LAPS[name].seconds, color="0.1", linewidth=1.2, linestyle="--", label="pole lap")
+        ax.set_title(circuits.NAMES[name], fontsize=10)
+        ax.set_xlabel("Flying lap (s)", fontsize=8)
+        ax.tick_params(labelsize=7)
+    np.atleast_1d(axes)[0].legend(frameon=False, fontsize=7)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
 
 
 def head_to_head_table(per_track):
@@ -682,7 +742,7 @@ SETUP_PANELS = (("sensor_mean", "Sensor length (m)", config.SENSOR_LENGTH_LIMITS
 def _setup_figure(plt, logs):
     """Spec §11.4: for each method, the population's mean sensor length (upper panel) and mean steering
     sensitivity (lower panel) per generation, one line per run, with level advancements and target reductions
-    marked and the revision 3 setup as a dashed line. None if no log records setups."""
+    marked and the starting setup (150 m, sensitivity 1) as a dashed line. None if no log records setups."""
     from matplotlib.lines import Line2D
     from matplotlib.ticker import FuncFormatter, NullFormatter
     with_setup = {approach: runs for approach, runs in logs.items()
@@ -712,7 +772,7 @@ def _setup_figure(plt, logs):
             ax.tick_params(labelsize=7)
             ax.grid(alpha=0.25, linewidth=0.5)
     handles, _ = axes[0, 0].get_legend_handles_labels()
-    handles += [Line2D([], [], color="0.3", linewidth=0.8, linestyle="--", label="revision 3 setup"),
+    handles += [Line2D([], [], color="0.3", linewidth=0.8, linestyle="--", label="starting setup"),
                 Line2D([], [], color="0.6", linewidth=0.6, label="level cleared / goal"),
                 Line2D([], [], color="0.6", linewidth=0.6, linestyle=":", label="target cut")]
     axes[0, 0].legend(handles=handles, frameon=False, fontsize=7)
@@ -837,6 +897,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
         data = {key: d[key] for key in d.files}
     metrics = metrics_per_seed(models, data, runs_dir, latency_calls, drivers)   # timed after all parallel work
     tables = {"results": results_table(per_track, runs_dir, drivers, best),
+              "pole_laps": pole_laps_table(per_track),
               "head_to_head": head_to_head_table(per_track),
               "training_cost": training_cost_table(runs_dir), "stages": stages_table(stages),
               "comparison": comparison_table(metrics), "search_cost": search_cost_table(runs_dir),
@@ -854,6 +915,8 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
         frame.to_csv(folder / f"{name}.csv", index=False)
         (folder / f"{name}.md").write_text(to_markdown(frame))
     drawn = figures(runs_dir, out_dir / "figures")
+    if per_track["finished"].astype(bool).any():
+        drawn.append(pole_figure(per_track, out_dir / "figures" / "pole_laps.png"))
     if best:                                            # each method's best final controller (spec §11.4)
         drawn.append(netfig.draw_networks({approach: drivers[(approach, seed)] for approach, seed in best.items()},
                                           out_dir / "figures" / "networks.png"))

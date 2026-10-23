@@ -35,7 +35,8 @@ def drive_rows(rows):
     """A per-track frame from (approach, seed, track, finished, succeeded, crashed, lap time) tuples."""
     return pd.DataFrame([{"approach": a, "run_seed": s, "track": t, "finished": f, "success": ok, "crashed": c,
                           "race_time": lap * config.LAPS, "lap_time": lap, "progress": 1.0 if f else 0.5,
-                          "fitness": 1.5 if f else 0.5} for a, s, t, f, ok, c, lap in rows],
+                          "fitness": 1.5 if f else 0.5, "circuit": "", "lap_1": lap, "lap_2": lap, "lap_3": lap,
+                          "flying_lap": lap if f else float("nan")} for a, s, t, f, ok, c, lap in rows],
                         columns=evaluate.DRIVE_COLUMNS)
 
 
@@ -514,7 +515,7 @@ def test_main_with_partial_results(requested_maps, tmp_path):
              y_test=rng.integers(0, 15, 40))
     results = evaluate.main(champions_dir=champions, runs_dir=runs, data_path=tmp_path / "dataset.npz",
                             out_dir=tmp_path / "out", test_seeds=[1000], val_seeds=[80], latency_calls=5)
-    assert set(results) == {"results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
+    assert set(results) == {"results", "pole_laps", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
                             "driving_selected", "dataset", "per_track", "validation", "metrics", "best_seeds",
                             "figures", "robustness", "robustness_per_track", "evolved_networks"}
     assert set(results["robustness_per_track"]["width"]) <= set(config.ROBUSTNESS_WIDTHS)
@@ -646,3 +647,51 @@ def test_network_size_is_drawn_for_the_ga_and_neat(tmp_path):
     written = evaluate.figures(runs, tmp_path / "figures")
     assert tmp_path / "figures" / "network_size_over_training.png" in written
     assert (tmp_path / "figures" / "network_size_over_training.png").is_file()
+
+
+def pole_rows(rows):
+    """per_track rows of test races: (approach, run, circuit index, lap 1, lap 2, lap 3); NaN for a lap not driven."""
+    out = []
+    for approach, seed, k, l1, l2, l3 in rows:
+        laps = np.array([l1, l2, l3], dtype=float)
+        finished = bool(np.isfinite(laps).all())
+        out.append({"approach": approach, "run_seed": seed, "track": k, "circuit": config.TEST_CIRCUITS[k],
+                    "finished": finished, "success": finished, "crashed": not finished,
+                    "race_time": float(laps.sum()) if finished else float("nan"),
+                    "lap_time": float(laps.sum()) / 3 if finished else float("nan"), "progress": 1.0,
+                    "fitness": 1.5, "lap_1": l1, "lap_2": l2, "lap_3": l3,
+                    "flying_lap": float(np.nanmin(laps[1:])) if np.isfinite(laps[1:]).any() else float("nan")})
+    return pd.DataFrame(out, columns=evaluate.DRIVE_COLUMNS)
+
+
+def test_the_pole_table_compares_each_runs_flying_lap_with_the_pole_lap():
+    per_track = pole_rows([("ga", 0, 0, 95.0, 80.0, 81.0), ("ga", 1, 0, 96.0, 82.0, 79.9),
+                            ("ga", 0, 3, 99.0, 86.0, np.nan), ("es", 0, 0, 97.0, np.nan, np.nan)])
+    table = evaluate.pole_laps_table(per_track)
+    ga0 = table[(table["Method"] == "GA") & (table["Run"] == "0")].iloc[0]
+    assert ga0["Melbourne flying lap (s)"] == "80.000" and ga0["Melbourne vs pole (s)"] == "-0.486"
+    assert ga0["Melbourne vs pole (%)"] == "-0.60" and ga0["Silverstone flying lap (s)"] == "86.000"
+    assert ga0["Poles beaten"] == 1
+    best = table[(table["Method"] == "GA") & (table["Run"] == "best")].iloc[0]
+    assert best["Melbourne flying lap (s)"] == "79.900" and best["Poles beaten"] == 1
+    es0 = table[(table["Method"] == "ES") & (table["Run"] == "0")].iloc[0]
+    assert es0["Melbourne flying lap (s)"] == "–" and es0["Poles beaten"] == 0
+
+
+def test_a_race_row_records_every_lap_and_the_flying_lap(circle_track, monkeypatch):
+    result = sim.RunResult(fitness=np.array([1.5]), finished=np.array([True]), crashed=np.array([False]),
+                           progress=np.array([1.0]), finish_time=np.array([30.0]), steps=600,
+                           laps_done=np.array([3]), lap_times=np.array([[12.0, 9.0, 9.5]]))
+    monkeypatch.setattr(sim, "simulate", lambda *a, **k: result)
+    row = evaluate._drive_on({("ga", 0): nets.from_flat(np.zeros(195), ())}, circle_track, 0, 1.3)[0]
+    assert (row["lap_1"], row["lap_2"], row["lap_3"], row["flying_lap"]) == (12.0, 9.0, 9.5, 9.0)
+
+
+def test_the_pole_figure_is_drawn(tmp_path):
+    per_track = pole_rows([("ga", 0, k, 95.0, 85.0, 86.0) for k in config.TEST_TRACKS])
+    path = evaluate.pole_figure(per_track, tmp_path / "pole_laps.png")
+    assert path.exists() and path.stat().st_size > 0
+
+
+def test_robustness_rebuilds_the_test_circuits_at_four_widths():
+    assert config.ROBUSTNESS_WIDTHS == (6.0, 10.0, 14.0, 18.0)

@@ -25,7 +25,7 @@ BRIEF = (
     "            brief(value)                      # a stage of a combined run, e.g. DAgger and speed push\n"
     "    print({key: summary[key] for key in BRIEF_KEYS if key in summary}, flush=True)\n")
 
-EVALUATION_TABLES = ("results", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
+EVALUATION_TABLES = ("results", "pole_laps", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
                      "driving_selected", "dataset", "robustness", "evolved_networks")
 
 NOTEBOOKS = {
@@ -89,7 +89,8 @@ NOTEBOOKS = {
         ("markdown", "# 8. Evaluation\nTest maps finished and succeeded, lap times, training cost, imitation "
                      "stages and the course comparison, reported for every run of each method and as their "
                      "mean and standard deviation, written `r0 · r1 · r2 · r3 (mean ± sd)`, with each method's best "
-                     "run (spec §11.3)."),
+                     "run (spec §11.3), and each method's flying laps against the pole laps of the four test circuits "
+                     "(spec §11.1)."),
         ("code", SETUP),
         ("code", "from IPython.display import display\n\nfrom racing import config, evaluate\n\n"
                  "results = evaluate.main(n_jobs=config.N_JOBS)\n"
