@@ -7,8 +7,8 @@ default, version 3.9, is 1,000):
   plain  the same run with the boost set to its off values, which makes exactly the draws of a run without it.
 The variants start from the same random state, so they differ only once the boost acts. Each starts over in
 results/pilots/revision3.6/<variant>/ and adds a row to results/pilots/revision3.6/summary.md. The pilot is not part
-of the reported results. The source run is the 15-action ES of revision 3.2, so the pilot cannot be repeated with
-the 45 actions of version 3.9: its variants would delete the 3.6 results before the population fails to load.
+of the reported results. The source run is the 15-action ES of revision 3.2, so under the 45 actions of version 3.9
+the pilot exits with a message before it deletes or writes anything.
 
 Run both variants side by side, in two terminals:
     python scripts/boost_pilot.py boost
@@ -28,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from racing import checkpoint, config, es, evaluate, evolution, paths  # noqa: E402
+from racing import checkpoint, config, es, evaluate, evolution, nets, paths  # noqa: E402
 from racing.curriculum import MasteryTracker  # noqa: E402
 
 VARIANTS = ("boost", "plain")
@@ -51,6 +51,11 @@ def load_source(path):
     missing = [name for name in COPIED if name not in state]
     if missing:
         sys.exit(f"error: the checkpoint {path} lacks {', '.join(missing)} (made by an earlier version)")
+    weights = np.asarray(state["method"]["weights"])
+    if weights.ndim != 2 or weights.shape[1] != nets.n_params(tuple(state["method"]["hidden"])):
+        sys.exit(f"error: the networks of {path} do not fit this version's {config.N_INPUTS} inputs and "
+                 f"{config.N_ACTIONS} actions (a run of an earlier revision), so the pilot cannot continue it; "
+                 "nothing was deleted or written")
     return state
 
 

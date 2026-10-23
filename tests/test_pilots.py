@@ -174,3 +174,19 @@ def test_the_pilot_names_a_missing_field_of_an_older_checkpoint(boost_pilot, fin
     checkpoint.save(source, state)
     with pytest.raises(SystemExit, match="start_level"):
         boost_pilot.main(["boost", "--source", str(source), "--out", str(tmp_path / "pilots")])
+
+
+def test_the_pilot_refuses_a_source_of_another_action_set_before_touching_anything(boost_pilot, finished_source,
+                                                                                  tmp_path):
+    from racing import checkpoint
+    source, state = finished_source
+    state["method"]["weights"] = state["method"]["weights"][:, :-30 * (state["method"]["hidden"][-1] + 1)]
+    checkpoint.save(source, state)                                  # networks of 15 outputs
+    out = tmp_path / "pilots"
+    (out / "boost").mkdir(parents=True)
+    (out / "boost" / "log.csv").write_text("an earlier result")
+    with pytest.raises(SystemExit) as stop:
+        boost_pilot.main(["boost", "--source", str(source), "--out", str(out)])
+    assert stop.value.code not in (0, None) and "cannot continue" in str(stop.value.code)
+    assert sorted(p.name for p in out.rglob("*")) == ["boost", "log.csv"]
+    assert (out / "boost" / "log.csv").read_text() == "an earlier result"
