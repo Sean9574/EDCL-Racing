@@ -163,3 +163,39 @@ def test_the_expert_drives_every_real_circuit_both_ways():
         assert tracks.get_track(k, config.MAX_LEVEL).expert_lap_time > 0, circuits.layout(k)
     for k in config.TEST_TRACKS:
         assert tracks.get_track(k, config.TEST_LEVEL).expert_lap_time > 0
+
+
+def fake_grid(monkeypatch, tmp_path):
+    """A circuit's shape, and a road_grid that builds a tiny grid and counts its calls; grids go to tmp_path."""
+    monkeypatch.setattr(config, "CIRCUIT_GRIDS_DIR", tmp_path)
+    calls = []
+    monkeypatch.setattr(circuits, "road_grid", lambda *a: calls.append(1) or (np.zeros(2), np.zeros((2, 2), np.float32)))
+    points, left, right = circuits.outline("Oschersleben")
+    return circuits.track_shape(points, left, right), calls
+
+
+def test_a_grid_missing_its_origin_file_is_rebuilt(monkeypatch, tmp_path):
+    shape, calls = fake_grid(monkeypatch, tmp_path)
+    circuits._grid("Oschersleben", shape)
+    circuits._grid("Oschersleben", shape)
+    assert len(calls) == 1                                                  # complete: reused
+    (tmp_path / f"Oschersleben-{circuits.grid_id('Oschersleben')}.origin.npy").unlink()
+    circuits._grid("Oschersleben", shape)
+    assert len(calls) == 2 and len(list(tmp_path.glob("Oschersleben-*"))) == 2
+
+
+def test_grids_of_other_identities_are_removed_once_a_day_old(monkeypatch, tmp_path):
+    shape, calls = fake_grid(monkeypatch, tmp_path)
+    old_time = os.path.getmtime(__file__) - 2 * circuits.OLD_GRID_AGE
+    stale = [tmp_path / "Oschersleben-0123456789abcdef.npy", tmp_path / "Oschersleben-0123456789abcdef.origin.npy",
+             tmp_path / ".Oschersleben-0123456789abcdef.npy.1.2.tmp"]
+    young = tmp_path / "Oschersleben-fedcba9876543210.npy"
+    other = tmp_path / "Monza-0123456789abcdef.npy"
+    for path in stale + [young, other]:
+        path.write_bytes(b"x")
+    for path in stale + [other]:
+        os.utime(path, (old_time, old_time))
+    circuits._grid("Oschersleben", shape)
+    assert not any(path.exists() for path in stale)                         # other identities, a day old
+    assert young.exists() and other.exists()                                # too young; another circuit
+    assert len(list(tmp_path.glob(f"Oschersleben-{circuits.grid_id('Oschersleben')}*"))) == 2

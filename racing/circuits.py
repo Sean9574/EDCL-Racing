@@ -6,6 +6,7 @@ compared with (spec §11.1). Their tracks are Extra hard's 38 training layouts a
 import hashlib
 import os
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,6 +130,7 @@ def layout(index):
 
 
 _grid_lock = threading.Lock()
+OLD_GRID_AGE = 24 * 3600     # s: a grid of another identity is removed once it is this old (as fastsim libraries)
 
 
 def grid_id(name):
@@ -150,6 +152,21 @@ def _save(path, array):
     os.replace(temporary, path)
 
 
+def _remove_old_grids(folder, name, stem, age=OLD_GRID_AGE):
+    """Removes circuit `name`'s grid files (and leftover temporary files) of other identities than `stem` once they are
+    `age` old, as fastsim.remove_old_libraries does; a younger one may still be in use by a job that started before
+    the source changed. Safe on Linux even while another process has the old file mapped."""
+    cutoff = time.time() - age
+    for old in [*folder.glob(f"{name}-*.npy"), *folder.glob(f".{name}-*.tmp")]:
+        if old.name.startswith(f"{stem}.") or old.name.startswith(f".{stem}."):
+            continue
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except FileNotFoundError:                    # removed by another job at the same moment
+            pass
+
+
 def _grid(name, shape):
     """(origin, dist) of circuit `name` in its racing direction (spec §4.7, §9.10): built once per machine in
     CIRCUIT_GRIDS_DIR and memory-mapped read-only, so every process and both directions share one copy."""
@@ -157,11 +174,12 @@ def _grid(name, shape):
     stem = f"{name}-{grid_id(name)}"
     dist_path, origin_path = folder / f"{stem}.npy", folder / f"{stem}.origin.npy"
     with _grid_lock:
-        if not dist_path.exists():
+        if not (dist_path.exists() and origin_path.exists()):
             folder.mkdir(parents=True, exist_ok=True)
             origin, dist = road_grid(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"])
             _save(origin_path, origin)
             _save(dist_path, dist)                   # written last: its presence means the grid is complete
+            _remove_old_grids(folder, name, stem)
     return np.load(origin_path), np.load(dist_path, mmap_mode="r")
 
 

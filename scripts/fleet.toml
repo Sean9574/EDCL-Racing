@@ -12,9 +12,11 @@
 #   memory-mapped and shared by every process, so the peaks above are measured again
 #   before the reported run (spec §9.10).
 #   Measured in version 3.8: building one real circuit's road grid peaks near 1 GB (Monza 976 MB, about 1 s), once
-#   per machine, cached in results/circuit_grids/ (23 files, about 570 MB); a run using cached grids peaks near
-#   167 MB; building one validation map or a robustness-width map peaks at 1.2-1.4 GB. The at_once bounds below are
-#   therefore not yet valid for version 3.8: re-measure them in the version 3.8 pilots before the run.
+#   per machine, cached in results/circuit_grids/ (46 files, 23 grids, about 570 MB). Peak of one process: 0.34 GB
+#   per generation at Easy, 0.39 GB at Medium, 0.69 GB at Hard, and about 2.4 GB in the final selection (all 20
+#   validation maps held at once, racing/population.py); building one validation map or a robustness-width map peaks at
+#   1.2-1.4 GB. The at_once bounds below are therefore not yet valid for version 3.8: measure one evolution job and one
+#   Keras job on each machine (README, version 3.8 steps) and set at_once from the peaks before the run.
 #   workers: worker processes of a job (EC_RACING_JOBS): DAgger's driving, the dataset and the numpy fallback.
 # The split follows measured generation times (python -m racing.bench generation, 1000 expert cars, every thread):
 # desktop 0.11 s on 24 threads, server 0.13 s on 16, so the server has about 85% of the desktop's speed. Work in

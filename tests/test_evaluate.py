@@ -458,7 +458,7 @@ def test_driving_selected_picks_the_best_validation_driver(fake_tracks, tmp_path
     ids = export_search(tmp_path, "kt_random", flats)
     table = evaluate.driving_selected_table(tmp_path, val_seeds=[80, 81], test_seeds=[1000])
     keras_drivers = {("kt_random", i): nets.from_keras(nets.to_keras(f)) for i, f in zip(ids, flats)}
-    validation = evaluate.driving_results(keras_drivers, [80, 81])
+    validation = evaluate.driving_results(keras_drivers, [80, 81], level=config.VALIDATION_LEVEL)
     expected = validation.groupby("run_seed")["fitness"].mean().idxmax()
     assert list(table["Method"]) == ["KT Random"] and table.loc[0, "Trial"] == expected
     assert table.loc[0, "Parameters"] == 431
@@ -669,14 +669,14 @@ def test_the_pole_table_compares_each_runs_flying_lap_with_the_pole_lap():
                             ("ga", 0, 3, 99.0, 86.0, np.nan), ("es", 0, 0, 97.0, np.nan, np.nan)])
     table = evaluate.pole_laps_table(per_track)
     ga0 = table[(table["Method"] == "GA") & (table["Run"] == "0")].iloc[0]
-    assert ga0["Melbourne flying lap (s)"] == "80.000" and ga0["Melbourne vs pole (s)"] == "-0.486"
-    assert ga0["Melbourne vs pole (%)"] == "-0.60" and ga0["Silverstone flying lap (s)"] == "86.000"
+    assert ga0["Melbourne flying lap (s)"] == "80.00" and ga0["Melbourne vs pole (s)"] == "-0.49"
+    assert ga0["Melbourne vs pole (%)"] == "-0.60" and ga0["Silverstone flying lap (s)"] == "86.00"
     assert ga0["Poles beaten"] == 1
-    best = table[(table["Method"] == "GA") & (table["Run"] == "best")].iloc[0]
-    assert best["Melbourne flying lap (s)"] == "79.900" and best["Poles beaten"] == 1
+    best = table[(table["Method"] == "GA") & (table["Run"] == "fastest run")].iloc[0]
+    assert best["Melbourne flying lap (s)"] == "79.90" and best["Poles beaten"] == 1
     es0 = table[(table["Method"] == "ES") & (table["Run"] == "0")].iloc[0]
     assert es0["Melbourne flying lap (s)"] == "–" and es0["Poles beaten"] == 0
-    assert set(table.loc[table["Method"] == "GA", "Run"]) == {"0", "1", "best"}   # runs 2 and 3 were never driven
+    assert set(table.loc[table["Method"] == "GA", "Run"]) == {"0", "1", "fastest run"}   # runs 2 and 3 were never driven
 
 
 def test_a_race_row_records_every_lap_and_the_flying_lap(circle_track, monkeypatch):
@@ -696,3 +696,27 @@ def test_the_pole_figure_is_drawn(tmp_path):
 
 def test_robustness_rebuilds_the_test_circuits_at_four_widths():
     assert config.ROBUSTNESS_WIDTHS == (6.0, 10.0, 14.0, 18.0)
+
+
+def test_the_pole_figure_fits_slow_bars_and_their_gap_labels(tmp_path, monkeypatch):
+    """Early controllers fly 1.35-1.9 x pole: the x-limit follows the data, so every bar end and label is inside."""
+    import matplotlib.pyplot as plt
+    from racing import circuits
+    drawn = []
+    monkeypatch.setattr(plt, "close", lambda fig=None: drawn.append(fig))
+    rows = []
+    for k, name in enumerate(config.TEST_CIRCUITS):
+        pole = circuits.POLE_LAPS[name].seconds
+        for approach, factor in (("ga", 1.35), ("es", 1.6), ("neat", 1.9)):
+            rows.append((approach, 0, k, 1.5 * pole, factor * pole, factor * pole + 1.0))
+    evaluate.pole_figure(pole_rows(rows), tmp_path / "slow.png")
+    fig = drawn[0]
+    fig.canvas.draw()
+    for ax in fig.axes:
+        pole_x = [line.get_xdata()[0] for line in ax.lines][0]
+        assert ax.get_xlim()[0] <= 0 and pole_x < ax.get_xlim()[1]
+        assert len(ax.patches) == 3 and len(ax.texts) == 3
+        for bar in ax.patches:
+            assert bar.get_x() + bar.get_width() < ax.get_xlim()[1]
+        for text in ax.texts:
+            assert text.get_window_extent().x1 <= ax.bbox.x1

@@ -2633,7 +2633,7 @@ def test_the_leaderboard_shows_the_flying_laps_gap_to_pole(circle_track):
     playback.cars.lap_times[:] = [[90.0, 80.0, 81.0], [95.0, np.nan, np.nan]]
     rows = viewer.leaderboard(playback, 2, pole=80.486)
     gaps = {row[1]: row[-1] for row in rows}
-    assert gaps[0] == "-0.486" and gaps[1] == "–"
+    assert gaps[0] == "-0.49" and gaps[1] == "–"
     assert all(row[-1] == "–" for row in viewer.leaderboard(playback, 2))           # no pole: not a test circuit
 
 
@@ -2646,7 +2646,7 @@ def test_the_race_and_training_panels_draw_with_every_difficulty(window, tmp_pat
         window.draw()
     window.set_mode("train")
     window.draw()
-    assert "Grip: Normal" in viewer.GRIP_LABELS["Normal"] or viewer.GRIP_LABELS["Unlimited"] == "Unlimited (10×)"
+    assert viewer.GRIP_LABELS["Unlimited"] == "Unlimited (10×)" and "Normal" in viewer.GRIP_LABELS
 
 
 def test_the_imitation_view_at_extra_hard_drives_the_first_training_layout(monkeypatch, window, circle_track):

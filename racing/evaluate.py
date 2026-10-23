@@ -371,13 +371,14 @@ def results_table(per_track, runs_dir, drivers=None, best=None):
 
 
 def _lap(seconds):
-    return "–" if not np.isfinite(seconds) else f"{seconds:.3f}"
+    return "–" if not np.isfinite(seconds) else f"{seconds:.2f}"
 
 
 def pole_laps_table(per_track):
     """Spec §11.3 table 2: per method and run, the flying lap on each test circuit, its difference to the circuit's
-    pole lap in seconds and percent, and the test circuits on which the pole lap was beaten; per method a row "best"
-    with the fastest flying lap on each circuit over its runs."""
+    pole lap in seconds and percent, and the test circuits on which the pole lap was beaten; per method a row "fastest
+    run" with the fastest flying lap on each circuit over its runs (not the "Best run" chosen on validation). Lap
+    times are whole steps of 0.05 s, so a lap within 0.05 s of the pole lap is not resolvable."""
     from racing import circuits
     rows = []
     for approach in config.APPROACHES:
@@ -385,7 +386,7 @@ def pole_laps_table(per_track):
         if sub.empty:
             continue
         groups = [(str(seed), sub[sub["run_seed"] == seed]) for seed in run_order(sub["run_seed"].unique())]
-        for run, races in groups + [("best", sub)]:
+        for run, races in groups + [("fastest run", sub)]:
             if races.empty:                                  # a run that was never driven has no row
                 continue
             row, beaten = {"Method": config.LABELS[approach], "Run": run}, 0
@@ -395,7 +396,7 @@ def pole_laps_table(per_track):
                 pole = circuits.POLE_LAPS[name].seconds
                 label = circuits.NAMES[name]
                 row[f"{label} flying lap (s)"] = _lap(lap)
-                row[f"{label} vs pole (s)"] = "–" if np.isnan(lap) else f"{lap - pole:+.3f}"
+                row[f"{label} vs pole (s)"] = "–" if np.isnan(lap) else f"{lap - pole:+.2f}"
                 row[f"{label} vs pole (%)"] = "–" if np.isnan(lap) else f"{100.0 * (lap - pole) / pole:+.2f}"
                 beaten += int(np.isfinite(lap) and lap < pole)
             row["Poles beaten"] = beaten
@@ -420,7 +421,7 @@ def pole_figure(per_track, path):
         bars = ax.barh([config.LABELS[a] for a in methods], [laps[a] for a in methods],
                        color=[config.COLORS[a] for a in methods], edgecolor="0.3", linewidth=0.5)
         ax.bar_label(bars, labels=[f"{laps[a] - pole:+.2f} s" for a in methods], padding=2, fontsize=7)
-        ax.set_xlim(0, 1.15 * pole)
+        ax.set_xlim(0, 1.28 * max([pole] + [laps[a] for a in methods]))   # the longest bar and its gap label fit
         ax.invert_yaxis()                                    # the tables' order, first method on top
         ax.axvline(pole, color="0.1", linewidth=1.2, linestyle="--", label="pole lap")
         ax.set_title(circuits.NAMES[name], fontsize=10)

@@ -273,7 +273,7 @@ def report_setup(report, indices):
 
 def pole_gap(flying_lap, pole):
     """A flying lap's difference to the pole lap as in the pole table ('-0.486', '+1.234'); '–' without either."""
-    return "–" if pole is None or np.isnan(flying_lap) else f"{flying_lap - pole:+.3f}"
+    return "–" if pole is None or np.isnan(flying_lap) else f"{flying_lap - pole:+.2f}"
 
 
 def leaderboard(playback, count, pole=None):
@@ -1729,7 +1729,8 @@ class App:
             y += 26 * -(-len(self.race_available) // 3)
         y += 4
         y = self.draw_speed_buttons(x, y, w)
-        y = self.text(f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)" + (", vs pole" if self.pole_lap() else ""), x, y, self.small, MUTED)
+        heading = f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)"
+        y = self.text(heading + (", vs pole" if self.pole_lap() else ""), x, y, self.small, MUTED)
         cars = self.race_cars()
         pole = self.pole_lap()
         rows = leaderboard(self.race, len(cars), pole)

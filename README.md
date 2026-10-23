@@ -4,7 +4,7 @@ EC Racing compares methods for finding small neural network driving controllers.
 2D simulator. The cars have the grip and top speed of a Formula 1 car (1.8 g at low speed, rising to 5 g at 250 km/h;
 at most 378 km/h; no engine power or drag model). Easy to Hard are generated circuits at Formula 1 size; Extra hard is
 19 real training circuits, driven in both directions. Four held-out circuits (Melbourne, Sakhir, Sepang and
-Silverstone) form the test, where each final controller's best flying lap is compared with the circuit's pole lap:
+Silverstone) form the test, where each final controller's best flying lap is compared with the circuit's pole lap (lap times are whole steps of 0.05 s, so a lap within 0.05 s of pole is not resolvable):
 
 - **Imitation learning:** a hand-designed baseline and three Keras Tuner searches (random search, Hyperband,
   Bayesian optimization) are trained to imitate a scripted expert driver, refined by DAgger and then pushed for speed
@@ -312,14 +312,19 @@ python scripts/fleet.py finish     # once all 32 runs have finished: collect, th
 python scripts/fleet.py stop
 python scripts/fleet.py setup
 python scripts/fleet.py archive revision3.6
+# on each machine, before start: measure the peak memory of one evolution job and one Keras job, e.g. the 3.8 pilots
+# (scripts/pilots.py) plus one final selection (the largest peak), each under `/usr/bin/time -v` ("Maximum resident
+# set size"), then set that machine's at_once in scripts/fleet.toml from them
 python scripts/fleet.py start
 ```
 
-Each machine builds the real circuits' road grids once, in `results/circuit_grids/` (23 files, about 570 MB, kept
-between runs). Memory measured in version 3.8: building one real circuit's grid peaks near 1 GB (Monza 976 MB, about
-1 s); a run using cached grids peaks near 167 MB; building one validation map or a robustness-width map peaks at
-1.2–1.4 GB. The `at_once` bounds in `scripts/fleet.toml` were measured for the earlier car and must be measured again
-in the version 3.8 pilots before the reported run.
+Each machine builds the real circuits' road grids once, in `results/circuit_grids/` (46 files for 23 grids, about
+570 MB, kept between runs; grids of older code are removed after a day). Memory measured in version 3.8, peak of one
+process: building one real circuit's grid peaks near 1 GB (Monza 976 MB, about 1 s); one generation's three maps
+0.34 GB at Easy, 0.39 GB at Medium and 0.69 GB at Hard; the final selection, which holds all 20 validation maps at
+once, about 2.4 GB; building one validation map or a robustness-width map peaks at 1.2–1.4 GB.
+The `at_once` bounds in `scripts/fleet.toml` were measured for the earlier car and must be measured again, per machine,
+with the step above before the reported run.
 
 Version 3.7 trained only the GA again; the runs of the other methods made with 3.6 stay valid:
 
