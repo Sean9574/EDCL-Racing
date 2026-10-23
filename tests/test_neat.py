@@ -61,10 +61,10 @@ def test_initial_genome_connects_every_input_to_every_output():
     genome = neat.initial_genome(np.random.default_rng(0), neat.Innovations())
     assert genome.node_ids.tolist() == list(neat.OUTPUT_IDS)
     assert np.all(genome.bias == 0.0)
-    assert len(genome.innov) == neat.N_IN * neat.N_OUT == 180
+    assert len(genome.innov) == neat.N_IN * neat.N_OUT == 540
     assert set(zip(genome.src.tolist(), genome.dst.tolist())) == {(i, o) for i in neat.INPUT_IDS for o in neat.OUTPUT_IDS}
     assert np.all(np.diff(genome.innov) > 0) and genome.enabled.all()
-    assert genome.n_params == 195
+    assert genome.n_params == 585
     assert 0.8 < np.std(genome.weight) < 1.2                     # standard normal weights
 
 
@@ -160,7 +160,7 @@ def test_weight_mutation_rates(monkeypatch):
     assert abs(replaced - config.NEAT_REPLACE) < 0.02                 # σ = 0: only replacements change weights
     moved = np.concatenate([neat.mutate(rng, g, innovations, 1.0).weight for g in genomes])
     assert abs(np.mean(moved != before) - (config.NEAT_REPLACE + config.NEAT_PERTURB)) < 0.03
-    assert all(g.n_params == 195 for g in genomes)                     # the parents are unchanged
+    assert all(g.n_params == 585 for g in genomes)                     # the parents are unchanged
 
 
 def test_mutate_adds_structure_with_its_probabilities(monkeypatch):
@@ -169,7 +169,7 @@ def test_mutate_adds_structure_with_its_probabilities(monkeypatch):
     rng = np.random.default_rng(7)
     innovations = neat.Innovations()
     genome = neat.mutate(rng, neat.initial_genome(rng, innovations), innovations, 0.1)
-    assert len(genome.node_ids) == neat.N_OUT + 1 and len(genome.innov) == 182
+    assert len(genome.node_ids) == neat.N_OUT + 1 and len(genome.innov) == neat.N_IN * neat.N_OUT + 2 == 542
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -226,8 +226,8 @@ def test_distance():
     b = a.copy()
     b.weight = b.weight + 1.0
     assert np.isclose(neat.distance(a, b), config.NEAT_C3 * 1.0)
-    c = neat.add_node(rng, a, innovations)                             # two excess genes, N = 182
-    assert np.isclose(neat.distance(a, c), config.NEAT_C1 * 2 / 182)
+    c = neat.add_node(rng, a, innovations)                             # two excess genes, N = 542
+    assert np.isclose(neat.distance(a, c), config.NEAT_C1 * 2 / 542)
     small = neat.Genome.from_dict({"node_ids": [O0], "bias": [0.0], "innov": [0, 3], "src": [0, 1], "dst": [O0, O0],
                                    "weight": [1.0, 1.0], "enabled": [True, True]})
     other = neat.Genome.from_dict({"node_ids": [O0], "bias": [0.0], "innov": [0, 1, 5], "src": [0, 2, 3],

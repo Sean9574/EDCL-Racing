@@ -317,8 +317,8 @@ int64_t expert_action(const Track& t, const Settings& s, double x, double y, dou
     for (int64_t k = 0; k <= t.sight; ++k) kappa = std::max(kappa, std::fabs(t.curvature[wrap(here + k, t.m)]));
     double target = std::min(std::min(corner_speed(s, kappa), s.sight_speed), s.top_speed);
     double band = std::max(s.speed_band, grip * s.dt);                 // np.maximum(EXPERT_SPEED_BAND, a(v) DT)
-    bool full_lock = std::fabs(steer) >= 1.0;                          // no gas while the steering is saturated
-    double throttle = speed < target - band && !full_lock ? 1.0 : (speed > target + band ? -1.0 : 0.0);
+    double throttle = std::clamp((target - speed) / band, -1.0, 1.0);  // np.clip((target - speed) / band, -1, 1)
+    if (std::fabs(steer) >= 1.0) throttle = std::min(throttle, 0.0);   // np.minimum at full lock: no gas
 
     return nearest(s.steer_levels, s.n_steer, steer) * s.n_throttle +
            nearest(s.throttle_levels, s.n_throttle, throttle);

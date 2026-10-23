@@ -86,18 +86,19 @@ CIRCUIT_DATA = hashlib.sha256(b"".join(path.read_bytes() for path in sorted(
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
 N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (spec §5.2)
-STEER_LEVELS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
-THROTTLE_LEVELS = np.array([-1.0, 0.0, 1.0])               # brake, coast, gas
-N_ACTIONS = len(STEER_LEVELS) * len(THROTTLE_LEVELS)       # 15
+STEER_LEVELS = np.array([-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0])   # spec §6 (version 3.9; 5 to 3.8)
+THROTTLE_LEVELS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])     # full brake, half brake, coast, half gas, full gas
+N_ACTIONS = len(STEER_LEVELS) * len(THROTTLE_LEVELS)       # 45 (15 to version 3.8)
 BASELINE_HIDDEN = (16,)
 
 # --- Expert driver and dataset (spec §7) ---
 EXPERT_LOOKAHEAD_BASE = 6.0  # m
 EXPERT_LOOKAHEAD_TIME = 0.4  # s
 EXPERT_GRIP_MARGIN = 0.85
-EXPERT_SPEED_BAND = 0.5      # m/s, the least of the expert's coasting band (spec §7.1): it coasts within the larger of
-                             # this and one step's speed change a(v) DT (0.9-2.5 m/s), so in a steady corner near 5 g
-                             # it no longer switches between gas and brake every step, which left 1/√2 of a(v) to turn
+EXPERT_SPEED_BAND = 0.5      # m/s, the least of the expert's throttle band (spec §7.1): its throttle is the speed error
+                             # over the larger of this and one step's speed change a(v) DT (0.9-2.5 m/s), so in a
+                             # steady corner near 5 g it does not switch between gas and brake every step, which left
+                             # 1/√2 of a(v) to turn
 EXPERT_SIGHT = SENSOR_START  # m, the expert uses no geometry beyond the starting sensor length
 EXPERT_VALIDATION_TIME = 600.0  # s, time limit when validating a track with the expert
 PERTURB_INTERVAL = (2.0, 4.0)   # s between steering disturbances

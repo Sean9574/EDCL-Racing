@@ -23,7 +23,7 @@ def synced_writes(monkeypatch):
 @pytest.fixture
 def toy_data():
     rng = np.random.default_rng(0)
-    w = rng.normal(size=(config.N_INPUTS, 15))
+    w = rng.normal(size=(config.N_INPUTS, config.N_ACTIONS))
 
     def make(n):
         x = rng.random((n, config.N_INPUTS)).astype(np.float32)
@@ -44,9 +44,9 @@ def test_select_smallest_prefers_accuracy_on_equal_size():
     assert imitation.select_smallest(records)["val_accuracy"] == 0.90
 
 
-def test_baseline_has_431_parameters_and_the_configured_keras_settings():
+def test_baseline_has_973_parameters_and_the_configured_keras_settings():
     model = imitation.build_baseline()
-    assert model.count_params() == 463
+    assert model.count_params() == 973
     assert model.steps_per_execution == config.STEPS_PER_EXECUTION and model.jit_compile == config.JIT_COMPILE
 
 
@@ -60,7 +60,8 @@ def test_parameter_count_follows_from_the_architecture():
               "learning_rate": 1e-3}
     assert imitation.architecture(values) == [16, 8]
     model = imitation.build_network(imitation.architecture(values), "tanh", 0.1, 1e-3)
-    assert nets.n_params(tuple(imitation.architecture(values))) == model.count_params() == 479      # 12·16+16 + 16·8+8 + 8·15+15
+    # 12·16+16 + 16·8+8 + 8·45+45
+    assert nets.n_params(tuple(imitation.architecture(values))) == model.count_params() == 749
 
 
 def test_load_dataset_round_trip(tmp_path, toy_data):
@@ -78,7 +79,7 @@ def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     assert stage.exists() and summary["stage_path"] == str(stage)
     assert len(seen) == summary["epochs"] and summary["val_accuracy"] > 0.2 and summary["seed"] == 2
     assert summary["learning_rate"] == config.LEARNING_RATE
-    assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 463
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == 973
     assert checkpoint.completed(tmp_path / "run")["val_accuracy"] == summary["val_accuracy"]
 
 
@@ -290,7 +291,7 @@ import numpy as np
 from racing import config, imitation
 
 rng = np.random.default_rng(0)
-w = rng.normal(size=(config.N_INPUTS, 15))
+w = rng.normal(size=(config.N_INPUTS, config.N_ACTIONS))
 
 
 def make(n):

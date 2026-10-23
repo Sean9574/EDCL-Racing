@@ -83,6 +83,22 @@ def test_the_expert_never_applies_gas_at_full_lock(circle_track):
     assert expert.expert_controls(circle_track, cars)[1][0] == -1.0
 
 
+def test_the_expert_throttle_is_its_speed_error_over_its_band():
+    """Spec §7.1 (version 3.9): throttle = clip((target − speed) / band, −1, 1), quantized to the five levels; never
+    above 0 at full lock."""
+    track = circle(400.0)
+    cars = sim.start_cars(track, 6)
+    target = expert.target_speed(track, np.mod(cars.index, len(track.centerline)))
+    band = np.maximum(config.EXPERT_SPEED_BAND, sim.grip_at(target) * config.DT)
+    cars.speed[:] = target - band * np.array([2.0, 0.6, 0.1, -0.1, -0.6, -2.0])
+    steer, throttle = expert.expert_controls(track, cars)
+    assert np.all(np.abs(steer) < 1.0)
+    band_now = np.maximum(config.EXPERT_SPEED_BAND, sim.grip_at(cars.speed) * config.DT)
+    assert np.allclose(throttle, np.clip((target - cars.speed) / band_now, -1.0, 1.0))
+    levels = class_to_controls(controls_to_class(steer, throttle))[1]
+    assert levels.tolist() == [1.0, 0.5, 0.0, 0.0, -0.5, -1.0]
+
+
 def test_the_expert_leaves_montreals_hairpin_without_gas_at_full_lock(monkeypatch):
     """Spec §7.1, §12.1: in Montreal's racing direction the expert left a 30 m right-hander below its target speed at
     full gas and full lock, which left 0.71 of a(v) for turning where the following curve needed about 0.83, and drifted
@@ -228,6 +244,16 @@ def test_the_expert_drives_every_validation_map_and_the_first_maps_of_each_level
     for level in (1, 2, 3):
         for seed in range(config.TRAIN_SEED_START, config.TRAIN_SEED_START + 5):
             assert tracks.get_track(seed, level).expert_lap_time > 0
+
+
+@pytest.mark.slow
+def test_expert_completes_every_level_with_the_half_levels():
+    """Spec §7.1, §12.1: with proportional throttle the expert still completes generated maps of every level and the
+    validation setting (the real layouts are covered by the existing slow test)."""
+    for level, seeds in ((1, (2_000_000, 2_000_001)), (2, (2_000_000, 2_000_001)), (3, (2_000_000, 2_000_001)),
+                         (config.VALIDATION_LEVEL, config.VAL_SEEDS[:2])):
+        for seed in seeds:
+            assert expert.expert_lap_time(tracks.get_track(seed, level)) is not None, (seed, level)
 
 
 @pytest.mark.slow

@@ -1,5 +1,5 @@
 """Network figure (spec §11.4): each method's best final controller drawn as a graph. The nine distance rays
-and the speed input are on the left, hidden nodes in columns by depth, the 15 actions on the right. Connections are
+and the speed input are on the left, hidden nodes in columns by depth, the 45 actions on the right. Connections are
 blue when positive and red when negative, wider and more opaque when stronger; biases are not drawn."""
 from pathlib import Path
 
@@ -9,8 +9,9 @@ from racing import config
 
 POSITIVE = "#2166AC"
 NEGATIVE = "#B2182B"
-STEER_NAMES = {-1.0: "R1", -0.5: "R½", 0.0: "S", 0.5: "L½", 1.0: "L1"}      # positive steering turns left
-THROTTLE_NAMES = {-1.0: "brake", 0.0: "coast", 1.0: "gas"}
+STEER_NAMES = {-1.0: "R1", -0.75: "R¾", -0.5: "R½", -0.25: "R¼", 0.0: "S", 0.25: "L¼", 0.5: "L½", 0.75: "L¾",
+               1.0: "L1"}                                                    # positive steering turns left
+THROTTLE_NAMES = {-1.0: "brake", -0.5: "½ brake", 0.0: "coast", 0.5: "½ gas", 1.0: "gas"}
 
 
 def input_labels():
@@ -23,7 +24,7 @@ def input_labels():
 
 
 def output_labels():
-    """The 15 actions as steering and throttle, in action-class order."""
+    """The 45 actions as steering and throttle, in action-class order."""
     n_throttle = len(config.THROTTLE_LEVELS)
     return [f"{STEER_NAMES[float(config.STEER_LEVELS[k // n_throttle])]} "
             f"{THROTTLE_NAMES[float(config.THROTTLE_LEVELS[k % n_throttle])]}" for k in range(config.N_ACTIONS)]

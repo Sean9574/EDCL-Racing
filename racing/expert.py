@@ -13,10 +13,12 @@ from racing.tracks import get_track
 
 def expert_controls(track, cars):
     """Continuous steering and throttle chosen by the expert for every car, as fractions of the grip a(v) at the car's
-    speed (spec §7.1). It coasts while its speed is within its band of the target speed: the larger of
-    EXPERT_SPEED_BAND and one step's full speed change a(v) DT, so a step of gas or brake never carries it across the
-    whole band, and in a steady corner it settles at a speed and keeps all of a(v) for turning. While its steering is
-    saturated it does not accelerate, so a corner's exit taken at full lock keeps all of a(v) for turning."""
+    speed (spec §7.1). The throttle is the speed error (target minus speed) divided by the band, the larger of
+    EXPERT_SPEED_BAND and one step's full speed change a(v) DT, clipped to [−1, 1]: once quantized, full gas or full
+    brake beyond the band, half gas or half brake within it and coast near the target, so a step of gas or brake never
+    carries it across the whole band, and in a steady corner it settles at a speed and keeps all of a(v) for turning.
+    While its steering is saturated the throttle is never above 0, so a corner's exit taken at full lock keeps all of
+    a(v) for turning."""
     m = len(track.centerline)
     here = np.mod(cars.index, m)
     look = config.EXPERT_LOOKAHEAD_BASE + config.EXPERT_LOOKAHEAD_TIME * cars.speed
@@ -28,9 +30,8 @@ def expert_controls(track, cars):
     steer = np.clip(cars.speed ** 2 * path_curvature / grip, -1.0, 1.0)
     target = target_speed(track, here)
     band = np.maximum(config.EXPERT_SPEED_BAND, grip * config.DT)
-    full_lock = np.abs(steer) >= 1.0
-    throttle = np.where((cars.speed < target - band) & ~full_lock, 1.0,
-                        np.where(cars.speed > target + band, -1.0, 0.0))
+    throttle = np.clip((target - cars.speed) / band, -1.0, 1.0)
+    throttle = np.where(np.abs(steer) >= 1.0, np.minimum(throttle, 0.0), throttle)   # no gas at full lock
     return steer, throttle
 
 
@@ -68,7 +69,7 @@ def target_speed(track, here):
 
 
 def expert_policy(track):
-    """Policy for sim.simulate: the expert, quantized to the 15 action classes."""
+    """Policy for sim.simulate: the expert, quantized to the 45 action classes."""
     def policy(obs, cars):
         return controls_to_class(*expert_controls(track, cars))
     return policy

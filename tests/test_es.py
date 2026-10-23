@@ -31,12 +31,12 @@ def started(pop_size=20, **kwargs):
 
 def test_initial_population_and_step_size():
     method = started(parents=4)
-    assert method.population.weights.shape == (20, 463) and not method.is_kept.any()
+    assert method.population.weights.shape == (20, nets.n_params()) and not method.is_kept.any()
     assert method.step_size == config.ES_SIGMA0 and method.approach == "es" and method.log_fields() == {}
 
 
 def test_seeded_population_starts_from_the_trained_network():
-    flat = np.random.default_rng(1).normal(size=463)
+    flat = np.random.default_rng(1).normal(size=nets.n_params())
     method = started(pop_size=50, initial=flat, approach="es_seeded")
     weights = method.population.weights
     assert np.array_equal(weights[0], flat) and not np.any(np.all(weights[1:] == flat, axis=1))
@@ -133,7 +133,7 @@ def test_dagger_baseline_reads_the_refined_baseline(tmp_path):
     path.parent.mkdir(parents=True)
     model.save(path)
     flat = es.dagger_baseline(1, runs_dir=tmp_path)
-    assert flat.shape == (463,) and np.array_equal(flat, nets.to_flat(model))
+    assert flat.shape == (nets.n_params(),) and np.array_equal(flat, nets.to_flat(model))
 
 
 def test_dagger_baseline_missing(tmp_path):
@@ -145,7 +145,7 @@ def test_random_start_setups_spread_but_a_trained_start_uses_the_default():
     spread = started(pop_size=100).setup
     assert np.all(spread[:, 0] == config.SENSOR_START)                 # every car starts with 150 m sensors
     assert np.std(np.log(spread[:, 1])) > 0.4                          # and a log-uniform steering sensitivity
-    flat = np.random.default_rng(1).normal(size=463)
+    flat = np.random.default_rng(1).normal(size=nets.n_params())
     seeded = started(pop_size=50, initial=flat, approach="es_seeded").setup
     assert np.array_equal(seeded, np.tile(config.DEFAULT_SETUP, (50, 1)))
 

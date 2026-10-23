@@ -14,10 +14,10 @@ from racing.backend import keras_cpu
 from racing.curriculum import StepSize, success_fraction
 
 N_IN = config.N_INPUTS                         # 12
-N_OUT = config.N_ACTIONS                       # 15
+N_OUT = config.N_ACTIONS                       # 45
 INPUT_IDS = range(0, N_IN)
 OUTPUT_IDS = range(N_IN, N_IN + N_OUT)
-FIRST_HIDDEN = N_IN + N_OUT                    # 27
+FIRST_HIDDEN = N_IN + N_OUT                    # 57
 CONNECTION_ATTEMPTS = 20                       # random node pairs one add-connection mutation tries
 
 
@@ -92,7 +92,7 @@ class Innovations:
 
 
 def initial_genome(rng, innovations):
-    """Every input connected to every output (180 connections), standard normal weights, zero biases."""
+    """Every input connected to every output (540 connections), standard normal weights, zero biases."""
     src = np.repeat(np.arange(N_IN, dtype=np.int64), N_OUT)
     dst = np.tile(np.arange(N_IN, N_IN + N_OUT, dtype=np.int64), N_IN)
     innov = np.array([innovations.conn(s, d) for s, d in zip(src.tolist(), dst.tolist())], dtype=np.int64)
@@ -272,7 +272,7 @@ class Compiled:
     n: int
     size: int
     inputs: np.ndarray          # (n, 10) input slots
-    outputs: np.ndarray         # (n, 15) output slots, in output order
+    outputs: np.ndarray         # (n, N_ACTIONS) output slots, in output order
     levels: list                # [(nodes, bias, hidden, src, target, weight)] for depths 1, 2, ...
 
 
@@ -321,7 +321,7 @@ def compile_population(genomes):
 
 
 def forward(compiled, obs):
-    """Output values (n, 15) of every genome for its own observation row: one gather, one bincount and one
+    """Output values (n, N_ACTIONS) of every genome for its own observation row: one gather, one bincount and one
     activation per depth, with no loop over cars."""
     v = np.zeros(compiled.size)
     v[compiled.inputs] = obs

@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from racing import config, fastsim
+from racing.actions import class_to_controls
 
 from conftest import spread_setups, stadium
 
@@ -536,6 +537,28 @@ def test_the_compiled_expert_matches_numpy_on_a_fast_stadium():
     reference = sim.simulate(track, expert.expert_policy(track), 3, time_limit=600.0, laps=2)
     same_results(compiled, reference)
     assert reference.finished.all()
+
+
+@needs_compiler
+def test_the_compiled_expert_uses_the_half_levels_as_numpy_does(circle_track):
+    """Spec §5.7, §7.1: the expert's proportional throttle and its quantization to the 45 classes are identical in
+    both simulators, and its laps use the half levels."""
+    tracks_ = [circle_track, get_track(2_000_000, 2), get_track(2_000_001, 3)]
+    limits = [config.EXPERT_VALIDATION_TIME] * 3
+    compiled = fastsim.simulate_expert(tracks_, 1, limits, laps=config.LAPS)
+    for track, limit, fast in zip(tracks_, limits, compiled):
+        seen = []
+        policy = expert.expert_policy(track)
+
+        def recording(obs, cars):
+            classes = policy(obs, cars)
+            seen.extend(classes.tolist())
+            return classes
+
+        reference = sim.simulate(track, recording, 1, time_limit=limit, laps=config.LAPS)
+        same_results(fast, reference)
+        throttles = {float(t) for t in class_to_controls(np.array(seen))[1]}
+        assert throttles & {-0.5, 0.5}                     # the half levels are used
 
 
 from racing.track import build_track

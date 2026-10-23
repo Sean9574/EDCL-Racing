@@ -5,12 +5,12 @@ from racing import config, nets, population
 
 
 def test_baseline_parameter_count():
-    assert nets.n_params() == 463
+    assert nets.n_params() == 973
 
 
 def test_init_population_shape_and_zero_biases():
     w = nets.init_population(np.random.default_rng(0), 7)
-    assert w.shape == (7, 463)
+    assert w.shape == (7, nets.n_params())
     for _, bias in nets.unflatten(w):
         assert np.all(bias == 0.0)
 
@@ -46,16 +46,16 @@ def test_from_flat_matches_population_forward():
     obs = rng.random((20, config.N_INPUTS))
     net = nets.from_flat(w[0])
     assert np.array_equal(net.act(obs), nets.act(np.repeat(w, 20, axis=0), obs))
-    assert net.n_params == 463
+    assert net.n_params == nets.n_params()
 
 
 def test_to_keras_matches_numpy():
     rng = np.random.default_rng(5)
-    w = nets.init_population(rng, 1)[0] + rng.normal(0, 0.2, 463)
+    w = nets.init_population(rng, 1)[0] + rng.normal(0, 0.2, nets.n_params())
     model = nets.to_keras(w)
     obs = rng.random((300, config.N_INPUTS)).astype(np.float32)
     keras_classes = np.argmax(model.predict(obs, verbose=0), axis=1)
-    assert model.count_params() == 463
+    assert model.count_params() == nets.n_params()
     assert np.mean(keras_classes == nets.from_flat(w).act(obs)) >= 0.99
 
 
@@ -97,7 +97,7 @@ def test_load_champion_drives_with_float64_weights(tmp_path):
     flat = nets.init_population(np.random.default_rng(5), 1)[0]
     population.save_dense_champion("es", 0, nets.DensePopulation(flat[None, :]), 0, tmp_path)
     model, driver = nets.load_champion("es", 0, tmp_path)
-    assert model.count_params() == 463
+    assert model.count_params() == nets.n_params()
     assert np.array_equal(np.concatenate([np.concatenate([w.ravel(), b]) for w, b in driver.layers]), flat)
 
 
@@ -106,7 +106,7 @@ def test_load_champion_without_weights_file_uses_the_keras_model(tmp_path):
     (tmp_path / "baseline").mkdir()
     model.save(tmp_path / "baseline" / "seed0.keras")
     _, driver = nets.load_champion("baseline", 0, tmp_path)
-    assert driver.n_params == 463
+    assert driver.n_params == nets.n_params()
 
 
 def test_mixed_policy_drives_each_car_with_its_own_network():
@@ -195,7 +195,7 @@ def test_shaped_subsets_and_drivers_keep_each_cars_architecture_and_setup(shaped
 
 def test_a_network_without_hidden_layers_maps_the_inputs_to_the_outputs():
     flat = np.random.default_rng(3).normal(size=nets.n_params(()))
-    assert flat.size == (config.N_INPUTS + 1) * config.N_ACTIONS == 195
+    assert flat.size == (config.N_INPUTS + 1) * config.N_ACTIONS == 585
     obs = np.random.default_rng(4).random((3, config.N_INPUTS))
     w = flat[:config.N_INPUTS * config.N_ACTIONS].reshape(config.N_INPUTS, config.N_ACTIONS)
     b = flat[-config.N_ACTIONS:]
@@ -205,12 +205,12 @@ def test_a_network_without_hidden_layers_maps_the_inputs_to_the_outputs():
 
 def test_shaped_populations_refuse_weights_that_do_not_fit_their_architecture():
     with pytest.raises(ValueError, match="hidden layers"):
-        nets.ShapedPopulation([(4,)], [np.zeros(195)])
+        nets.ShapedPopulation([(4,)], [np.zeros(nets.n_params(()))])
     with pytest.raises(ValueError, match="architectures"):
-        nets.ShapedPopulation([(), ()], [np.zeros(195)])
+        nets.ShapedPopulation([(), ()], [np.zeros(nets.n_params(()))])
 
 
 def test_a_dense_population_names_each_cars_network():
-    cars = nets.DensePopulation(np.arange(2 * 463, dtype=float).reshape(2, 463))
+    cars = nets.DensePopulation(np.arange(2 * nets.n_params(), dtype=float).reshape(2, nets.n_params()))
     flat, hidden = cars.network(1)
     assert np.array_equal(flat, cars.weights[1]) and hidden == config.BASELINE_HIDDEN

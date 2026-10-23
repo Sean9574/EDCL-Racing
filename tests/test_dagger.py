@@ -50,7 +50,7 @@ def private_results(monkeypatch, tmp_path):
 @pytest.fixture
 def toy_data():
     rng = np.random.default_rng(0)
-    w = rng.normal(size=(config.N_INPUTS, 15))
+    w = rng.normal(size=(config.N_INPUTS, config.N_ACTIONS))
 
     def make(n):
         x = rng.random((n, config.N_INPUTS)).astype(np.float32)

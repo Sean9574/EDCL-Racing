@@ -76,10 +76,11 @@ def started(pop_size=30, **kwargs):
 
 def test_generation_0_wires_the_inputs_directly_to_the_outputs():
     method = started()
-    assert method.population.shapes == [()] * 30 and all(w.shape == (195,) for w in method.population.weights)
+    direct = nets.n_params(())                                         # 12 inputs wired to the outputs: 585
+    assert method.population.shapes == [()] * 30 and all(w.shape == (direct,) for w in method.population.weights)
     assert not method.is_kept.any() and math.isnan(method.step_size) and method.approach == "ga"
     assert method.log_fields() == {"mean_layers": 0.0, "max_layers": 0, "mean_nodes": 0.0, "max_nodes": 0,
-                                   "mean_params": 195.0, "max_params": 195}
+                                   "mean_params": float(direct), "max_params": direct}
 
 
 def test_layers_and_flat_weights_convert_both_ways():
@@ -201,7 +202,8 @@ def test_a_population_grows_and_logs_its_size(monkeypatch):
     for _ in range(4):
         method.advance(rng, result(rng.random(40), np.zeros(40)), np.arange(4), None)
     fields = method.log_fields()
-    assert fields["max_layers"] >= 1 and fields["max_nodes"] >= config.N_INPUTS and fields["mean_params"] > 195
+    assert fields["max_layers"] >= 1 and fields["max_nodes"] >= config.N_INPUTS
+    assert fields["mean_params"] > nets.n_params(())
     assert fields["max_params"] == max(len(w) for w in method.population.weights)
 
 
@@ -233,11 +235,11 @@ def test_strength_floor_follows_the_configured_ratio(monkeypatch):
 
 
 def test_operators_solve_the_sphere_function(fixed_shapes):
-    method = started(pop_size=100, s_max=0.05)
+    method = started(pop_size=100, s_max=0.03)                 # 585 genes: three times 3.8's, so a smaller step
     rng = np.random.default_rng(3)
     norms = lambda: np.array([np.sum(w ** 2) for w in method.population.weights])
     start = norms().min()
-    for _ in range(80):
+    for _ in range(160):
         fitness = -norms()
         method.advance(rng, result(fitness, np.zeros(100)), np.argsort(-fitness)[:5], None)
     assert norms().min() < start / 10

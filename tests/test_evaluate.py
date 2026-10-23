@@ -512,7 +512,7 @@ def test_main_with_partial_results(requested_maps, tmp_path):
         "wall_time": 12.0, "level_reached": 2, "goal_reached": False, "outcome": "stalled", "generations": 10,
         "evals": 1000, "start_level": 1, "levels": [{"level": 1, "generation": 4, "evals": 400, "elapsed": 5.0}]})
     np.savez(tmp_path / "dataset.npz", X_test=rng.random((40, config.N_INPUTS)).astype(np.float32),
-             y_test=rng.integers(0, 15, 40))
+             y_test=rng.integers(0, config.N_ACTIONS, 40))
     results = evaluate.main(champions_dir=champions, runs_dir=runs, data_path=tmp_path / "dataset.npz",
                             out_dir=tmp_path / "out", test_seeds=[1000], val_seeds=[80], latency_calls=5)
     assert set(results) == {"results", "pole_laps", "head_to_head", "training_cost", "stages", "comparison", "search_cost",
@@ -616,23 +616,23 @@ def test_reduction_cells_append_mean_and_sd_over_the_runs_that_reached_the_goal(
 
 def test_network_text_names_each_layer_or_the_genomes_size():
     dense = nets.from_flat(np.zeros(nets.n_params((9,))), (9,))
-    assert evaluate.network_text(dense) == "12 → 9 → 15"
-    assert evaluate.network_text(nets.from_flat(np.zeros(195), ())) == "12 → 15"
+    assert evaluate.network_text(dense) == "12 → 9 → 45"
+    assert evaluate.network_text(nets.from_flat(np.zeros(nets.n_params(())), ())) == "12 → 45"
     innovations = neat.Innovations()
     genome = neat.add_node(np.random.default_rng(0), neat.initial_genome(np.random.default_rng(0), innovations),
                            innovations)
-    assert evaluate.network_text(neat.NeatNet(genome)) == "1 hidden nodes, 181 connections"
+    assert evaluate.network_text(neat.NeatNet(genome)) == "1 hidden nodes, 541 connections"
 
 
 def test_the_evolved_networks_table_lists_ga_and_neat_runs_only():
     drivers = {("ga", 1): nets.from_flat(np.zeros(nets.n_params((4,))), (4,)),
-               ("ga", 0): nets.from_flat(np.zeros(195), ()),
-               ("es", 0): nets.from_flat(np.zeros(463)),
+               ("ga", 0): nets.from_flat(np.zeros(nets.n_params(())), ()),
+               ("es", 0): nets.from_flat(np.zeros(nets.n_params())),
                ("neat", 0): neat.NeatNet(neat.initial_genome(np.random.default_rng(0), neat.Innovations()))}
     table = evaluate.evolved_networks_table(drivers)
     assert list(table.columns) == ["Method", "Run", "Structure", "Parameters"]
-    assert table.values.tolist() == [["GA", 0, "12 → 15", 195], ["GA", 1, "12 → 4 → 15", nets.n_params((4,))],
-                                     ["NEAT", 0, "0 hidden nodes, 180 connections", 195]]
+    assert table.values.tolist() == [["GA", 0, "12 → 45", 585], ["GA", 1, "12 → 4 → 45", nets.n_params((4,))],
+                                     ["NEAT", 0, "0 hidden nodes, 540 connections", 585]]
 
 
 def test_network_size_is_drawn_for_the_ga_and_neat(tmp_path):
@@ -684,7 +684,7 @@ def test_a_race_row_records_every_lap_and_the_flying_lap(circle_track, monkeypat
                            progress=np.array([1.0]), finish_time=np.array([30.0]), steps=600,
                            laps_done=np.array([3]), lap_times=np.array([[12.0, 9.0, 9.5]]))
     monkeypatch.setattr(sim, "simulate", lambda *a, **k: result)
-    row = evaluate._drive_on({("ga", 0): nets.from_flat(np.zeros(195), ())}, circle_track, 0, 1.3)[0]
+    row = evaluate._drive_on({("ga", 0): nets.from_flat(np.zeros(nets.n_params(())), ())}, circle_track, 0, 1.3)[0]
     assert (row["lap_1"], row["lap_2"], row["lap_3"], row["flying_lap"]) == (12.0, 9.0, 9.5, 9.0)
 
 

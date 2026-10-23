@@ -1,4 +1,4 @@
-"""Action table (spec §6): the 15 output classes and the grip fractions they stand for."""
+"""Action table (spec §6): the 45 output classes and the grip fractions they stand for."""
 import numpy as np
 
 from racing import config

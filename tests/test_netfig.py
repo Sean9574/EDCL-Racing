@@ -19,27 +19,32 @@ def neat_driver():
     return neat.NeatNet(genome)
 
 
-def test_labels_name_the_rays_speed_and_actions():
+def test_labels_name_the_rays_and_speed():
     inputs = netfig.input_labels()
     assert inputs[-3:] == ["speed", "position", "width"] and len(inputs) == config.N_INPUTS
     assert len(inputs) == config.N_INPUTS and inputs[0] == "−90°" and inputs[4] == "0°" and inputs[8] == "+90°"
     assert inputs[9] == "speed"
+
+
+def test_output_labels_follow_the_class_layout():
     outputs = netfig.output_labels()
-    assert len(outputs) == 15 and outputs[0] == "R1 brake" and outputs[8] == "S gas" and outputs[14] == "L1 gas"
+    assert len(outputs) == 45
+    assert outputs[0] == "R1 brake" and outputs[4] == "R1 gas" and outputs[22] == "S coast"
+    assert outputs[34] == "L½ gas" and outputs[36] == "L¾ ½ brake" and outputs[44] == "L1 gas"
 
 
 def test_dense_graph_matches_the_network():
     driver = dense_driver()
     graph = netfig.network_graph(driver)
-    assert [len(c) for c in graph["columns"]] == [config.N_INPUTS, 16, 15]
-    assert len(graph["edges"]) == config.N_INPUTS * 16 + 16 * 15
+    assert [len(c) for c in graph["columns"]] == [config.N_INPUTS, 16, config.N_ACTIONS]
+    assert len(graph["edges"]) == config.N_INPUTS * 16 + 16 * config.N_ACTIONS
     weights = {(a, i, b, j): w for a, i, b, j, w in graph["edges"]}
     assert weights[(0, 3, 1, 7)] == driver.layers[0][0][3, 7] and weights[(1, 5, 2, 14)] == driver.layers[1][0][5, 14]
 
 
 def test_neat_graph_places_hidden_nodes_by_depth_and_skips_disabled_connections():
     graph = netfig.network_graph(neat_driver())
-    assert [len(c) for c in graph["columns"]] == [config.N_INPUTS, 1, 15]
+    assert [len(c) for c in graph["columns"]] == [config.N_INPUTS, 1, config.N_ACTIONS]
     assert sorted(graph["edges"]) == sorted([(0, 0, 1, 0, 1.0), (1, 0, 2, 0, -2.0), (0, 1, 2, 1, 0.5)])
 
 
