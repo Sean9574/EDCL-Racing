@@ -22,6 +22,14 @@ def test_circle_geometry(circle_track):
     assert np.isclose(t.length, len(t.centerline) * t.spacing)
 
 
+def test_a_built_track_has_its_racing_line(circle_track):
+    """Spec §4.1, §4.8: build_track gives every track a line point, direction, heading and curvature per centerline
+    point."""
+    m = len(circle_track.centerline)
+    assert circle_track.line.shape == (m, 2) and circle_track.line_tangent.shape == (m, 2)
+    assert circle_track.line_heading.shape == (m,) and circle_track.line_curvature.shape == (m,)
+
+
 def test_start_pose(circle_track):
     assert np.allclose(circle_track.start_position, [0, -50], atol=1e-9)
     assert abs(circle_track.start_heading) < 0.01                         # driving +x at the bottom

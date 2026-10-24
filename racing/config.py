@@ -83,6 +83,18 @@ TEST_TRACKS = tuple(range(len(TEST_CIRCUITS)))   # get_track(k, TEST_LEVEL) is T
 CIRCUIT_DATA = hashlib.sha256(b"".join(path.read_bytes() for path in sorted(
     (PROJECT_DIR / "data" / "racetracks" / "tracks").glob("*.csv")))).hexdigest()   # the vendored data's identity
 
+# --- Racing line (spec §4.8, version 3.10) ---
+RACING_LINE_MARGIN = 1.5     # m kept from each edge (at the nodes; every point within RACING_LINE_TOLERANCE of it)
+RACING_LINE_STEP = 15.0      # m between nodes: every round(15 m / spacing)-th centerline point, at least 8 nodes
+RACING_LINE_ITERATIONS = 3   # re-linearizations of the first solve; each tightening round re-linearizes once
+RACING_LINE_ROUNDS = 6       # at most this many solves while node bounds are tightened
+RACING_LINE_TOLERANCE = 0.1  # m a line point may lie outside its own bounds before the nodes around it are tightened
+RACING_LINE_SMOOTHING = 10.0  # m, standard deviation of the Gaussian that smooths the line's curvature
+LINE_AHEAD = (25.0, 50.0, 100.0, 200.0)   # m ahead of the matched point where the curvature inputs are read (§5.2)
+LINE_CURVATURE_SCALE = 50.0  # m: a curvature input is −κ × 50 m, so a 50 m radius reads 1
+LINE_CURVATURE_CLIP = 5.0    # curvature inputs are clipped to ±5, a 10 m radius
+FINAL_MIN_SUCCESSES = 18     # validation successes (of 20) a car needs to be picked by its pace (spec §9.5)
+
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
 N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (spec §5.2)
@@ -294,6 +306,9 @@ RESULTS_DIR = PROJECT_DIR / "results"
 CIRCUIT_GRIDS_DIR = Path(os.environ.get("EC_RACING_CIRCUIT_GRIDS") or RESULTS_DIR / "circuit_grids")
                              # real circuits' road grids, built once per machine and memory-mapped (spec §4.7, §9.10);
                              # EC_RACING_CIRCUIT_GRIDS names another folder, which worker processes also read
+RACING_LINES_DIR = Path(os.environ.get("EC_RACING_LINES") or RESULTS_DIR / "racing_lines")
+                             # real circuits' racing lines, computed once per machine (spec §4.8, §9.10);
+                             # EC_RACING_LINES names another folder, which worker processes also read
 DATASET_PATH = RESULTS_DIR / "dataset.npz"
 DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"
 RUNS_DIR = RESULTS_DIR / "runs"

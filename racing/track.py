@@ -23,6 +23,10 @@ class Track:
     length: float               # m, equal to M * spacing
     origin: np.ndarray          # (2,) world position of the road grid's lower-left corner
     dist: np.ndarray            # (rows, cols) float32 m from each road cell to the nearest grass cell; 0 on grass
+    line: np.ndarray            # (M, 2) the racing line's point abeam of each centerline point (spec §4.8)
+    line_tangent: np.ndarray    # (M, 2) the line's unit direction there
+    line_heading: np.ndarray    # (M,) that direction as an angle in rad
+    line_curvature: np.ndarray  # (M,) the line's curvature in 1/m, positive for left turns, smoothed over 10 m
     expert_lap_time: float = float("nan")
     name: str = ""              # a real circuit's database name (spec §4.7); empty for a generated map
 
@@ -114,14 +118,18 @@ def road_grid(center, tangent, half_left, half_right):
 
 def build_track(points, half_left, half_right, seed, level, name=""):
     """A Track from a closed loop of points in driving order (any spacing, first point not repeated) and the road's
-    half widths to the left and right, scalars or one per point (spec §4.1)."""
+    half widths to the left and right, scalars or one per point (spec §4.1), with its road grid and its racing line
+    (spec §4.8)."""
     shape = track_shape(points, half_left, half_right)
     origin, dist = road_grid(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"])
     m = len(shape["center"])
+    from racing import racing_line                 # racing_line imports nothing that imports this module
+    line = racing_line.fields(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"],
+                              shape["spacing"])
     return Track(seed=seed, level=level, centerline=shape["center"], tangent=shape["tangent"],
                  curvature=shape["curvature"], half_left=shape["half_left"], half_right=shape["half_right"],
                  left=shape["left"], right=shape["right"], spacing=shape["spacing"], length=m * shape["spacing"],
-                 origin=origin, dist=dist, name=name)
+                 origin=origin, dist=dist, **line, name=name)
 
 
 def wall_distance(track, x, y):

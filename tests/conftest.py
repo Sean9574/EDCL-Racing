@@ -65,18 +65,22 @@ def circle_track():
 
 @pytest.fixture(autouse=True, scope="session")
 def private_circuit_grids(tmp_path_factory):
-    """Real circuits' road grids are built once per test session in a temporary folder, never in results/
-    (spec §4.7); worker processes find the folder in EC_RACING_CIRCUIT_GRIDS."""
+    """Real circuits' road grids and racing lines are built once per test session in temporary folders, never in
+    results/ (spec §4.7, §4.8); worker processes find the folders in EC_RACING_CIRCUIT_GRIDS and EC_RACING_LINES."""
     from racing import config
-    saved, saved_environ = config.CIRCUIT_GRIDS_DIR, os.environ.get("EC_RACING_CIRCUIT_GRIDS")
+    saved = config.CIRCUIT_GRIDS_DIR, config.RACING_LINES_DIR
+    saved_environ = {key: os.environ.get(key) for key in ("EC_RACING_CIRCUIT_GRIDS", "EC_RACING_LINES")}
     config.CIRCUIT_GRIDS_DIR = tmp_path_factory.mktemp("circuit_grids")
+    config.RACING_LINES_DIR = tmp_path_factory.mktemp("racing_lines")
     os.environ["EC_RACING_CIRCUIT_GRIDS"] = str(config.CIRCUIT_GRIDS_DIR)
+    os.environ["EC_RACING_LINES"] = str(config.RACING_LINES_DIR)
     yield
-    config.CIRCUIT_GRIDS_DIR = saved
-    if saved_environ is None:
-        os.environ.pop("EC_RACING_CIRCUIT_GRIDS", None)
-    else:
-        os.environ["EC_RACING_CIRCUIT_GRIDS"] = saved_environ
+    config.CIRCUIT_GRIDS_DIR, config.RACING_LINES_DIR = saved
+    for key, value in saved_environ.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @pytest.fixture(autouse=True)

@@ -157,7 +157,7 @@ def _remove_old_grids(folder, name, stem, age=OLD_GRID_AGE):
     `age` old, as fastsim.remove_old_libraries does; a younger one may still be in use by a job that started before
     the source changed. Safe on Linux even while another process has the old file mapped."""
     cutoff = time.time() - age
-    for old in [*folder.glob(f"{name}-*.npy"), *folder.glob(f".{name}-*.tmp")]:
+    for old in [*folder.glob(f"{name}-[0-9a-f]*.npy"), *folder.glob(f".{name}-[0-9a-f]*.tmp")]:
         if old.name.startswith(f"{stem}.") or old.name.startswith(f".{stem}."):
             continue
         try:
@@ -183,6 +183,42 @@ def _grid(name, shape):
     return np.load(origin_path), np.load(dist_path, mmap_mode="r")
 
 
+OLD_LINE_AGE = OLD_GRID_AGE  # s: a line file of another identity is removed once it is this old
+
+
+def line_id(name):
+    """The identity of circuit `name`'s racing lines: the first 16 hexadecimal digits of the SHA-256 of its data file,
+    the line's settings and the code that computes it. A line of another identity is never used."""
+    digest = hashlib.sha256((DATA_DIR / f"{name}.csv").read_bytes())
+    for value in (config.CENTERLINE_SPACING, config.RACING_LINE_MARGIN, config.RACING_LINE_STEP,
+                  config.RACING_LINE_ITERATIONS, config.RACING_LINE_ROUNDS, config.RACING_LINE_TOLERANCE,
+                  config.RACING_LINE_SMOOTHING):
+        digest.update(repr(float(value)).encode())
+    for source in ("track.py", "circuits.py", "racing_line.py"):
+        digest.update(Path(__file__).with_name(source).read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def _line(name, reverse, shape):
+    """The racing-line fields of circuit `name` in one direction (spec §4.8, §9.10): computed once per machine into
+    RACING_LINES_DIR as an (M, 6) array [x, y, tx, ty, heading, curvature] and read by every process."""
+    from racing import racing_line
+    folder = Path(config.RACING_LINES_DIR)
+    stem = f"{name}{'-reversed' if reverse else ''}-{line_id(name)}"
+    path = folder / f"{stem}.npy"
+    with _grid_lock:
+        if not path.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            line = racing_line.fields(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"],
+                                      shape["spacing"])
+            _save(path, np.column_stack([line["line"], line["line_tangent"], line["line_heading"],
+                                         line["line_curvature"]]))
+            _remove_old_grids(folder, f"{name}{'-reversed' if reverse else ''}", stem, OLD_LINE_AGE)
+    table = np.load(path)
+    return {"line": np.ascontiguousarray(table[:, 0:2]), "line_tangent": np.ascontiguousarray(table[:, 2:4]),
+            "line_heading": np.ascontiguousarray(table[:, 4]), "line_curvature": np.ascontiguousarray(table[:, 5])}
+
+
 def circuit_track(name, reverse=False, seed=0, level=config.MAX_LEVEL):
     """Circuit `name` as a Track at real scale with its widths (spec §4.7), in its racing direction or reversed from
     the same start; the road grid is that of the racing direction, which is the same road."""
@@ -191,11 +227,12 @@ def circuit_track(name, reverse=False, seed=0, level=config.MAX_LEVEL):
     origin, dist = _grid(name, shape)
     if reverse:
         shape = track_shape(*reverse_outline(shape["center"], shape["half_left"], shape["half_right"]))
+    line = _line(name, reverse, shape)
     m = len(shape["center"])
     return Track(seed=int(seed), level=int(level), centerline=shape["center"], tangent=shape["tangent"],
                  curvature=shape["curvature"], half_left=shape["half_left"], half_right=shape["half_right"],
                  left=shape["left"], right=shape["right"], spacing=shape["spacing"], length=m * shape["spacing"],
-                 origin=origin, dist=dist, name=name)
+                 origin=origin, dist=dist, **line, name=name)
 
 
 def level_track(seed, level):

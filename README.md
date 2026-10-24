@@ -43,7 +43,8 @@ The evaluation also reports the pole-lap table and figure of the four test circu
 
 **Data and licences:** the real circuits come from the racetrack database of the Technical University of Munich
 (https://github.com/TUMFTM/racetrack-database), LGPL-3.0, vendored in `data/racetracks/` (see
-`data/racetracks/SOURCE.md`).
+`data/racetracks/SOURCE.md`). The files in `data/racetracks/racelines/` are the database's published racing lines of the
+23 training and test circuits, copied unchanged; they are used only to check EC Racing's own racing line (spec §4.8).
 
 ## Setup on a Windows desktop (WSL 2)
 

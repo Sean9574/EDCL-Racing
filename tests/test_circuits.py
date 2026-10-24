@@ -199,3 +199,15 @@ def test_grids_of_other_identities_are_removed_once_a_day_old(monkeypatch, tmp_p
     assert not any(path.exists() for path in stale)                         # other identities, a day old
     assert young.exists() and other.exists()                                # too young; another circuit
     assert len(list(tmp_path.glob(f"Oschersleben-{circuits.grid_id('Oschersleben')}*"))) == 2
+
+
+def test_old_line_files_are_removed_but_the_other_direction_is_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "RACING_LINES_DIR", tmp_path)
+    old_forward = tmp_path / "Spielberg-0123456789abcdef.npy"
+    old_forward.write_bytes(b"")
+    os.utime(old_forward, (0, 0))
+    circuits.circuit_track("Spielberg", True)                     # builds the reversed line only
+    circuits.circuit_track("Spielberg")
+    names = sorted(path.name for path in tmp_path.glob("*.npy"))
+    assert names == sorted([f"Spielberg-{circuits.line_id('Spielberg')}.npy",
+                            f"Spielberg-reversed-{circuits.line_id('Spielberg')}.npy"])

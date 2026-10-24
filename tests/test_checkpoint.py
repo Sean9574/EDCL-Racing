@@ -27,6 +27,8 @@ def test_settings_keys_hold_the_result_settings_only():
     assert set(checkpoint.settings_record()) == set(keys) and "N_JOBS" not in checkpoint.settings_record()
     assert {"TEST_LEVEL", "TRAINING_CIRCUITS", "TEST_CIRCUITS", "CIRCUIT_DATA"} <= set(keys)       # spec §4.6, §4.7
     assert not {"TEST_SEEDS", "DISPLAY_SEEDS", "CIRCUIT_GRIDS_DIR"} & set(keys) and len(config.CIRCUIT_DATA) == 64
+    assert {"RACING_LINE_MARGIN", "RACING_LINE_STEP", "LINE_AHEAD", "LINE_CURVATURE_SCALE",
+            "FINAL_MIN_SUCCESSES"} <= set(keys) and "RACING_LINES_DIR" not in keys         # spec §4.8, §5.2, §9.5
 
 
 def test_own_record_passes_the_check_after_a_json_round_trip():
