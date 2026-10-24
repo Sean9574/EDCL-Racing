@@ -2,6 +2,8 @@
 RACING_LINE_STEP m move along the road's normal within RACING_LINE_MARGIN of each edge; their offsets minimize the
 squared curvature at the nodes, linearized and solved as bounded least squares; a chord-length cubic spline through the
 nodes is sampled at every centerline point; node bounds are tightened where the spline leaves the road's bounds."""
+import threading
+
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
@@ -11,6 +13,8 @@ from threadpoolctl import threadpool_limits
 from racing import config
 
 PUBLISHED_DIR = config.PROJECT_DIR / "data" / "racetracks" / "racelines"   # the database's own lines, for the check
+_blas_lock = threading.Lock()  # threadpool_limits is process-wide: solves in threads at once (the viewer builds maps
+                               # in threads) take turns, so none runs with another's thread count or restores it early
 
 
 def _node_offsets(center, normal, lower, upper, iterations, reference=None, weights=None):
@@ -32,7 +36,7 @@ def _node_offsets(center, normal, lower, upper, iterations, reference=None, weig
             matrix[index, column] += coefficient * np.einsum("ij,ij->i", normal[column], reference)
         bend = np.roll(center, 1, axis=0) - 2.0 * center + np.roll(center, -1, axis=0)
         target = -np.einsum("ij,ij->i", bend, reference)
-        with threadpool_limits(limits=1):                        # the same line in every process (spec §4.8)
+        with _blas_lock, threadpool_limits(limits=1):            # the same line in every process and thread (§4.8)
             alpha = lsq_linear(weights[:, None] * matrix, weights * target, bounds=(lower, upper), method="trf",
                                tol=1e-10).x
         line = center + alpha[:, None] * normal

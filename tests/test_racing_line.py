@@ -1,9 +1,11 @@
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
+from threadpoolctl import threadpool_info
 
 from conftest import stadium
 from racing import circuits, config, ideal, racing_line, track_gen
@@ -94,6 +96,24 @@ def test_the_line_is_the_same_in_a_process_with_more_blas_threads(tmp_path):
     environ = {**os.environ, "OPENBLAS_NUM_THREADS": "4", "OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"}
     subprocess.run([sys.executable, "-c", code, str(out)], check=True, env=environ, cwd=config.PROJECT_DIR)
     assert np.array_equal(np.load(out), here)
+
+
+def test_solves_in_threads_at_once_give_the_lines_of_lone_solves_and_keep_the_blas_threads():
+    """Spec §4.8: the viewer builds maps in threads at once, and the one-thread BLAS limit is process-wide; the solves
+    take turns at it, so each line is a lone solve's and the process keeps its own BLAS threads afterwards."""
+    shapes = [outline_shape(name) for name in ("Spielberg", "BrandsHatch", "Oschersleben", "Zandvoort")]
+
+    def line(shape):
+        return racing_line.solve(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"],
+                                 shape["spacing"])[0]
+
+    before = [pool["num_threads"] for pool in threadpool_info()]
+    alone = [line(shape) for shape in shapes]
+    with ThreadPoolExecutor(len(shapes)) as pool:
+        together = list(pool.map(line, shapes))
+    assert [pool["num_threads"] for pool in threadpool_info()] == before
+    for a, b in zip(alone, together):
+        assert np.array_equal(a, b)
 
 
 def test_a_real_circuits_line_is_cached_once_and_equals_a_fresh_one(monkeypatch):

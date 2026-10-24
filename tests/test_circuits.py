@@ -202,12 +202,19 @@ def test_grids_of_other_identities_are_removed_once_a_day_old(monkeypatch, tmp_p
 
 
 def test_old_line_files_are_removed_but_the_other_direction_is_kept(tmp_path, monkeypatch):
+    """Spec §4.8, §9.10: building one direction's line removes that direction's day-old files of other identities,
+    never the other direction's line, however old it is."""
     monkeypatch.setattr(config, "RACING_LINES_DIR", tmp_path)
     old_forward = tmp_path / "Spielberg-0123456789abcdef.npy"
     old_forward.write_bytes(b"")
     os.utime(old_forward, (0, 0))
+    forward = tmp_path / f"Spielberg-{circuits.line_id('Spielberg')}.npy"
+    backward = tmp_path / f"Spielberg-reversed-{circuits.line_id('Spielberg')}.npy"
     circuits.circuit_track("Spielberg", True)                     # builds the reversed line only
-    circuits.circuit_track("Spielberg")
-    names = sorted(path.name for path in tmp_path.glob("*.npy"))
-    assert names == sorted([f"Spielberg-{circuits.line_id('Spielberg')}.npy",
-                            f"Spielberg-reversed-{circuits.line_id('Spielberg')}.npy"])
+    os.utime(backward, (0, 0))
+    circuits.circuit_track("Spielberg")                           # builds the forward line, removes the old one
+    assert sorted(tmp_path.glob("*.npy")) == sorted([forward, backward])
+    os.utime(forward, (0, 0))
+    backward.unlink()
+    circuits.circuit_track("Spielberg", True)                     # builds the reversed line again
+    assert sorted(tmp_path.glob("*.npy")) == sorted([forward, backward])
