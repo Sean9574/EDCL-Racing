@@ -14,7 +14,8 @@ from racing.track_gen import geometry_ok
 from racing.tracks import get_track
 
 DRIVE_COLUMNS = ["approach", "run_seed", "track", "circuit", "finished", "success", "crashed", "race_time",
-                 "lap_time", "progress", "fitness", "lap_1", "lap_2", "lap_3", "flying_lap"]
+                 "lap_time", "progress", "fitness", "lap_1", "lap_2", "lap_3", "flying_lap",
+                 "expert_lap"]
 PER_SEED_COLUMNS = ["approach", "run_seed", "maps", "finished", "success", "lap_time", "race_time", "best_lap",
                     "crashes"]
 STAGES = (("imitation", "After imitation"), ("dagger", "After DAgger"), ("speed push", "After speed push"))
@@ -49,7 +50,7 @@ def _drive_on(drivers, track, track_seed, factor):
                      "lap_time": race_time / config.LAPS, "progress": float(result.progress[i]),
                      "fitness": float(result.fitness[i]),
                      **{f"lap_{n + 1}": float(result.lap_times[i, n]) for n in range(3)},
-                     "flying_lap": float(flying[i])})
+                     "flying_lap": float(flying[i]), "expert_lap": float(track.expert_lap_time)})
     return rows
 
 
@@ -126,15 +127,25 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
 
 
 def best_seeds(validation):
-    """For each approach, its best run: the run whose controller succeeded on the most validation maps; ties go to
-    the higher mean validation fitness, then to run 0 (spec §11.1). The results table names it."""
+    """For each approach, its best run (spec §11.1, version 3.10), by the rule of the final pick (§9.5): of the runs
+    whose final controller succeeded on at least FINAL_MIN_SUCCESSES validation maps, the one with the fastest mean
+    lap relative to each map's expert lap over the maps it succeeded on; if none succeeded that often, the run with the
+    most successes, then the fastest; remaining ties go to the lower run number. The results table names it."""
     best = {}
     for approach in config.APPROACHES:
         sub = validation[validation["approach"] == approach]
         if sub.empty:
             continue
-        per_seed = sub.groupby("run_seed").agg(successes=("success", "sum"), fitness=("fitness", "mean"))
-        ranked = sorted(per_seed.itertuples(), key=lambda r: (-r.successes, -r.fitness, r.Index))
+        success = sub["success"].astype(bool)
+        ratio = (sub["lap_time"] / sub["expert_lap"]).where(success)          # nan where it did not succeed
+        per_seed = sub.assign(success=success, ratio=ratio).groupby("run_seed").agg(
+            successes=("success", "sum"), pace=("ratio", "mean"))
+        per_seed["pace"] = per_seed["pace"].fillna(np.inf)                     # a run that succeeded nowhere
+        reliable = per_seed[per_seed["successes"] >= config.FINAL_MIN_SUCCESSES]
+        if len(reliable):
+            ranked = sorted(reliable.itertuples(), key=lambda r: (r.pace, r.Index))
+        else:
+            ranked = sorted(per_seed.itertuples(), key=lambda r: (-r.successes, r.pace, r.Index))
         best[approach] = int(ranked[0].Index)
     return best
 

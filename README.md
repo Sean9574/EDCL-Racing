@@ -34,10 +34,10 @@ exactly. `python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.p
 and without it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 
 Generated maps have a road width that changes along the lap, and the networks see their position across the road and
-the road's width next to the nine distance rays and the speed (12 inputs), so that they drive any width rather than
+the road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive any width rather than
 the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at constant road
 widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification is
-`docs/ec-racing-design.pdf` (version 3.9, which incorporates every revision).
+`docs/ec-racing-design.pdf` (version 3.10, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -240,7 +240,7 @@ Results are written to `results/`, which is not under version control:
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
-| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits) and 3.9 (45 actions, speed push to 50%) |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/`, `results/pilots/revision3.10/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits), 3.9 (45 actions, speed push to 50%) and 3.10 (racing line, 18 inputs) |
 | `results/circuit_grids/` | The real circuits' road grids, built once per machine (23 files, about 570 MB), kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
@@ -341,6 +341,22 @@ python scripts/fleet.py archive revision3.8
 python scripts/fleet.py start
 ```
 
+**Version 3.10** gives every track a racing line (the minimum-curvature line within the road, `racing/racing_line.py`),
+gives the cars six inputs about it (18 in all), has the expert drive the line with a 200 m speed profile at the grip
+share `scripts/expert_grip.py` measures (0.79), steering by the line's curvature, and picks each run's final controller
+as the fastest car that succeeds on at least 18 of the 20 validation maps. Every result of version 3.9 is refused by
+`run_notebooks.py --check` and is set aside before the new run; the pole checks of the 3.9 populations stay with it.
+The expert's grip share is measured once with `python scripts/expert_grip.py` (it prints the value for
+`EXPERT_GRIP_MARGIN`); the pilots write to `results/pilots/revision3.10/`. Real circuits' racing lines are computed once
+per machine into `results/racing_lines/`.
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/fleet.py archive revision3.9
+python scripts/fleet.py start
+```
+
 Version 3.7 trained only the GA again; the runs of the other methods made with 3.6 stay valid:
 
 ```bash
@@ -388,7 +404,7 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.9/` (each pilot deletes only its own folder there, so the 3.8 pilots
+The pilots write to `results/pilots/revision3.10/` (each pilot deletes only its own folder there, so the earlier pilots
 stay) and are not part of the reported results; their summary includes the populations' final mean sensor length and
 steering sensitivity and the last speed-push target (`target_reduction`, percent shorter). Before notebook 03 has run, leave out the seeded
 pilot: it needs a refined baseline of this revision.
@@ -451,7 +467,8 @@ On Windows 11 the window opens through WSLg.
   sometimes a chicane or esses), Extra hard (the 19 real training circuits, in both directions, with their real
   widths; the test circuits are the four held-out ones). Generated maps run clockwise or counter-clockwise and the
   panel's map line names the road width.
-- **Controllers of earlier revisions** have 10 inputs instead of 12; the race view leaves them out and says so.
+- **Controllers of earlier revisions** have 10 or 12 inputs instead of 18 (or 15 actions instead of 45); the race view
+  leaves them out and says so. It draws the racing line thinly on the road.
 - **Playback speed:** 1× is twice real time.
 
 ## Tests

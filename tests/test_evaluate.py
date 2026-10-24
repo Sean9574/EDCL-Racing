@@ -82,13 +82,26 @@ def test_success_means_three_laps_within_the_target(monkeypatch, fake_tracks):
     frame = evaluate.driving_results(drivers(), [1000])          # target: 1.3 × 20 s × 3 laps = 78 s
     assert list(frame["finished"]) == [True, True, False] and list(frame["success"]) == [True, False, False]
     assert frame["lap_time"].iloc[1] == pytest.approx(30.0)
+    assert list(frame["expert_lap"]) == [fake_tracks.expert_lap_time] * 3
 
 
-def test_best_seeds_most_successes_then_fitness_then_run_0():
-    rows = [("ga", 0, True, 1.5), ("ga", 0, True, 1.5), ("ga", 1, True, 1.9), ("ga", 1, False, 1.9),
-            ("es", 0, True, 1.2), ("es", 2, True, 1.2), ("neat", 1, False, 0.4), ("neat", 2, False, 0.6)]
-    frame = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "fitness": f} for a, s, ok, f in rows])
-    assert evaluate.best_seeds(frame) == {"es": 0, "ga": 0, "neat": 2}
+def test_best_seeds_fastest_reliable_run_then_most_successes_then_run_0(monkeypatch):
+    """Spec §11.1 (version 3.10): of the runs with at least FINAL_MIN_SUCCESSES validation successes, the fastest
+    mean lap relative to each map's expert lap over the maps it succeeded on; if none, the most successes, then the
+    fastest; then the lower run number."""
+    monkeypatch.setattr(config, "FINAL_MIN_SUCCESSES", 2)
+    rows = [("ga", 0, True, 30.0, 20.0), ("ga", 0, True, 30.0, 20.0),      # reliable, 1.5 × the expert
+            ("ga", 1, True, 24.0, 20.0), ("ga", 1, True, 48.0, 40.0),      # reliable, 1.2 × the expert: the pick
+            ("ga", 2, True, 20.0, 20.0), ("ga", 2, False, 200.0, 20.0),    # fastest, but 1 success: not reliable
+            ("es", 0, True, 30.0, 20.0), ("es", 0, False, 20.0, 20.0),     # none reliable: 1 success each ...
+            ("es", 1, True, 24.0, 20.0), ("es", 1, False, 20.0, 20.0),     # ... then the faster: run 1
+            ("es", 2, False, 20.0, 20.0), ("es", 2, False, 20.0, 20.0),
+            ("neat", 1, False, 25.0, 20.0), ("neat", 2, False, 25.0, 20.0),  # no success anywhere: the lower run
+            ("baseline", 3, True, 24.0, 20.0), ("baseline", 3, True, 24.0, 20.0),   # reliable and equally fast:
+            ("baseline", 1, True, 24.0, 20.0), ("baseline", 1, True, 24.0, 20.0)]   # the lower run
+    frame = pd.DataFrame([{"approach": a, "run_seed": r, "success": ok, "lap_time": lap, "expert_lap": e}
+                          for a, r, ok, lap, e in rows])
+    assert evaluate.best_seeds(frame) == {"baseline": 1, "es": 1, "ga": 1, "neat": 1}
 
 
 def test_inference_warm_up_matches_the_timed_calls():
@@ -239,10 +252,11 @@ def test_a_run_without_rows_shows_a_dash_and_an_archives_other_runs_follow(tmp_p
 
 def test_results_table_names_each_methods_best_run(tmp_path):
     per_track = drive_rows([(a, s, 1000, True, True, False, 50.0) for a in ("ga", "es", "neat") for s in (0, 1)])
-    rows = [("ga", 0, True, 1.9), ("ga", 0, False, 1.9), ("ga", 1, True, 1.2), ("ga", 1, True, 1.2),
-            ("es", 0, True, 1.2), ("es", 0, False, 0.6), ("es", 1, True, 1.5), ("es", 1, False, 0.6),
-            ("neat", 0, True, 1.5), ("neat", 1, True, 1.5)]
-    validation = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "fitness": f} for a, s, ok, f in rows])
+    rows = [("ga", 0, True, 30.0), ("ga", 0, False, 30.0), ("ga", 1, True, 30.0), ("ga", 1, True, 30.0),
+            ("es", 0, True, 30.0), ("es", 0, False, 30.0), ("es", 1, True, 24.0), ("es", 1, False, 24.0),
+            ("neat", 0, True, 30.0), ("neat", 1, True, 30.0)]            # none reliable: successes, pace, run 0
+    validation = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "lap_time": lap, "expert_lap": 20.0}
+                               for a, s, ok, lap in rows])
     table = evaluate.results_table(per_track, tmp_path, best=evaluate.best_seeds(validation)).set_index("Method")
     assert table["Best run"].to_dict() == {"ES": 1, "GA": 1, "NEAT": 0}
     assert "Best run" not in evaluate.results_table(per_track, tmp_path).columns

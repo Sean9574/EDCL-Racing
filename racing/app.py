@@ -27,6 +27,7 @@ from racing.tracks import get_track
 GRASS = (214, 230, 205)
 ROAD = (92, 96, 104)
 EDGE = (245, 245, 245)
+RACING_LINE = (184, 190, 202)   # the racing line on the road (spec §10.3): light, thin, no method's color
 PANEL_BG = (248, 249, 251)
 INK = (29, 35, 48)
 MUTED = (91, 100, 116)
@@ -113,7 +114,7 @@ class Camera:
 
 
 def render_track(track, camera, size):
-    """Grass, road surface, edges and start line, drawn once per track."""
+    """Grass, road surface, racing line, edges and start line, drawn once per track (spec §10.3)."""
     surface = pygame.Surface(size)
     surface.fill(GRASS)
     lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
@@ -122,6 +123,7 @@ def render_track(track, camera, size):
     for i in range(m):
         j = (i + 1) % m
         pygame.draw.polygon(surface, ROAD, [(lx[i], ly[i]), (lx[j], ly[j]), (rx[j], ry[j]), (rx[i], ry[i])])
+    pygame.draw.lines(surface, RACING_LINE, True, list(zip(*camera.to_screen(track.line[:, 0], track.line[:, 1]))), 1)
     pygame.draw.lines(surface, EDGE, True, list(zip(lx, ly)), 2)
     pygame.draw.lines(surface, EDGE, True, list(zip(rx, ry)), 2)
     pygame.draw.line(surface, INK, (lx[0], ly[0]), (rx[0], ry[0]), 3)
@@ -142,8 +144,8 @@ def visible_segments(track, camera):
 
 
 def draw_track_part(surface, track, camera):
-    """Road, edges and start line of the part of the track in the camera's view, drawn directly: a zoomed view draws
-    this every frame instead of keeping a picture of the whole track at its scale."""
+    """Road, racing line, edges and start line of the part of the track in the camera's view, drawn directly: a zoomed
+    view draws this every frame instead of keeping a picture of the whole track at its scale (spec §10.3)."""
     lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
     rx, ry = camera.to_screen(track.right[:, 0], track.right[:, 1])
     m = len(lx)
@@ -151,6 +153,10 @@ def draw_track_part(surface, track, camera):
     for i in segments:
         j = (i + 1) % m
         pygame.draw.polygon(surface, ROAD, [(lx[i], ly[i]), (lx[j], ly[j]), (rx[j], ry[j]), (rx[i], ry[i])])
+    qx, qy = camera.to_screen(track.line[:, 0], track.line[:, 1])
+    for i in segments:
+        j = (i + 1) % m
+        pygame.draw.line(surface, RACING_LINE, (qx[i], qy[i]), (qx[j], qy[j]), 1)
     for i in segments:
         j = (i + 1) % m
         pygame.draw.line(surface, EDGE, (lx[i], ly[i]), (lx[j], ly[j]), 2)
@@ -257,19 +263,28 @@ def before_real_circuits(name, folder):
     return settings is not None and "TEST_CIRCUITS" not in settings
 
 
-def other_actions(name, folder):
-    """Whether a results folder, the current one included, was made with another action set (spec §10.3): 15
-    classes up to version 3.8. This
-    version's 45-class table would misread its networks' outputs, so they are neither raced nor replayed. A record
-    without an action count is not flagged; nets.load_champion still refuses any controller with another output
-    count."""
+def other_interface(name, folder):
+    """The note for a results folder, the current one included, made for another network interface (spec §10.3), or
+    None: 15 actions up to version 3.8, or this action set with 12 inputs in version 3.9. This version would misread
+    such a folder's controllers and runs, so they are neither raced nor replayed. A record without an action count (an
+    archive of revision 3.1, whose networks read their first inputs, spec §10.2) or without a record is not flagged;
+    nets.load_champion still refuses every controller of another interface."""
     settings = folder_record(folder)
     if settings is None:
-        return False
+        return None
     try:
-        return int(settings["N_ACTIONS"]) != config.N_ACTIONS
+        actions = int(settings["N_ACTIONS"])
     except (KeyError, TypeError, ValueError):
-        return False                       # no count recorded: each controller's own output count decides
+        return None
+    if actions != config.N_ACTIONS:
+        return f"made with {actions} actions; this version has {config.N_ACTIONS}"
+    try:
+        inputs = int(settings["N_INPUTS"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if inputs != config.N_INPUTS:
+        return f"made with {inputs} inputs; this version has {config.N_INPUTS}"
+    return None
 
 
 def view_seed(level):
@@ -553,7 +568,7 @@ class App:
         self.folder_name = "current"                    # the results folder whose runs and controllers are shown
         self.folder_inputs, self.folder_widths = config.N_INPUTS, None      # folder_profile of that folder
         self.folder_old = False                         # an archive made before the real circuits (spec §4.7)
-        self.folder_actions = False                     # an archive made with another action set (spec §10.3)
+        self.folder_note = other_interface(self.folder_name, self.results_dir)    # why a folder is not shown (§10.3)
         self.runs_dir = config.RUNS_DIR                 # the shown folder's notebook runs
         self.train_runs_dir = config.RUNS_DIR           # where the seeded ES trained here finds the DAgger baseline
         self.app_runs_dir = config.APP_RUNS_DIR             # saved viewer runs (spec §10.6)
@@ -772,7 +787,7 @@ class App:
         self.folder_name, folder = folders[k]
         self.folder_inputs, self.folder_widths = folder_profile(self.folder_name, folder)
         self.folder_old = before_real_circuits(self.folder_name, folder)
-        self.folder_actions = other_actions(self.folder_name, folder)
+        self.folder_note = other_interface(self.folder_name, folder)
         self.runs_dir, self.champions_dir = folder / "runs", folder / "champions"
         if self.mode == "race":
             self.load_race()
@@ -793,10 +808,8 @@ class App:
         self.replay_polled = now
         path = self.replay_file()
         name = f"{config.LABELS[self.approach]} run {self.run_seed}"
-        if self.folder_actions:
-            record = folder_record(self.runs_dir.parent) or {}
-            self.status = (f"{self.folder_name}: made with {record.get('N_ACTIONS', 'another number of')} actions; "
-                           f"this version has {config.N_ACTIONS}, so its runs are not replayed.")
+        if self.folder_note:
+            self.status = f"{self.folder_name}: {self.folder_note}, so its runs are not replayed."
             return
         try:
             stamp = path.stat().st_mtime_ns
@@ -1297,8 +1310,6 @@ class App:
             expected = self.folder_inputs if source == "final" else config.N_INPUTS     # app cars are this revision's
             if inputs != expected:                           # a controller of another revision (spec §10.3)
                 raise ValueError(f"made for {inputs} inputs, these runs have {expected}")
-            if not isinstance(driver, nets.DenseNet) and inputs != config.N_INPUTS:
-                raise ValueError("an earlier revision's NEAT controllers cannot be shown")
             self.drivers[key] = driver
         return self.drivers[key]
 

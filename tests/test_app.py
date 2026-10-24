@@ -1152,13 +1152,6 @@ def test_trainer_main_collects_its_own_copy_when_the_reported_dataset_has_other_
     assert collected == [tmp_path / "app_runs" / "dataset.npz"] and list(trained[0]["y_train"]) == [1]
 
 
-def test_the_current_results_of_another_action_set_are_flagged(tmp_path):
-    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": 15}}))
-    assert viewer.other_actions("current", tmp_path)
-    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": config.N_ACTIONS}}))
-    assert not viewer.other_actions("current", tmp_path)
-
-
 def test_trainer_main_trains_imitation_afresh_and_saves_no_final_controller(monkeypatch, tmp_path):
     from racing import imitation
     fake_imitation(monkeypatch, tmp_path)
@@ -2425,6 +2418,25 @@ def test_the_race_view_races_an_archives_controllers_on_its_maps(window, tmp_pat
     assert (config.TEST_LEVEL, None) in built            # the test circuits at their own widths (spec §4.7)
 
 
+def test_the_race_view_leaves_out_an_archives_controller_of_another_input_count(window, tmp_path):
+    """Spec §10.3: a 12-input controller of an archive made with 12 inputs is left out of the race with a note."""
+    from racing.backend import keras_cpu
+    keras = keras_cpu()
+    folder = archive_folder(tmp_path, name="revision3.9", inputs=12)
+    model = keras.Sequential([keras.Input((12,)), keras.layers.Dense(16, activation="relu"),
+                              keras.layers.Dense(config.N_ACTIONS, activation="softmax")])
+    path = paths.champion_path("baseline", 0, champion_dir=folder / "champions")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(path)
+    window.results_dir = tmp_path
+    window.set_mode("race")
+    window.cycle_folder()
+    window.start_race()
+    window.update(1 / 60)
+    assert window.race_cars() == [] and ("baseline", 0) in window.failed
+    assert "12 inputs" in window.status and f"{config.N_INPUTS}" in window.status
+
+
 def test_app_training_ignores_the_shown_folder(window, tmp_path):
     archive_folder(tmp_path)
     window.results_dir = tmp_path
@@ -2702,15 +2714,30 @@ def with_actions(folder, n_actions):
     return folder
 
 
-def test_an_archive_of_another_action_set_is_flagged(tmp_path):
-    """Spec §10.3 (version 3.9): an archive whose record has another action count is flagged; a record without one
-    (test fixtures, unreadable records) is judged by its controllers' output counts instead."""
-    folder = with_actions(archive_folder(tmp_path, name="revision3.8", inputs=config.N_INPUTS), 15)
-    assert viewer.other_actions("revision3.8", folder)
-    with_actions(folder, config.N_ACTIONS)
-    assert not viewer.other_actions("revision3.8", folder)
-    assert not viewer.other_actions("current", tmp_path)              # the folder has no record of its own
-    assert not viewer.other_actions("revision3.1", archive_folder(tmp_path))          # no N_ACTIONS in the record
+def test_a_folder_of_another_input_count_is_not_replayed_with_a_note(tmp_path):
+    """Spec §10.3: a results folder of this action set but 12 inputs (version 3.9), or of 15 actions (up to 3.8), is
+    flagged with its count; one of this version's interface is not, nor one whose record has no action count (an
+    archive of revision 3.1, whose networks read their first 10 inputs, spec §10.2), nor one without a record."""
+    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": config.N_ACTIONS,
+                                                                     "N_INPUTS": 12}}))
+    assert viewer.other_interface("current", tmp_path) == "made with 12 inputs; this version has 18"
+    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": 15, "N_INPUTS": 12}}))
+    assert viewer.other_interface("current", tmp_path) == "made with 15 actions; this version has 45"
+    (tmp_path / "run_info.json").write_text(json.dumps({"settings": {"N_ACTIONS": config.N_ACTIONS,
+                                                                     "N_INPUTS": config.N_INPUTS}}))
+    assert viewer.other_interface("current", tmp_path) is None
+    assert viewer.other_interface("revision3.1", archive_folder(tmp_path)) is None     # N_INPUTS 10, no N_ACTIONS
+    (tmp_path / "run_info.json").unlink()
+    assert viewer.other_interface("current", tmp_path) is None
+
+
+def test_the_track_picture_draws_the_racing_line(circle_track):
+    camera = viewer.Camera(circle_track, pygame.Rect(0, 0, 400, 400))
+    surface = viewer.render_track(circle_track, camera, (400, 400))
+    quarter = len(circle_track.centerline) // 4                  # away from the start line, drawn over the line
+    x, y = camera.to_screen(*circle_track.line[quarter])
+    near = {tuple(surface.get_at((int(x) + dx, int(y) + dy)))[:3] for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
+    assert viewer.RACING_LINE in near                            # a one-pixel line, whichever pixel it lands on
 
 
 def test_an_archive_of_another_action_set_is_not_replayed(window, tmp_path):

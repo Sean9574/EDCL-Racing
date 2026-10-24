@@ -1,7 +1,7 @@
-"""Pilot runs of revision 3.9 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
+"""Pilot runs of revision 3.10 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
 which show whether the 90% requirement can be reached with the reported settings, now with the Formula 1 car, the
 scaled levels and the real circuits, before the reported run starts. Each pilot starts over in
-results/pilots/revision3.9/<name>/ and adds a row to results/pilots/revision3.9/summary.md, with the population's mean
+results/pilots/revision3.10/<name>/ and adds a row to results/pilots/revision3.10/summary.md, with the population's mean
 sensor length and steering sensitivity and, for the GA, its network size at the end. Pilots are not part of the
 reported results.
 
@@ -24,7 +24,7 @@ from racing import config, es, ga, neat, paths  # noqa: E402
 
 PILOTS = ("ga", "es", "neat", "seeded")
 NAMES = {"ga": "GA", "es": "ES", "neat": "NEAT", "seeded": "Seeded ES"}
-OUT = config.PILOTS_DIR / "revision3.9"
+OUT = config.PILOTS_DIR / "revision3.10"
 
 
 def level_ups(log):

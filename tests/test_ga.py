@@ -50,7 +50,8 @@ def result(fitness, success):
     fitness = np.asarray(fitness, dtype=float)
     success = np.tile(np.asarray(success, dtype=bool), (config.TRACKS_PER_GEN, 1))
     return TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 0),
-                       finish_time=np.where(success, 90.0, np.nan))
+                       finish_time=np.where(success, 90.0, np.nan),
+                       expert_lap=np.full(config.TRACKS_PER_GEN, 20.0))
 
 
 def no_success(population, seeds, level, factor, n_jobs=1, backend="loky"):

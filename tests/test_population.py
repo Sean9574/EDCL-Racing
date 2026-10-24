@@ -152,18 +152,56 @@ def test_a_subset_reproduces_its_cars_results(fake_tracks):
     assert np.array_equal(full.fitness[[1, 7]], part.fitness) and np.array_equal(full.laps[:, [1, 7]], part.laps)
 
 
-def test_select_final_prefers_successes_then_fitness(monkeypatch):
-    def fake(cars, seeds, level, factor, n_jobs=1):
-        assert len(cars) == 4 and seeds == list(config.VAL_SEEDS) and level == config.VALIDATION_LEVEL and factor == 1.1
-        success = np.zeros((len(seeds), 4), dtype=bool)
-        success[0, :3] = True
-        success[1, 1:3] = True
-        return population.TrialResult(fitness=np.array([1.9, 1.2, 1.5, 0.3]), success=success,
-                                      laps=np.zeros((len(seeds), 4), dtype=np.int64),
-                                      finish_time=np.full((len(seeds), 4), np.nan))
+def fake_validation(success, finish_time, expert_lap=None, fitness=None):
+    """An evaluate_population stand-in: success (maps, cars), finish_time (maps, cars), each map's expert lap."""
+    maps, cars = success.shape
+    expert_lap = np.full(maps, 20.0) if expert_lap is None else np.asarray(expert_lap, dtype=float)
+    fitness = np.zeros(cars) if fitness is None else np.asarray(fitness, dtype=float)
 
-    monkeypatch.setattr(population, "evaluate_population", fake)
-    assert population.select_final(dense(6), [5, 0, 3, 2], 1.1) == (3, 2, 1.5)
+    def fake(population_, seeds, level, factor, n_jobs=1):
+        assert len(population_) == cars and level == config.VALIDATION_LEVEL
+        return population.TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 0),
+                                      finish_time=np.where(success, finish_time, np.nan), expert_lap=expert_lap)
+    return fake
+
+
+def test_the_fastest_car_with_18_successes_wins_over_a_car_with_more_successes(monkeypatch):
+    """Spec §9.5 (version 3.10): of the cars with ≥ 18 of 20 successes, the lowest mean lap ratio wins."""
+    success = np.ones((20, 3), dtype=bool)
+    success[:2, 1] = False                                     # car 1: 18 successes, the fastest
+    success[:3, 2] = False                                     # car 2: 17 successes, faster still but not eligible
+    finish = np.tile(np.array([75.0, 60.0, 45.0]), (20, 1))
+    monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
+    assert population.select_final(dense(6), [4, 2, 5], 1.1)[:2] == (2, 18)
+
+
+def test_without_18_successes_the_most_successes_win_then_the_fastest(monkeypatch):
+    success = np.zeros((20, 3), dtype=bool)
+    success[:15, 0] = success[:16, 1] = success[:16, 2] = True
+    finish = np.tile(np.array([40.0, 70.0, 65.0]), (20, 1))
+    monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
+    assert population.select_final(dense(6), [0, 1, 2], 1.1)[:2] == (2, 16)
+
+
+def test_ties_go_to_the_earliest_candidate(monkeypatch):
+    success = np.ones((20, 3), dtype=bool)
+    finish = np.full((20, 3), 60.0)
+    monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
+    assert population.select_final(dense(6), [3, 1, 4], 1.1)[0] == 3
+
+
+def test_lap_ratios_count_only_the_maps_a_car_succeeded_on():
+    success = np.array([[True, False], [True, False], [False, False]])
+    result = population.TrialResult(fitness=np.zeros(2), success=success, laps=np.zeros((3, 2), dtype=np.int64),
+                                    finish_time=np.array([[30.0, np.nan], [90.0, np.nan], [np.nan, np.nan]]),
+                                    expert_lap=np.array([10.0, 20.0, 30.0]))
+    ratios = population.lap_ratios(result)
+    assert np.isclose(ratios[0], ((30.0 / 3) / 10.0 + (90.0 / 3) / 20.0) / 2) and ratios[1] == np.inf
+
+
+def test_time_trials_report_each_maps_expert_lap(fake_tracks):
+    result = population.evaluate_population(dense(4), [0, 1], 1, config.TARGET_FACTOR)
+    assert np.array_equal(result.expert_lap, np.full(2, fake_tracks.expert_lap_time))
 
 
 def test_dense_champion_keeps_its_architecture(tmp_path):

@@ -35,6 +35,7 @@ class TrialResult:
     success: np.ndarray        # (maps, n) three laps within the target time
     laps: np.ndarray           # (maps, n) laps completed within the target time
     finish_time: np.ndarray    # (maps, n) s, nan unless success
+    expert_lap: np.ndarray = None   # (maps,) s, each map's expert lap time
 
     @property
     def all_success(self):
@@ -67,9 +68,9 @@ def _time_trial(population, seed, level, factor):
     """Fitness, success, laps in time and finish time of every car over config.LAPS laps of one map, ending at the
     target time (spec §9.2). Every car drives with its own setup (spec §9.11)."""
     track = get_track(seed, level)
-    return _trial_values(sim.simulate(track, population.policy(), len(population),
-                                      time_limit=sim.target_time(track, factor), laps=config.LAPS,
-                                      setup=population.setup))
+    return (*_trial_values(sim.simulate(track, population.policy(), len(population),
+                                        time_limit=sim.target_time(track, factor), laps=config.LAPS,
+                                        setup=population.setup)), track.expert_lap_time)
 
 
 def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="loky"):
@@ -83,7 +84,7 @@ def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="lok
         results = fastsim.simulate(tracks, population, [sim.target_time(t, factor) for t in tracks],
                                    laps=config.LAPS, threads=config.thread_count())
         tasks = [(k, seed, np.arange(n)) for k, seed in enumerate(seeds)]
-        parts = [_trial_values(result) for result in results]
+        parts = [(*_trial_values(result), track.expert_lap_time) for result, track in zip(results, tracks)]
     else:
         tasks = split_tasks(n, seeds, n_jobs)
         if n_jobs == 1 or len(tasks) == 1:
@@ -97,26 +98,43 @@ def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="lok
     success = np.zeros((maps, n), dtype=bool)
     laps = np.zeros((maps, n), dtype=np.int64)
     finish_time = np.full((maps, n), np.nan)
-    for (k, _, idx), (fitness, done, laps_done, times) in zip(tasks, parts):
+    expert_lap = np.zeros(maps)
+    for (k, _, idx), (fitness, done, laps_done, times, lap) in zip(tasks, parts):
         per_map[k, idx] = fitness
         success[k, idx] = done
         laps[k, idx] = laps_done
         finish_time[k, idx] = times
+        expert_lap[k] = lap
     total = np.zeros(n)
     for k in range(maps):
         total += per_map[k]
-    return TrialResult(fitness=total / maps, success=success, laps=laps, finish_time=finish_time)
+    return TrialResult(fitness=total / maps, success=success, laps=laps, finish_time=finish_time,
+                       expert_lap=expert_lap)
+
+
+def lap_ratios(result):
+    """Each car's mean, over the maps it succeeded on, of its lap time divided by the map's expert lap time (spec
+    §9.5); infinite for a car that succeeded on none."""
+    ratio = result.lap_times / np.asarray(result.expert_lap, dtype=float)[:, None]    # nan where it did not succeed
+    count = np.sum(np.isfinite(ratio), axis=0)
+    return np.where(count > 0, np.nansum(ratio, axis=0) / np.maximum(count, 1), np.inf)
 
 
 def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEEDS):
-    """The final controller (spec §9.5): of the candidate indices, the car with the most successes on the
-    validation maps (the validation setting, spec §4.2) at target factor `factor`, then the highest mean fitness, then
-    the earliest candidate. Returns (index into population, validation successes, mean validation fitness)."""
+    """The final controller (spec §9.5, version 3.10): of the candidate indices, the fastest of the cars that succeed
+    on at least FINAL_MIN_SUCCESSES validation maps (the validation setting, spec §4.2) at target factor `factor`, by
+    lap_ratios; if no car succeeds that often, the car with the most successes, then the fastest; ties go to the
+    earliest candidate. Returns (index into population, validation successes, mean validation fitness)."""
     candidates = np.asarray(candidates, dtype=np.int64)
     result = evaluate_population(population.subset(candidates), list(seeds), config.VALIDATION_LEVEL, factor,
                                  n_jobs=n_jobs)
     successes = result.success.sum(axis=0)
-    best = int(np.lexsort((-result.fitness, -successes))[0])
+    pace = lap_ratios(result)
+    order = np.arange(len(candidates))
+    if np.any(successes >= config.FINAL_MIN_SUCCESSES):
+        best = int(np.lexsort((order, pace, successes < config.FINAL_MIN_SUCCESSES))[0])
+    else:
+        best = int(np.lexsort((order, pace, -successes))[0])
     return int(candidates[best]), int(successes[best]), float(result.fitness[best])
 
 

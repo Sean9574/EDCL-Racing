@@ -25,7 +25,8 @@ def fake_evaluate(success_rate):
         rank = np.argsort(np.argsort(-fitness, kind="stable"), kind="stable")
         success = np.tile(rank < success_rate * n, (len(seeds), 1))
         return TrialResult(fitness=fitness + success[0], success=success,
-                           laps=np.where(success, config.LAPS, 1), finish_time=np.where(success, 90.0, np.nan))
+                           laps=np.where(success, config.LAPS, 1), finish_time=np.where(success, 90.0, np.nan),
+                           expert_lap=np.full(len(seeds), 20.0))
     return evaluate
 
 

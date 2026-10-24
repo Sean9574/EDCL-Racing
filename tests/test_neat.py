@@ -383,7 +383,7 @@ def result_for(fitness, success, maps=1):
     success = np.repeat(np.asarray(success, dtype=bool)[None, :], maps, axis=0)
     return population.TrialResult(fitness=np.asarray(fitness, dtype=float), success=success,
                                   laps=np.where(success, config.LAPS, 1),
-                                  finish_time=np.where(success, 60.0, np.nan))
+                                  finish_time=np.where(success, 60.0, np.nan), expert_lap=np.full(maps, 20.0))
 
 
 def clusters(rng):
@@ -555,7 +555,7 @@ def fake_evaluation(pop, seeds, level, factor, n_jobs=1, backend="loky"):
     success = score[None, :] > thresholds[:, None]
     fitness = np.where(success, 1.5 + 0.4 * score[None, :], 0.5 + 0.4 * score[None, :]).mean(axis=0)
     return population.TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 1),
-                                  finish_time=np.where(success, 60.0, np.nan))
+                                  finish_time=np.where(success, 60.0, np.nan), expert_lap=np.full(len(seeds), 20.0))
 
 
 class Stop(Exception):
