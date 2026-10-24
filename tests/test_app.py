@@ -14,7 +14,8 @@ from racing import checkpoint, circuits, config, neat, nets, paths, population, 
 
 
 @pytest.fixture
-def window(monkeypatch, circle_track):
+def window(monkeypatch, circle_track, tmp_path_factory):
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path_factory.mktemp("results"))   # never the checkout's results/
     monkeypatch.setattr(viewer, "get_track", lambda seed, level: circle_track)
     monkeypatch.setattr(viewer.os, "killpg", lambda pgid, sig: None)     # tests never signal real processes
     pygame.init()
@@ -24,6 +25,11 @@ def window(monkeypatch, circle_track):
     instance.process = None
     instance.stop_training()
     pygame.quit()
+
+
+def test_the_window_never_reads_the_checkouts_results(window):
+    """A checkout whose results/run_info.json records another interface must not change the viewer tests (§10.3)."""
+    assert window.results_dir != config.PROJECT_DIR / "results" and window.folder_note is None
 
 
 def ga_report(generation=0, n=30, approach="ga", population_=None, **extra):
