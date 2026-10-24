@@ -140,7 +140,8 @@ def test_a_network_of_an_earlier_revision_reads_only_its_inputs():
     hidden = (16, 8)
     old = nets.init_population(rng, 3, hidden, n_inputs=10)
     assert old.shape[1] == nets.n_params(hidden, n_inputs=10)
-    assert nets.inputs_of(old.shape[1], hidden) == 10 and nets.inputs_of(nets.n_params(hidden), hidden) == config.N_INPUTS
+    assert nets.inputs_of(old.shape[1], hidden) == 10
+    assert nets.inputs_of(nets.n_params(hidden), hidden) == config.N_INPUTS
     obs = rng.normal(size=(3, config.N_INPUTS))
     changed = obs.copy()
     changed[:, 10:] += 5.0                                       # the inputs revision 3.1 did not have
