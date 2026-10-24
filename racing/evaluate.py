@@ -789,7 +789,7 @@ def _setup_figure(plt, logs):
 
 
 def network_text(driver):
-    """A final controller's structure (spec §11.3, table 8): a dense network's layer sizes, such as 12 → 9 → 45;
+    """A final controller's structure (spec §11.3, table 8): a dense network's layer sizes, such as 18 → 9 → 45;
     a NEAT genome's hidden nodes and enabled connections."""
     from racing import neat
     if isinstance(driver, neat.NeatNet):

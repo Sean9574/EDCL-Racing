@@ -320,15 +320,25 @@ def refuse_other_actions(approach, seed, outputs):
                          f"this version has {config.N_ACTIONS}")
 
 
+def refuse_other_inputs(approach, seed, inputs):
+    """Raises ValueError unless a saved controller reads config.N_INPUTS inputs (spec §6, §10.3): one of version 3.9
+    reads 12 (revision 3.1's read 10) and knows nothing of the racing line."""
+    if int(inputs) != config.N_INPUTS:
+        raise ValueError(f"{approach} run {seed} was made for {int(inputs)} inputs, "
+                         f"this version has {config.N_INPUTS}")
+
+
 def load_champion(approach, seed, directory=None):
     """(Keras model, driver) of one final controller. A NEAT controller drives with its genome (<seed>.json,
     spec §9.9); an evolved dense controller with its float64 weights (.npy) and the architecture of its Keras
     file (dense_spec); an imitation controller with the Keras weights (spec §6). The driver has the setup saved in
     <seed>.setup.json, or revision 3's without that file (spec §6). A controller whose output count is not
-    config.N_ACTIONS (15 up to version 3.8) is refused with a ValueError naming it (spec §10.3)."""
+    config.N_ACTIONS (15 up to version 3.8), or whose input count is not config.N_INPUTS (12 in version 3.9), is
+    refused with a ValueError naming it (spec §6, §10.3)."""
     keras_path = paths.champion_path(approach, seed, champion_dir=directory)
     model = keras_cpu().models.load_model(keras_path)
     refuse_other_actions(approach, seed, model.output_shape[-1])
+    refuse_other_inputs(approach, seed, model.input_shape[-1])
     genome_path = paths.champion_path(approach, seed, ".json", directory)
     flat_path = paths.champion_path(approach, seed, ".npy", directory)
     if genome_path.exists():

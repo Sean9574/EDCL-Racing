@@ -2299,7 +2299,7 @@ def test_the_notebook_view_names_a_run_of_an_earlier_revision(window, tmp_path):
     notebook_view(window, tmp_path)
     for approach, hidden in (("ga", config.BASELINE_HIDDEN), ("kt_random", (16, 8))):
         window.select_approach(approach)
-        weights = np.zeros((30, nets.n_params(hidden) - 2 * hidden[0]))       # two inputs fewer
+        weights = np.zeros((30, nets.n_params(hidden) - (config.N_INPUTS - 10) * hidden[0]))   # 10 inputs
         save_replay(window, ga_report(5, approach=approach, population_=nets.DensePopulation(weights, hidden)),
                     approach=approach)
         window.update(1 / 60)
@@ -2411,13 +2411,12 @@ def test_the_race_view_races_an_archives_controllers_on_its_maps(window, tmp_pat
     built = []
     monkeypatch.setattr(viewer, "get_track",
                         lambda seed, level, width=None: built.append((level, width)) or circle_track)
-    folder = archive_folder(tmp_path)
-    population.save_dense_champion("ga", 0, old_population(1), 0, folder / "champions")
-    save_race_champions(folder / "champions", approaches=[("neat", 0)])     # NEAT of other inputs: left out
+    folder = archive_folder(tmp_path, inputs=config.N_INPUTS)   # load_champion refuses other input counts (§10.3)
+    save_race_champions(folder / "champions", approaches=[("ga", 0)])
     window.results_dir = tmp_path
     window.set_mode("race")
     window.cycle_folder()
-    assert window.champions_dir == folder / "champions" and window.race_available == {"ga": [0], "neat": [0]}
+    assert window.champions_dir == folder / "champions" and window.race_available == {"ga": [0]}
     window.start_race()
     for _ in range(10):
         window.update(1 / 60)

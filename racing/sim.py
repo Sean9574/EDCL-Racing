@@ -119,10 +119,38 @@ def road_position(track, cars, rows):
     return np.clip(-left / half, -1.0, 1.0)
 
 
+def line_ahead_points(track):
+    """Centerline points from a car's matched point to each LINE_AHEAD distance: round(d / spacing) (spec §5.2)."""
+    return [int(round(d / track.spacing)) for d in config.LINE_AHEAD]
+
+
+def line_inputs(track, cars, rows):
+    """The six racing-line inputs of the cars `rows` (spec §5.2), read at each car's matched centerline point i: the
+    signed distance from the line point i along the line's normal over the mean half width (positive right, not
+    clipped); the heading relative to the line, wrapped to (−π, π] and divided by π (positive right); the line's
+    curvature LINE_AHEAD m ahead × LINE_CURVATURE_SCALE, clipped to ±LINE_CURVATURE_CLIP (positive for right turns)."""
+    m = len(track.centerline)
+    i = np.asarray(cars.index[rows]) % m
+    tangent = track.line_tangent[i]
+    dx = cars.x[rows] - track.line[i, 0]
+    dy = cars.y[rows] - track.line[i, 1]
+    left = -dx * tangent[:, 1] + dy * tangent[:, 0]
+    half = (track.half_left[i] + track.half_right[i]) / 2.0
+    out = np.empty((len(i), 2 + len(config.LINE_AHEAD)))
+    out[:, 0] = -left / half
+    out[:, 1] = -np.angle(np.exp(1j * (cars.heading[rows] - track.line_heading[i]))) / np.pi
+    for k, steps in enumerate(line_ahead_points(track)):
+        out[:, 2 + k] = np.clip(-track.line_curvature[np.mod(i + steps, m)] * config.LINE_CURVATURE_SCALE,
+                                -config.LINE_CURVATURE_CLIP, config.LINE_CURVATURE_CLIP)
+    return out
+
+
 def sense(track, cars):
     """Network inputs (spec §5.2): ray distances / 150 m (RAY_SCALE; each car's rays reach its own sensor length, so a
     ray input can exceed 1), speed / 105 m/s (SPEED_SCALE), position across the road (−1 at the left edge,
-    +1 at the right edge) and the local road width / WIDTH_SCALE. Rows of cars that are done stay zero."""
+    +1 at the right edge), the local road width / WIDTH_SCALE, and the six racing-line inputs (line_inputs): the
+    distance from the line, the heading relative to it and its curvature 25, 50, 100 and 200 m ahead. Rows of cars
+    that are done stay zero."""
     obs = np.zeros((len(cars.x), config.N_INPUTS))
     live = np.flatnonzero(~cars.done)
     if live.size:
@@ -132,6 +160,7 @@ def sense(track, cars):
         obs[live, config.N_RAYS + 1] = road_position(track, cars, live)
         i = cars.index[live] % len(track.centerline)
         obs[live, config.N_RAYS + 2] = (track.half_left[i] + track.half_right[i]) / config.WIDTH_SCALE
+        obs[live, config.N_RAYS + 3:] = line_inputs(track, cars, live)
     return obs
 
 

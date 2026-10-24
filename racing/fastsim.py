@@ -272,7 +272,9 @@ class Track(ctypes.Structure):
                 ("half_left", P_DOUBLE), ("half_right", P_DOUBLE), ("m", ctypes.c_int64),
                 ("spacing", ctypes.c_double), ("start_x", ctypes.c_double), ("start_y", ctypes.c_double),
                 ("start_heading", ctypes.c_double), ("back", ctypes.c_int64), ("ahead", ctypes.c_int64),
-                ("sight", ctypes.c_int64), ("time_limit", ctypes.c_double)]
+                ("sight", ctypes.c_int64), ("time_limit", ctypes.c_double),
+                ("line", P_DOUBLE), ("line_tangent", P_DOUBLE), ("line_heading", P_DOUBLE),
+                ("line_curvature", P_DOUBLE), ("line_ahead", P_INT64), ("n_line_ahead", ctypes.c_int64)]
 
 
 class Settings(ctypes.Structure):
@@ -283,7 +285,8 @@ class Settings(ctypes.Structure):
                     "sight_speed")]
                 + [(name, ctypes.c_int64) for name in ("ray_max_iterations", "laps", "n_inputs")]
                 + [("ray_angles", P_DOUBLE), ("n_rays", ctypes.c_int64), ("steer_levels", P_DOUBLE),
-                   ("n_steer", ctypes.c_int64), ("throttle_levels", P_DOUBLE), ("n_throttle", ctypes.c_int64)])
+                   ("n_steer", ctypes.c_int64), ("throttle_levels", P_DOUBLE), ("n_throttle", ctypes.c_int64),
+                   ("line_curvature_scale", ctypes.c_double), ("line_curvature_clip", ctypes.c_double)])
 
 
 class CPrograms(ctypes.Structure):
@@ -477,7 +480,8 @@ def _settings(grip_scale, laps, keep):
                     ray_max_iterations=config.RAY_MAX_ITERATIONS, laps=laps, n_inputs=config.N_INPUTS,
                     ray_angles=doubles(config.RAY_ANGLES), n_rays=config.N_RAYS,
                     steer_levels=doubles(config.STEER_LEVELS), n_steer=len(config.STEER_LEVELS),
-                    throttle_levels=doubles(config.THROTTLE_LEVELS), n_throttle=len(config.THROTTLE_LEVELS))
+                    throttle_levels=doubles(config.THROTTLE_LEVELS), n_throttle=len(config.THROTTLE_LEVELS),
+                    line_curvature_scale=config.LINE_CURVATURE_SCALE, line_curvature_clip=config.LINE_CURVATURE_CLIP)
 
 
 def _c_track(track, time_limit, keep):
@@ -486,6 +490,11 @@ def _c_track(track, time_limit, keep):
                                                                    track.half_left, track.half_right)]
     keep.append([dist, *arrays])
     centerline, tangent, curvature, half_left, half_right = arrays
+    line_arrays = [np.ascontiguousarray(getattr(track, name), dtype=np.float64)
+                   for name in ("line", "line_tangent", "line_heading", "line_curvature")]
+    ahead = np.ascontiguousarray(sim.line_ahead_points(track), dtype=np.int64)
+    keep.append([*line_arrays, ahead])
+    line, line_tangent, line_heading, line_curvature = line_arrays
     x0, y0 = track.start_position
     return Track(dist=_pointer(dist, P_FLOAT), rows=dist.shape[0], cols=dist.shape[1], origin_x=track.origin[0],
                  origin_y=track.origin[1], centerline=_pointer(centerline), tangent=_pointer(tangent),
@@ -493,7 +502,9 @@ def _c_track(track, time_limit, keep):
                  m=len(centerline), spacing=track.spacing, start_x=x0, start_y=y0, start_heading=track.start_heading,
                  back=int(round(config.PROGRESS_BACK / track.spacing)),
                  ahead=int(round(config.PROGRESS_AHEAD / track.spacing)),
-                 sight=int(round(config.EXPERT_SIGHT / track.spacing)), time_limit=float(time_limit))
+                 sight=int(round(config.EXPERT_SIGHT / track.spacing)), time_limit=float(time_limit),
+                 line=_pointer(line), line_tangent=_pointer(line_tangent), line_heading=_pointer(line_heading),
+                 line_curvature=_pointer(line_curvature), line_ahead=_pointer(ahead, P_INT64), n_line_ahead=len(ahead))
 
 
 def _run(tracks, programs, setup, time_limits, laps, grip_scale, threads):

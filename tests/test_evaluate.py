@@ -628,12 +628,12 @@ def test_reduction_cells_append_mean_and_sd_over_the_runs_that_reached_the_goal(
 
 def test_network_text_names_each_layer_or_the_genomes_size():
     dense = nets.from_flat(np.zeros(nets.n_params((9,))), (9,))
-    assert evaluate.network_text(dense) == "12 → 9 → 45"
-    assert evaluate.network_text(nets.from_flat(np.zeros(nets.n_params(())), ())) == "12 → 45"
+    assert evaluate.network_text(dense) == "18 → 9 → 45"
+    assert evaluate.network_text(nets.from_flat(np.zeros(nets.n_params(())), ())) == "18 → 45"
     innovations = neat.Innovations()
     genome = neat.add_node(np.random.default_rng(0), neat.initial_genome(np.random.default_rng(0), innovations),
                            innovations)
-    assert evaluate.network_text(neat.NeatNet(genome)) == "1 hidden nodes, 541 connections"
+    assert evaluate.network_text(neat.NeatNet(genome)) == "1 hidden nodes, 811 connections"
 
 
 def test_the_evolved_networks_table_lists_ga_and_neat_runs_only():
@@ -643,8 +643,8 @@ def test_the_evolved_networks_table_lists_ga_and_neat_runs_only():
                ("neat", 0): neat.NeatNet(neat.initial_genome(np.random.default_rng(0), neat.Innovations()))}
     table = evaluate.evolved_networks_table(drivers)
     assert list(table.columns) == ["Method", "Run", "Structure", "Parameters"]
-    assert table.values.tolist() == [["GA", 0, "12 → 45", 585], ["GA", 1, "12 → 4 → 45", nets.n_params((4,))],
-                                     ["NEAT", 0, "0 hidden nodes, 540 connections", 585]]
+    assert table.values.tolist() == [["GA", 0, "18 → 45", 855], ["GA", 1, "18 → 4 → 45", nets.n_params((4,))],
+                                     ["NEAT", 0, "0 hidden nodes, 810 connections", 855]]
 
 
 def test_network_size_is_drawn_for_the_ga_and_neat(tmp_path):

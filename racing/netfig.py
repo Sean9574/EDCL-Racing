@@ -1,6 +1,6 @@
-"""Network figure (spec §11.4): each method's best final controller drawn as a graph. The nine distance rays
-and the speed input are on the left, hidden nodes in columns by depth, the 45 actions on the right. Connections are
-blue when positive and red when negative, wider and more opaque when stronger; biases are not drawn."""
+"""Network figure (spec §11.4): each method's best final controller drawn as a graph. The 18 inputs are on the
+left, hidden nodes in columns by depth, the 45 actions on the right. Connections are blue when positive and red when
+negative, wider and more opaque when stronger; biases are not drawn."""
 from pathlib import Path
 
 import numpy as np
@@ -15,12 +15,15 @@ THROTTLE_NAMES = {-1.0: "brake", -0.5: "½ brake", 0.0: "coast", 0.5: "½ gas", 
 
 
 def input_labels():
-    """The nine distance rays by angle (−90° points to the right, +90° to the left) and the speed input."""
+    """The 18 inputs: the nine distance rays by angle (−90° points to the right, +90° to the left), the speed, the
+    position across the road, the road width, the distance from the racing line, the heading relative to it and its
+    curvature at each LINE_AHEAD distance."""
     labels = []
     for angle in np.degrees(config.RAY_ANGLES):
         degrees = int(round(float(angle)))
         labels.append("0°" if degrees == 0 else f"{degrees:+d}°".replace("-", "−"))
-    return labels + ["speed", "position", "width"]
+    line = ["line offset", "line heading"] + [f"line +{d:g} m" for d in config.LINE_AHEAD]
+    return labels + ["speed", "position", "width"] + line
 
 
 def output_labels():
@@ -77,7 +80,7 @@ def node_positions(columns):
 
 
 def _label_size(column):
-    """Label size in points: smaller for a column of 45 actions than for the 12 inputs."""
+    """Label size in points: smaller for a column of 45 actions than for the 18 inputs."""
     return 6 if len(column) <= 20 else 4.5
 
 

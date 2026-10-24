@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -305,7 +307,7 @@ def test_sense_adds_position_and_width_and_keeps_done_rows_zero(circle_track):
     cars = sim.start_cars(circle_track, 2)
     cars.done[1] = True
     obs = sim.sense(circle_track, cars)
-    assert obs.shape == (2, 12) == (2, config.N_INPUTS)
+    assert obs.shape == (2, 18) == (2, config.N_INPUTS)
     assert obs[0, config.N_RAYS + 1] == pytest.approx(0.0, abs=1e-6)
     assert obs[0, config.N_RAYS + 2] == pytest.approx(circle_track.widths[0] / config.WIDTH_SCALE)
     assert not obs[1].any()
@@ -323,6 +325,50 @@ def test_position_and_width_use_the_widths_on_each_side():
     obs = sim.sense(track, cars)
     assert list(obs[:, config.N_RAYS + 1]) == [-1.0, 1.0, 0.0]
     assert np.all(obs[:, config.N_RAYS + 2] == 9.0 / config.WIDTH_SCALE)
+
+
+# ----- racing-line inputs (spec §5.2) -----
+
+def car_at(track, index, left=0.0, turn=0.0):
+    """One car at the racing line's point `index` moved `left` m along the line's left normal and turned `turn` rad
+    to the left of the line's direction, matched to that centerline point."""
+    cars = sim.start_cars(track, 1)
+    tangent = track.line_tangent[index]
+    cars.x[0] = track.line[index, 0] - left * tangent[1]
+    cars.y[0] = track.line[index, 1] + left * tangent[0]
+    cars.heading[0] = track.line_heading[index] + turn
+    cars.index[0] = index
+    return cars
+
+
+def test_the_line_inputs_follow_their_definitions(circle_track):
+    """Spec §5.2: distance / mean half width (+ right), heading / π (+ right), curvature × 50 m (+ right turns)."""
+    i = 200                                       # of the circle's 314 points: the 200 m curvature input wraps
+    half = (circle_track.half_left[i] + circle_track.half_right[i]) / 2.0
+    on_line = sim.line_inputs(circle_track, car_at(circle_track, i), np.array([0]))[0]
+    assert abs(on_line[0]) < 1e-9 and abs(on_line[1]) < 1e-9
+    right = sim.line_inputs(circle_track, car_at(circle_track, i, left=-2.0, turn=-0.3), np.array([0]))[0]
+    assert np.isclose(right[0], 2.0 / half) and np.isclose(right[1], 0.3 / np.pi)
+    left = sim.line_inputs(circle_track, car_at(circle_track, i, left=2.0, turn=0.3), np.array([0]))[0]
+    assert np.isclose(left[0], -2.0 / half) and np.isclose(left[1], -0.3 / np.pi)
+    m = len(circle_track.centerline)
+    for k, steps in enumerate(sim.line_ahead_points(circle_track)):
+        expected = np.clip(-circle_track.line_curvature[(i + steps) % m] * config.LINE_CURVATURE_SCALE, -5.0, 5.0)
+        assert on_line[2 + k] == expected
+    assert sim.line_ahead_points(circle_track) == [int(round(d / circle_track.spacing)) for d in config.LINE_AHEAD]
+
+
+def test_the_curvature_inputs_clip_at_5(circle_track):
+    m = len(circle_track.centerline)
+    tight = dataclasses.replace(circle_track, line_curvature=np.full(m, 0.2))      # a 5 m radius to the left
+    assert np.all(sim.line_inputs(tight, car_at(tight, 10), np.array([0]))[0, 2:] == -5.0)
+
+
+def test_sense_has_18_inputs_with_the_line_inputs_last(circle_track):
+    cars = car_at(circle_track, 300, left=1.0)
+    obs = sim.sense(circle_track, cars)
+    assert obs.shape == (1, config.N_INPUTS) == (1, 18)
+    assert np.array_equal(obs[0, config.N_RAYS + 3:], sim.line_inputs(circle_track, cars, np.array([0]))[0])
 
 
 # ----- lap times (spec §5.4, §11.1) -----

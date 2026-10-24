@@ -628,6 +628,23 @@ def test_the_compiled_simulator_matches_numpy_on_real_circuits():
 
 
 @needs_compiler
+def test_the_line_inputs_alone_drive_alike_in_both_simulators(circle_track):
+    """Spec §5.7: networks that read only the six racing-line inputs, so any difference in them changes the race."""
+    tracks_ = [circle_track, get_track(0, 1), get_track(0, config.MAX_LEVEL)]
+    cars = dense_cars(40, seed=11)
+    weights = cars.weights.copy()
+    first = (*config.BASELINE_HIDDEN, config.N_ACTIONS)[0]
+    rows = weights[:, :config.N_INPUTS * first].reshape(len(cars), config.N_INPUTS, first)
+    rows[:, :config.N_RAYS + 3, :] = 0.0                       # rays, speed, position and width read nothing
+    cars = nets.DensePopulation(weights, cars.hidden, cars.activation, cars.setup)
+    limits = [sim.target_time(t, config.TARGET_FACTOR) for t in tracks_]
+    for compiled, reference in zip(fastsim.simulate(tracks_, cars, limits, laps=config.LAPS),
+                                   numpy_results(tracks_, cars, limits, config.LAPS)):
+        same_results(compiled, reference)
+    assert len(np.unique(reference.progress)) > 5
+
+
+@needs_compiler
 @pytest.mark.slow
 def test_the_expert_drives_three_laps_of_every_real_track_alike_in_both_simulators():
     """Spec §4.5, §7.1, §12.1: the expert completes the 38 training layouts and the 4 test circuits for config.LAPS
@@ -653,6 +670,10 @@ def test_the_simulator_reads_a_tracks_arrays_without_copying_them(circle_track):
         dist, *arrays = keep[0]
         assert np.shares_memory(dist, track.dist)
         for array, name in zip(arrays, ("centerline", "tangent", "curvature", "half_left", "half_right")):
+            assert np.shares_memory(array, getattr(track, name)), name
+        *line_arrays, ahead = keep[1]
+        assert list(ahead) == sim.line_ahead_points(track)
+        for array, name in zip(line_arrays, ("line", "line_tangent", "line_heading", "line_curvature")):
             assert np.shares_memory(array, getattr(track, name)), name
 
 

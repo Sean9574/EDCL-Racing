@@ -19,9 +19,10 @@ def neat_driver():
     return neat.NeatNet(genome)
 
 
-def test_labels_name_the_rays_and_speed():
+def test_labels_name_the_rays_speed_road_and_racing_line():
     inputs = netfig.input_labels()
-    assert inputs[-3:] == ["speed", "position", "width"] and len(inputs) == config.N_INPUTS
+    assert inputs[9:12] == ["speed", "position", "width"] and len(inputs) == config.N_INPUTS
+    assert inputs[-6:] == ["line offset", "line heading", "line +25 m", "line +50 m", "line +100 m", "line +200 m"]
     assert len(inputs) == config.N_INPUTS and inputs[0] == "−90°" and inputs[4] == "0°" and inputs[8] == "+90°"
     assert inputs[9] == "speed"
 

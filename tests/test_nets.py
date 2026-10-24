@@ -6,7 +6,7 @@ from racing import config, nets, paths, population
 
 
 def test_baseline_parameter_count():
-    assert nets.n_params() == 973
+    assert nets.n_params() == 1069
 
 
 def test_init_population_shape_and_zero_biases():
@@ -140,7 +140,7 @@ def test_a_network_of_an_earlier_revision_reads_only_its_inputs():
     hidden = (16, 8)
     old = nets.init_population(rng, 3, hidden, n_inputs=10)
     assert old.shape[1] == nets.n_params(hidden, n_inputs=10)
-    assert nets.inputs_of(old.shape[1], hidden) == 10 and nets.inputs_of(nets.n_params(hidden), hidden) == 12
+    assert nets.inputs_of(old.shape[1], hidden) == 10 and nets.inputs_of(nets.n_params(hidden), hidden) == config.N_INPUTS
     obs = rng.normal(size=(3, config.N_INPUTS))
     changed = obs.copy()
     changed[:, 10:] += 5.0                                       # the inputs revision 3.1 did not have
@@ -196,7 +196,7 @@ def test_shaped_subsets_and_drivers_keep_each_cars_architecture_and_setup(shaped
 
 def test_a_network_without_hidden_layers_maps_the_inputs_to_the_outputs():
     flat = np.random.default_rng(3).normal(size=nets.n_params(()))
-    assert flat.size == (config.N_INPUTS + 1) * config.N_ACTIONS == 585
+    assert flat.size == (config.N_INPUTS + 1) * config.N_ACTIONS == 855
     obs = np.random.default_rng(4).random((3, config.N_INPUTS))
     w = flat[:config.N_INPUTS * config.N_ACTIONS].reshape(config.N_INPUTS, config.N_ACTIONS)
     b = flat[-config.N_ACTIONS:]
@@ -233,6 +233,18 @@ def test_an_imitation_controller_of_15_actions_is_refused(tmp_path):
     old_actions_keras(paths.champion_path("baseline", 2, champion_dir=tmp_path))
     with pytest.raises(ValueError, match=r"baseline run 2 was made for 15 actions, this version has 45"):
         nets.load_champion("baseline", 2, tmp_path)
+
+
+def test_a_controller_of_another_input_count_is_refused(tmp_path):
+    """Spec §6, §10.3: a controller of version 3.9 reads 12 inputs and is refused with a note naming the count."""
+    keras = nets.keras_cpu()
+    model = keras.Sequential([keras.Input((12,)), keras.layers.Dense(16, activation="relu"),
+                              keras.layers.Dense(config.N_ACTIONS, activation="softmax")])
+    path = paths.champion_path("baseline", 1, champion_dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(path)
+    with pytest.raises(ValueError, match="baseline run 1 was made for 12 inputs, this version has 18"):
+        nets.load_champion("baseline", 1, tmp_path)
 
 
 def test_a_dense_evolved_controller_of_15_actions_is_refused(tmp_path):

@@ -37,6 +37,12 @@ struct Track {
     int64_t back, ahead;         // centerline points searched behind and ahead of the last match
     int64_t sight;               // the expert's sight in centerline points
     double time_limit;           // s
+    const double* line;          // (m, 2) the racing line's point abeam of each centerline point (spec §4.8)
+    const double* line_tangent;  // (m, 2) its unit direction
+    const double* line_heading;  // (m,) that direction as an angle
+    const double* line_curvature;  // (m,) its smoothed curvature, positive for left turns
+    const int64_t* line_ahead;   // (n_line_ahead,) centerline points to each curvature input (sim.line_ahead_points)
+    int64_t n_line_ahead;
 };
 
 struct Settings {
@@ -50,6 +56,7 @@ struct Settings {
     int64_t n_steer;
     const double* throttle_levels;
     int64_t n_throttle;
+    double line_curvature_scale, line_curvature_clip;
 };
 
 struct Programs {                // network programs of all cars (spec §5.7)
@@ -350,6 +357,16 @@ void drive(const Track& t, const Settings& s, const Programs* p, const double* s
             double half = left >= 0.0 ? t.half_left[i] : t.half_right[i];
             obs[s.n_rays + 1] = std::clamp(-left / half, -1.0, 1.0);
             obs[s.n_rays + 2] = (t.half_left[i] + t.half_right[i]) / s.width_scale;
+            double lx = x - t.line[2 * i], ly = y - t.line[2 * i + 1];             // sim.line_inputs
+            double line_left = -lx * t.line_tangent[2 * i + 1] + ly * t.line_tangent[2 * i];
+            double half_mean = (t.half_left[i] + t.half_right[i]) / 2.0;
+            obs[s.n_rays + 3] = -line_left / half_mean;
+            double turn = heading - t.line_heading[i];
+            obs[s.n_rays + 4] = -std::atan2(std::sin(turn), std::cos(turn)) / M_PI;   // np.angle(np.exp(1j * turn))
+            for (int64_t k = 0; k < t.n_line_ahead; ++k)
+                obs[s.n_rays + 5 + k] = std::clamp(-t.line_curvature[wrap(i + t.line_ahead[k], t.m)] *
+                                                   s.line_curvature_scale,
+                                                   -s.line_curvature_clip, s.line_curvature_clip);
             action = network_action(*p, car, s.n_inputs, obs.data(), values);
         }
         double steer = s.steer_levels[action / s.n_throttle];                          // actions.class_to_controls

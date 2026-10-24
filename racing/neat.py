@@ -13,11 +13,11 @@ from racing import setup as car_setup
 from racing.backend import keras_cpu
 from racing.curriculum import StepSize, success_fraction
 
-N_IN = config.N_INPUTS                         # 12
+N_IN = config.N_INPUTS                         # 18
 N_OUT = config.N_ACTIONS                       # 45
 INPUT_IDS = range(0, N_IN)
 OUTPUT_IDS = range(N_IN, N_IN + N_OUT)
-FIRST_HIDDEN = N_IN + N_OUT                    # 57
+FIRST_HIDDEN = N_IN + N_OUT                    # 63
 CONNECTION_ATTEMPTS = 20                       # random node pairs one add-connection mutation tries
 
 
@@ -266,12 +266,12 @@ def node_depths(genome):
 @dataclass(eq=False)
 class Compiled:
     """A population of genomes as flat arrays (spec §9.9). Values live in one vector: each genome has a block
-    of slots, its 10 inputs and then its nodes. Each level holds one depth: the slots it computes, their biases,
+    of slots, its N_IN inputs and then its nodes. Each level holds one depth: the slots it computes, their biases,
     whether each is hidden (tanh) or an output (identity), and its enabled connections (source slot, position of the
     target within the level, weight)."""
     n: int
     size: int
-    inputs: np.ndarray          # (n, 10) input slots
+    inputs: np.ndarray          # (n, N_IN) input slots
     outputs: np.ndarray         # (n, N_ACTIONS) output slots, in output order
     levels: list                # [(nodes, bias, hidden, src, target, weight)] for depths 1, 2, ...
 

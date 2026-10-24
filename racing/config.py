@@ -97,7 +97,8 @@ FINAL_MIN_SUCCESSES = 18     # validation successes (of 20) a car needs to be pi
 
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
-N_INPUTS = N_RAYS + 3        # rays, speed, position across the road, road width (spec §5.2)
+N_INPUTS = N_RAYS + 3 + 2 + len(LINE_AHEAD)   # rays, speed, position, width; distance from the racing line, heading
+                             # relative to it, its curvature ahead (spec §5.2): 18 (12 to version 3.9)
 STEER_LEVELS = np.array([-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0])   # spec §6 (version 3.9; 5 to 3.8)
 THROTTLE_LEVELS = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])     # full brake, half brake, coast, half gas, full gas
 N_ACTIONS = len(STEER_LEVELS) * len(THROTTLE_LEVELS)       # 45 (15 to version 3.8)

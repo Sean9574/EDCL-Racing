@@ -51,7 +51,7 @@ def compile_model(model, learning_rate, steps_per_execution=None, jit_compile=No
 
 
 def build_network(units, activation, dropout, learning_rate, steps_per_execution=None, jit_compile=None):
-    """Dense classifier: 12 inputs, one hidden layer per entry of `units` (each followed by dropout if dropout > 0),
+    """Dense classifier: 18 inputs, one hidden layer per entry of `units` (each followed by dropout if dropout > 0),
     and a 45-way softmax."""
     keras = keras_cpu()
     layers = [keras.Input((config.N_INPUTS,))]
@@ -64,7 +64,7 @@ def build_network(units, activation, dropout, learning_rate, steps_per_execution
 
 
 def build_baseline():
-    """The baseline: 12 inputs, 16 ReLU units, a 45-way softmax (973 parameters)."""
+    """The baseline: 18 inputs, 16 ReLU units, a 45-way softmax (1,069 parameters)."""
     return build_network(list(config.BASELINE_HIDDEN), "relu", 0.0, config.LEARNING_RATE)
 
 
