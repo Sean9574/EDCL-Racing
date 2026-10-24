@@ -27,6 +27,7 @@ class Track:
     line_tangent: np.ndarray    # (M, 2) the line's unit direction there
     line_heading: np.ndarray    # (M,) that direction as an angle in rad
     line_curvature: np.ndarray  # (M,) the line's curvature in 1/m, positive for left turns, smoothed over 10 m
+    expert_speed: np.ndarray    # (M,) the expert's target speed at each point (spec §7.1)
     expert_lap_time: float = float("nan")
     name: str = ""              # a real circuit's database name (spec §4.7); empty for a generated map
 
@@ -118,18 +119,20 @@ def road_grid(center, tangent, half_left, half_right):
 
 def build_track(points, half_left, half_right, seed, level, name=""):
     """A Track from a closed loop of points in driving order (any spacing, first point not repeated) and the road's
-    half widths to the left and right, scalars or one per point (spec §4.1), with its road grid and its racing line
-    (spec §4.8)."""
+    half widths to the left and right, scalars or one per point (spec §4.1), with its road grid, its racing line
+    (spec §4.8) and the expert's target speeds along it (spec §7.1)."""
     shape = track_shape(points, half_left, half_right)
     origin, dist = road_grid(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"])
     m = len(shape["center"])
-    from racing import racing_line                 # racing_line imports nothing that imports this module
+    from racing import ideal, racing_line          # ideal imports sim, which imports this module
     line = racing_line.fields(shape["center"], shape["tangent"], shape["half_left"], shape["half_right"],
                               shape["spacing"])
+    expert_speed = ideal.sight_speeds(line["line"], line["line_curvature"], shape["spacing"],
+                                      config.EXPERT_GRIP_MARGIN, config.EXPERT_SIGHT)
     return Track(seed=seed, level=level, centerline=shape["center"], tangent=shape["tangent"],
                  curvature=shape["curvature"], half_left=shape["half_left"], half_right=shape["half_right"],
                  left=shape["left"], right=shape["right"], spacing=shape["spacing"], length=m * shape["spacing"],
-                 origin=origin, dist=dist, **line, name=name)
+                 origin=origin, dist=dist, **line, expert_speed=expert_speed, name=name)
 
 
 def wall_distance(track, x, y):

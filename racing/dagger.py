@@ -23,7 +23,7 @@ SUMMARY_NAME = "dagger.json"
 
 def drive_and_label(driver, seed, level=config.MAX_LEVEL):
     """One car driven by `driver` for config.LAPS laps of one map, with the expert's action recorded in every state
-    the car reaches (spec §8.4 steps 1-2). A crash puts the car back on the centerline, as during dataset
+    the car reaches (spec §8.4 steps 1-2). A crash puts the car back on the racing line, as during dataset
     collection, so the whole run is covered. The car drives with its setup (revision 3's for an imitation
     network, spec §9.11). Returns inputs, labels and the number of respawns."""
     track = get_track(seed, level)

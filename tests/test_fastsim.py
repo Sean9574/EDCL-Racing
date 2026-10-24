@@ -542,12 +542,12 @@ def test_the_compiled_expert_matches_numpy_on_a_fast_stadium():
 @needs_compiler
 def test_the_compiled_expert_uses_the_half_levels_as_numpy_does(circle_track):
     """Spec §5.7, §7.1: the expert's proportional throttle and its quantization to the 45 classes are identical in
-    both simulators, and its laps use the half levels."""
+    both simulators, and its laps use the half levels (on the circle it may hold its target speed by coasting alone)."""
     tracks_ = [circle_track, get_track(2_000_000, 2), get_track(2_000_001, 3)]
     limits = [config.EXPERT_VALIDATION_TIME] * 3
     compiled = fastsim.simulate_expert(tracks_, 1, limits, laps=config.LAPS)
+    seen = []
     for track, limit, fast in zip(tracks_, limits, compiled):
-        seen = []
         policy = expert.expert_policy(track)
 
         def recording(obs, cars):
@@ -557,8 +557,8 @@ def test_the_compiled_expert_uses_the_half_levels_as_numpy_does(circle_track):
 
         reference = sim.simulate(track, recording, 1, time_limit=limit, laps=config.LAPS)
         same_results(fast, reference)
-        throttles = {float(t) for t in class_to_controls(np.array(seen))[1]}
-        assert throttles & {-0.5, 0.5}                     # the half levels are used
+    throttles = {float(t) for t in class_to_controls(np.array(seen))[1]}
+    assert {-0.5, 0.5} <= throttles                        # the half levels are used
 
 
 from racing.track import build_track
@@ -660,6 +660,17 @@ def test_the_expert_drives_three_laps_of_every_real_track_alike_in_both_simulato
         same_results(fastsim.simulate_expert([track], 1, [limit], laps=config.LAPS)[0], reference)
 
 
+@needs_compiler
+@pytest.mark.slow
+def test_every_validation_and_dataset_map_builds_at_the_recorded_grip_share():
+    """Spec §7.1, §12.1: at EXPERT_GRIP_MARGIN the expert validates a map of every validation seed and of every
+    generated dataset seed within MAX_TRACK_ATTEMPTS."""
+    generated = [(seed, config.VALIDATION_LEVEL) for seed in config.VAL_SEEDS]
+    generated += [(seed, level) for seed, level in expert.dataset_seeds() if level < config.MAX_LEVEL]
+    for seed, level in generated:
+        assert np.isfinite(get_track(seed, level).expert_lap_time), (seed, level)
+
+
 def test_the_simulator_reads_a_tracks_arrays_without_copying_them(circle_track):
     """The arrays the compiled simulator reads are stored contiguous once when a track is built, so a call never copies
     them; a real circuit's memory-mapped road grid is read in place (spec §5.7, §9.10)."""
@@ -673,7 +684,8 @@ def test_the_simulator_reads_a_tracks_arrays_without_copying_them(circle_track):
             assert np.shares_memory(array, getattr(track, name)), name
         *line_arrays, ahead = keep[1]
         assert list(ahead) == sim.line_ahead_points(track)
-        for array, name in zip(line_arrays, ("line", "line_tangent", "line_heading", "line_curvature")):
+        for array, name in zip(line_arrays, ("line", "line_tangent", "line_heading", "line_curvature",
+                                             "expert_speed"), strict=True):
             assert np.shares_memory(array, getattr(track, name)), name
 
 

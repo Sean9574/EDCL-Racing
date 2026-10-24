@@ -107,12 +107,21 @@ BASELINE_HIDDEN = (16,)
 # --- Expert driver and dataset (spec §7) ---
 EXPERT_LOOKAHEAD_BASE = 6.0  # m
 EXPERT_LOOKAHEAD_TIME = 0.4  # s
-EXPERT_GRIP_MARGIN = 0.85
+EXPERT_PREVIEW_TIME = 0.1    # s: the expert's steering feed-forward reads the line's curvature v × this ahead of its
+                             # matched point, so it turns in as its one-step delay requires (spec §7.1, version 3.10)
+EXPERT_CROSS_TRACK_GAIN = 3.0  # its steering asks for this × its distance from the line / L² less curvature, L the
+                             # lookahead 6 m + 0.4 s × v (spec §7.1); pure pursuit's linearization is 2
+EXPERT_HEADING_GAIN = 5.0    # ... and this × its heading relative to the line / L less (pure pursuit: 2); these three
+                             # were tuned on the 42 real layouts for the highest grip share at which all finish
+EXPERT_GRIP_MARGIN = 0.79    # the expert's grip share (spec §7.1): measured by scripts/expert_grip.py on 2026-10-24:
+                             # Monza reversed not driven 3 laps at 0.80-0.88, Shanghai reversed at 0.84-0.88, more
+                             # real layouts above (33 of 42 at 1.00)
 EXPERT_SPEED_BAND = 0.5      # m/s, the least of the expert's throttle band (spec §7.1): its throttle is the speed error
                              # over the larger of this and one step's speed change a(v) DT (0.9-2.5 m/s), so in a
                              # steady corner near 5 g it does not switch between gas and brake every step, which left
                              # 1/√2 of a(v) to turn
-EXPERT_SIGHT = SENSOR_START  # m, the expert uses no geometry beyond the starting sensor length
+EXPERT_SIGHT = 200.0         # m, the expert's sight: the reach of the cars' curvature inputs (spec §7.1; 150 m
+                             # to version 3.9)
 EXPERT_VALIDATION_TIME = 600.0  # s, time limit when validating a track with the expert
 PERTURB_INTERVAL = (2.0, 4.0)   # s between steering disturbances
 PERTURB_DURATION = (0.3, 0.6)   # s per disturbance

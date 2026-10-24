@@ -272,17 +272,18 @@ class Track(ctypes.Structure):
                 ("half_left", P_DOUBLE), ("half_right", P_DOUBLE), ("m", ctypes.c_int64),
                 ("spacing", ctypes.c_double), ("start_x", ctypes.c_double), ("start_y", ctypes.c_double),
                 ("start_heading", ctypes.c_double), ("back", ctypes.c_int64), ("ahead", ctypes.c_int64),
-                ("sight", ctypes.c_int64), ("time_limit", ctypes.c_double),
+                ("time_limit", ctypes.c_double),
                 ("line", P_DOUBLE), ("line_tangent", P_DOUBLE), ("line_heading", P_DOUBLE),
-                ("line_curvature", P_DOUBLE), ("line_ahead", P_INT64), ("n_line_ahead", ctypes.c_int64)]
+                ("line_curvature", P_DOUBLE), ("line_ahead", P_INT64), ("n_line_ahead", ctypes.c_int64),
+                ("expert_speed", P_DOUBLE)]
 
 
 class Settings(ctypes.Structure):
     _fields_ = ([(name, ctypes.c_double) for name in (
                     "dt", "grip_scale", "grip_low", "grip_rise", "grip_max", "top_speed", "yaw_min_speed",
                     "speed_scale", "ray_scale", "ray_trace_length", "width_scale", "ray_min_step", "grid_res",
-                    "stall_time", "time_eps", "lookahead_base", "lookahead_time", "grip_margin", "speed_band",
-                    "sight_speed")]
+                    "stall_time", "time_eps", "lookahead_base", "lookahead_time", "speed_band", "preview_time",
+                    "cross_track_gain", "heading_gain")]
                 + [(name, ctypes.c_int64) for name in ("ray_max_iterations", "laps", "n_inputs")]
                 + [("ray_angles", P_DOUBLE), ("n_rays", ctypes.c_int64), ("steer_levels", P_DOUBLE),
                    ("n_steer", ctypes.c_int64), ("throttle_levels", P_DOUBLE), ("n_throttle", ctypes.c_int64),
@@ -463,7 +464,6 @@ def _forward(lib, population, obs):
 
 
 def _settings(grip_scale, laps, keep):
-    from racing import expert                     # expert imports this module
     def doubles(values):
         array = np.ascontiguousarray(values, dtype=np.float64)
         keep.append(array)
@@ -475,8 +475,9 @@ def _settings(grip_scale, laps, keep):
                     ray_trace_length=config.RAY_TRACE_LENGTH, width_scale=config.WIDTH_SCALE,
                     ray_min_step=config.RAY_MIN_STEP, grid_res=config.GRID_RES, stall_time=config.STALL_TIME,
                     time_eps=config.TIME_EPS, lookahead_base=config.EXPERT_LOOKAHEAD_BASE,
-                    lookahead_time=config.EXPERT_LOOKAHEAD_TIME, grip_margin=config.EXPERT_GRIP_MARGIN,
-                    speed_band=config.EXPERT_SPEED_BAND, sight_speed=expert.sight_speed(),
+                    lookahead_time=config.EXPERT_LOOKAHEAD_TIME, speed_band=config.EXPERT_SPEED_BAND,
+                    preview_time=config.EXPERT_PREVIEW_TIME, cross_track_gain=config.EXPERT_CROSS_TRACK_GAIN,
+                    heading_gain=config.EXPERT_HEADING_GAIN,
                     ray_max_iterations=config.RAY_MAX_ITERATIONS, laps=laps, n_inputs=config.N_INPUTS,
                     ray_angles=doubles(config.RAY_ANGLES), n_rays=config.N_RAYS,
                     steer_levels=doubles(config.STEER_LEVELS), n_steer=len(config.STEER_LEVELS),
@@ -491,20 +492,20 @@ def _c_track(track, time_limit, keep):
     keep.append([dist, *arrays])
     centerline, tangent, curvature, half_left, half_right = arrays
     line_arrays = [np.ascontiguousarray(getattr(track, name), dtype=np.float64)
-                   for name in ("line", "line_tangent", "line_heading", "line_curvature")]
+                   for name in ("line", "line_tangent", "line_heading", "line_curvature", "expert_speed")]
     ahead = np.ascontiguousarray(sim.line_ahead_points(track), dtype=np.int64)
     keep.append([*line_arrays, ahead])
-    line, line_tangent, line_heading, line_curvature = line_arrays
+    line, line_tangent, line_heading, line_curvature, expert_speed = line_arrays
     x0, y0 = track.start_position
     return Track(dist=_pointer(dist, P_FLOAT), rows=dist.shape[0], cols=dist.shape[1], origin_x=track.origin[0],
                  origin_y=track.origin[1], centerline=_pointer(centerline), tangent=_pointer(tangent),
                  curvature=_pointer(curvature), half_left=_pointer(half_left), half_right=_pointer(half_right),
                  m=len(centerline), spacing=track.spacing, start_x=x0, start_y=y0, start_heading=track.start_heading,
                  back=int(round(config.PROGRESS_BACK / track.spacing)),
-                 ahead=int(round(config.PROGRESS_AHEAD / track.spacing)),
-                 sight=int(round(config.EXPERT_SIGHT / track.spacing)), time_limit=float(time_limit),
+                 ahead=int(round(config.PROGRESS_AHEAD / track.spacing)), time_limit=float(time_limit),
                  line=_pointer(line), line_tangent=_pointer(line_tangent), line_heading=_pointer(line_heading),
-                 line_curvature=_pointer(line_curvature), line_ahead=_pointer(ahead, P_INT64), n_line_ahead=len(ahead))
+                 line_curvature=_pointer(line_curvature), line_ahead=_pointer(ahead, P_INT64), n_line_ahead=len(ahead),
+                 expert_speed=_pointer(expert_speed))
 
 
 def _run(tracks, programs, setup, time_limits, laps, grip_scale, threads):

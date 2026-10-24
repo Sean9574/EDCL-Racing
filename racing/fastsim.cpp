@@ -35,7 +35,6 @@ struct Track {
     double spacing;
     double start_x, start_y, start_heading;
     int64_t back, ahead;         // centerline points searched behind and ahead of the last match
-    int64_t sight;               // the expert's sight in centerline points
     double time_limit;           // s
     const double* line;          // (m, 2) the racing line's point abeam of each centerline point (spec §4.8)
     const double* line_tangent;  // (m, 2) its unit direction
@@ -43,12 +42,13 @@ struct Track {
     const double* line_curvature;  // (m,) its smoothed curvature, positive for left turns
     const int64_t* line_ahead;   // (n_line_ahead,) centerline points to each curvature input (sim.line_ahead_points)
     int64_t n_line_ahead;
+    const double* expert_speed;  // (m,) the expert's target speed at each point (spec §7.1)
 };
 
 struct Settings {
     double dt, grip_scale, grip_low, grip_rise, grip_max, top_speed, yaw_min_speed, speed_scale, ray_scale,
         ray_trace_length, width_scale, ray_min_step, grid_res, stall_time, time_eps;
-    double lookahead_base, lookahead_time, grip_margin, speed_band, sight_speed;
+    double lookahead_base, lookahead_time, speed_band, preview_time, cross_track_gain, heading_gain;
     int64_t ray_max_iterations, laps, n_inputs;
     const double* ray_angles;
     int64_t n_rays;
@@ -299,36 +299,30 @@ int64_t nearest(const double* levels, int64_t n, double value) {
 // sim.grip_at: a(v) = min(a0 + c v v, a_max)
 double grip_at(const Settings& s, double v) { return std::min(s.grip_low + s.grip_rise * v * v, s.grip_max); }
 
-// expert.corner_speed for one curvature
-double corner_speed(const Settings& s, double kappa) {
-    double k = std::max(kappa, 1e-9);
-    double excess = k - s.grip_margin * s.grip_rise;
-    double rising = excess > 0.0 ? std::sqrt(s.grip_margin * s.grip_low / std::max(excess, 1e-12)) : INFINITY;
-    return std::min(rising, std::sqrt(s.grip_margin * s.grip_max / k));
-}
-
-// expert.expert_controls and expert.target_speed, quantized to an action class (expert.expert_policy)
+// expert.expert_controls, quantized to an action class (expert.expert_policy): steering that follows the racing line
+// (the line's curvature ahead, less feedback on the distance from the line and the heading relative to it), and the
+// target speed read from the track's profile (expert.target_speed), computed in numpy when the track was built
 int64_t expert_action(const Track& t, const Settings& s, double x, double y, double heading, double speed,
                       int64_t index) {
     int64_t here = wrap(index, t.m);
+    double dx = x - t.line[2 * here], dy = y - t.line[2 * here + 1];
+    double offset = -dx * t.line_tangent[2 * here + 1] + dy * t.line_tangent[2 * here];   // m left of the line
+    double turn = heading - t.line_heading[here];
+    double heading_error = std::atan2(std::sin(turn), std::cos(turn));   // np.angle(np.exp(1j * turn))
+    int64_t preview = wrap(here + (int64_t)std::nearbyint(speed * s.preview_time / t.spacing), t.m);
     double look = s.lookahead_base + s.lookahead_time * speed;
-    int64_t aim = wrap(here + (int64_t)std::nearbyint(look / t.spacing), t.m);
-    double dx = t.centerline[2 * aim] - x, dy = t.centerline[2 * aim + 1] - y;
-    double turn = std::atan2(dy, dx) - heading;
-    double alpha = std::atan2(std::sin(turn), std::cos(turn));       // np.angle(np.exp(1j * turn))
-    double path_curvature = 2.0 * std::sin(alpha) / std::max(std::hypot(dx, dy), 1e-6);
+    double path_curvature = t.line_curvature[preview] - s.cross_track_gain * offset / (look * look) -
+                            s.heading_gain * heading_error / look;
     double grip = grip_at(s, speed);
     double steer = std::clamp(speed * speed * path_curvature / grip, -1.0, 1.0);
 
-    double kappa = 0.0;
-    for (int64_t k = 0; k <= t.sight; ++k) kappa = std::max(kappa, std::fabs(t.curvature[wrap(here + k, t.m)]));
-    double target = std::min(std::min(corner_speed(s, kappa), s.sight_speed), s.top_speed);
+    double target = t.expert_speed[here];
     double band = std::max(s.speed_band, grip * s.dt);                 // np.maximum(EXPERT_SPEED_BAND, a(v) DT)
     double throttle = std::clamp((target - speed) / band, -1.0, 1.0);  // np.clip((target - speed) / band, -1, 1)
-    if (std::fabs(steer) >= 1.0) throttle = std::min(throttle, 0.0);   // np.minimum at full lock: no gas
+    int64_t steer_index = nearest(s.steer_levels, s.n_steer, steer);
+    if (std::fabs(s.steer_levels[steer_index]) >= 1.0) throttle = std::min(throttle, 0.0);   // no gas at full lock
 
-    return nearest(s.steer_levels, s.n_steer, steer) * s.n_throttle +
-           nearest(s.throttle_levels, s.n_throttle, throttle);
+    return steer_index * s.n_throttle + nearest(s.throttle_levels, s.n_throttle, throttle);
 }
 
 // sim.simulate for one car: sense, act, step and track progress until the car is done

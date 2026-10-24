@@ -391,7 +391,7 @@ def test_a_car_at_top_speed_counts_every_lap_once():
     cars = sim.start_cars(track, 1, laps=3)
     cars.speed[:] = config.TOP_SPEED                                    # no drag: coasting keeps 105 m/s
     while not cars.done[0]:
-        steer, _ = expert.expert_controls(track, cars)                  # pure pursuit, continuous
+        steer, _ = expert.expert_controls(track, cars)                  # the expert's steering, continuous
         sim.step(track, cars, steer, np.zeros(1), time_limit=300.0)
     assert cars.finished[0] and cars.laps_done[0] == 3 and np.all(np.isfinite(cars.lap_times[0]))
     assert np.isclose(cars.lap_times[0].sum(), cars.finish_time[0])

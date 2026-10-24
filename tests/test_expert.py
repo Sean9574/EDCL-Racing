@@ -9,38 +9,57 @@ from racing.track import build_track
 
 def test_expert_finishes_the_circle(circle_track):
     lap = expert.expert_lap_time(circle_track)
-    corner_speed = expert.corner_speed(1 / 50.0)                 # the circle's radius is 50 m
+    corner_speed = expert.corner_speed(np.abs(circle_track.line_curvature).mean())   # the racing line's circle
+    length = np.sum(np.hypot(*(np.roll(circle_track.line, -1, axis=0) - circle_track.line).T))   # m, of the line
     assert lap is not None
     fastest = corner_speed + config.EXPERT_SPEED_BAND
-    assert circle_track.length / fastest < lap < 2.5 * circle_track.length / corner_speed
+    assert length / fastest < lap < 2.5 * length / corner_speed
 
 
-def test_the_corner_speed_uses_the_grip_at_that_speed():
-    """Spec §7.1: the highest v with v² κ ≤ 0.85 a(v)."""
-    kappa = np.array([1 / 15.0, 1 / 60.0, 1 / 150.0, 1 / 400.0, 1 / 5000.0])
-    v = expert.corner_speed(kappa)
-    margin = config.EXPERT_GRIP_MARGIN
-    bound = kappa < 1 / 300.0                        # gentle curves: the ceiling or nothing binds
-    assert np.allclose((v * v * kappa)[~bound], margin * sim.grip_at(v)[~bound], rtol=1e-12)
-    assert np.all(v * v * kappa <= margin * sim.grip_at(v) * (1 + 1e-12))
-    assert v[-1] > config.TOP_SPEED                  # a 5 km radius does not limit the car
+def on_the_line(track, n, speed, point=0):
+    """n cars on the racing line at line point `point`, heading along the line at `speed`."""
+    cars = sim.start_cars(track, n)
+    cars.index[:] = point
+    cars.x[:], cars.y[:] = track.line[point]
+    cars.heading[:] = track.line_heading[point]
+    cars.speed[:] = speed
+    return cars
 
 
-def test_the_sight_speed_stops_within_150_m():
-    assert config.EXPERT_SIGHT == config.SENSOR_START == 150.0
-    v = expert.sight_speed()
-    assert 97.5 < v < 98.5                           # about 98 m/s (353 km/h), spec §7.1
-    speeds = np.linspace(v, 0.0, 200001)             # braking at 0.85 a(v) from v covers exactly the sight
-    rate = config.EXPERT_GRIP_MARGIN * sim.grip_at(speeds)
-    distance = np.trapezoid(speeds / rate, -speeds) if hasattr(np, "trapezoid") else np.trapz(speeds / rate, -speeds)
-    assert np.isclose(distance, 150.0, rtol=1e-4)
+def feed_forward(track, speed, point=0):
+    """The steering fraction that turns along the line's curvature EXPERT_PREVIEW_TIME × speed ahead of `point`."""
+    preview = (point + int(np.round(speed * config.EXPERT_PREVIEW_TIME / track.spacing))) % len(track.centerline)
+    return speed ** 2 * track.line_curvature[preview] / sim.grip_at(speed)
 
 
-def test_the_target_speed_never_exceeds_the_sight_speed_or_the_top_speed(circle_track):
+def test_on_the_line_the_expert_steers_by_the_lines_curvature(circle_track):
+    """Spec §7.1 (version 3.10): on the line and along it, the steering is the feed-forward fraction alone, v² κ / a(v)
+    of the line's curvature just ahead."""
+    for point in (0, 100, 250):
+        cars = on_the_line(circle_track, 1, 20.0, point)
+        steer = expert.expert_controls(circle_track, cars)[0][0]
+        assert np.isclose(steer, feed_forward(circle_track, 20.0, point), rtol=1e-12) and 0.0 < steer < 1.0
+
+
+def test_a_car_off_the_line_steers_back_toward_it(circle_track):
+    """Spec §7.1: left of the line or pointing left of it the expert steers to the right of the feed-forward fraction,
+    and to its left when right of the line or pointing right."""
+    cars = on_the_line(circle_track, 4, 20.0)
+    left = np.array([-circle_track.line_tangent[0, 1], circle_track.line_tangent[0, 0]])
+    cars.x[0], cars.y[0] = circle_track.line[0] + left                       # 1 m left of the line
+    cars.x[1], cars.y[1] = circle_track.line[0] - left                       # 1 m right of it
+    cars.heading[2] += 0.05                                                  # pointing left of the line
+    cars.heading[3] -= 0.05                                                  # pointing right of it
+    steer = expert.expert_controls(circle_track, cars)[0]
+    ahead = feed_forward(circle_track, 20.0)
+    assert steer[0] < ahead < steer[1] and steer[2] < ahead < steer[3]
+
+
+def test_the_target_speed_is_the_tracks_profile(circle_track):
     here = np.arange(len(circle_track.centerline))
-    target = expert.target_speed(circle_track, here)
-    assert np.all(target <= expert.sight_speed()) and np.all(target <= config.TOP_SPEED)
-    assert np.allclose(target, expert.corner_speed(np.abs(circle_track.curvature).max()), rtol=1e-6)
+    assert np.array_equal(expert.target_speed(circle_track, here), circle_track.expert_speed)
+    assert np.all(circle_track.expert_speed <= config.TOP_SPEED)
+    assert config.EXPERT_SIGHT == 200.0
 
 
 def circle(radius, width=14.0):
@@ -72,8 +91,7 @@ def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_ste
 def test_the_expert_never_applies_gas_at_full_lock(circle_track):
     """Spec §7.1: while its steering is saturated the expert's throttle is at most 0, so the friction circle
     leaves all of a(v) for turning; below its target speed with the steering short of full lock it still applies gas."""
-    cars = sim.start_cars(circle_track, 2)
-    cars.speed[:] = 20.0                                   # well below the 50 m circle's corner speed of about 32 m/s
+    cars = on_the_line(circle_track, 2, 20.0)              # well below the line's corner speed of about 33 m/s
     cars.heading[0] += 1.0                                 # pointing off the line: the steering saturates
     steer, throttle = expert.expert_controls(circle_track, cars)
     assert np.all(cars.speed < expert.target_speed(circle_track, cars.index) - 1.5)
@@ -83,11 +101,24 @@ def test_the_expert_never_applies_gas_at_full_lock(circle_track):
     assert expert.expert_controls(circle_track, cars)[1][0] == -1.0
 
 
+def test_the_expert_never_applies_gas_when_its_steering_is_quantized_to_full_lock(circle_track):
+    """Spec §7.1 (version 3.10): a steering fraction short of 1 that is quantized to full lock gets no gas either, as
+    full lock with full gas would leave 1/√2 of a(v) for turning; just below the full-lock level it still gets gas."""
+    look = config.EXPERT_LOOKAHEAD_BASE + config.EXPERT_LOOKAHEAD_TIME * 20.0
+    cars = on_the_line(circle_track, 2, 20.0)                              # below the line's corner speed
+    for car, fraction in ((0, 0.95), (1, 0.8)):                           # turned right of the line to steer so
+        extra = (fraction - feed_forward(circle_track, 20.0)) * sim.grip_at(20.0) / 20.0 ** 2
+        cars.heading[car] -= extra * look / config.EXPERT_HEADING_GAIN
+    steer, throttle = expert.expert_controls(circle_track, cars)
+    assert np.allclose(steer, [0.95, 0.8]) and class_to_controls(controls_to_class(steer, throttle))[0][0] == 1.0
+    assert throttle[0] == 0.0 and throttle[1] == 1.0
+
+
 def test_the_expert_throttle_is_its_speed_error_over_its_band():
     """Spec §7.1 (version 3.9): throttle = clip((target − speed) / band, −1, 1), quantized to the five levels; never
     above 0 at full lock."""
     track = circle(400.0)
-    cars = sim.start_cars(track, 6)
+    cars = on_the_line(track, 6, 0.0)
     target = expert.target_speed(track, np.mod(cars.index, len(track.centerline)))
     band = np.maximum(config.EXPERT_SPEED_BAND, sim.grip_at(target) * config.DT)
     cars.speed[:] = target - band * np.array([2.0, 0.6, 0.1, -0.1, -0.6, -2.0])
@@ -102,13 +133,14 @@ def test_the_expert_throttle_is_its_speed_error_over_its_band():
 def test_the_expert_leaves_montreals_hairpin_without_gas_at_full_lock(monkeypatch):
     """Spec §7.1, §12.1: in Montreal's racing direction the expert left a 30 m right-hander below its target speed at
     full gas and full lock, which left 0.71 of a(v) for turning where the following curve needed about 0.83, and drifted
-    off the road after 48 s. Without gas at full lock it completes the lap, alike in both simulators."""
+    off the road after 48 s. Without gas at full lock (from version 3.10 whenever the steering is quantized to full
+    lock) it completes the lap, alike in both simulators."""
     track = circuits.circuit_track("Montreal")
     real, saturated_below_target = expert.expert_controls, []
 
     def recording(track_, cars):
         steer, throttle = real(track_, cars)
-        full_lock = np.abs(steer) >= 1.0
+        full_lock = np.abs(class_to_controls(controls_to_class(steer, throttle))[0]) >= 1.0
         assert not np.any(full_lock & (throttle > 0.0))
         band = np.maximum(config.EXPERT_SPEED_BAND, sim.grip_at(cars.speed) * config.DT)
         below = cars.speed < expert.target_speed(track_, np.mod(cars.index, len(track_.centerline))) - band
@@ -117,7 +149,7 @@ def test_the_expert_leaves_montreals_hairpin_without_gas_at_full_lock(monkeypatc
 
     monkeypatch.setattr(expert, "expert_controls", recording)
     reference = sim.simulate(track, expert.expert_policy(track), 1, time_limit=config.EXPERT_VALIDATION_TIME)
-    assert reference.finished[0] and 95.0 < reference.finish_time[0] < 110.0
+    assert reference.finished[0]
     assert sum(saturated_below_target) > 0                 # the rule acts on this lap
     monkeypatch.setattr(config, "SIMULATOR", "auto")
     if fastsim.available():
@@ -196,16 +228,14 @@ def test_a_crash_does_not_end_collection(monkeypatch, circle_track):
     assert cars.finished[0] and not cars.crashed[0]               # a full lap of progress was covered
 
 
-def test_respawn_puts_the_car_back_on_the_centerline(circle_track):
+def test_a_crashed_car_is_put_back_on_the_racing_line(circle_track):
     cars = sim.start_cars(circle_track, 1)
-    cars.index[:] = 3 * len(circle_track.centerline) + 40       # unwrapped index on the fourth lap
-    cars.x[:], cars.speed[:] = 1e4, 0.0
-    cars.crashed[:], cars.done[:] = True, True
+    cars.index[0] = 3 * len(circle_track.centerline) + 40       # unwrapped index on the fourth lap: point 40
+    cars.x[0], cars.speed[0] = 1e4, 0.0
+    cars.crashed[0], cars.done[0] = True, True
     assert expert.respawn(circle_track, cars) == 1
-    assert np.allclose([cars.x[0], cars.y[0]], circle_track.centerline[40])
-    t = circle_track.tangent[40]
-    assert np.isclose(cars.heading[0], np.arctan2(t[1], t[0]))
-    assert np.isclose(cars.speed[0], expert.target_speed(circle_track, np.array([40]))[0])
+    assert cars.x[0] == circle_track.line[40, 0] and cars.y[0] == circle_track.line[40, 1]
+    assert cars.heading[0] == circle_track.line_heading[40] and cars.speed[0] == circle_track.expert_speed[40]
     assert not cars.crashed[0] and not cars.done[0]
 
 
@@ -326,6 +356,10 @@ def test_a_dataset_collected_with_other_settings_is_refused(monkeypatch, tmp_pat
 
 def test_dataset_settings_are_recorded():
     assert {"DATASET_SEED_RANGE", "DATASET_TRACKS", "DATASET_SALT"} <= set(checkpoint.settings_record())
+
+
+def test_the_line_tracking_settings_are_recorded():
+    assert {"EXPERT_PREVIEW_TIME", "EXPERT_CROSS_TRACK_GAIN", "EXPERT_HEADING_GAIN"} <= set(checkpoint.settings_record())
 
 
 def test_parallel_collection_matches_serial(tmp_path):

@@ -30,6 +30,23 @@ def test_a_built_track_has_its_racing_line(circle_track):
     assert circle_track.line_heading.shape == (m,) and circle_track.line_curvature.shape == (m,)
 
 
+def test_a_built_track_has_the_experts_target_speeds(monkeypatch, circle_track):
+    """Spec §7.1: the expert's target speed at every point is the speed profile of its sight along the racing line at
+    its grip share, computed when a track is built; a real circuit's follows the grip share, not its cached line."""
+    from racing import circuits, ideal
+
+    def profile(track):
+        return ideal.sight_speeds(track.line, track.line_curvature, track.spacing, config.EXPERT_GRIP_MARGIN,
+                                  config.EXPERT_SIGHT)
+
+    for track in (circle_track, circuits.circuit_track("Spielberg", True)):
+        assert np.array_equal(track.expert_speed, profile(track))
+        assert track.expert_speed.dtype == np.float64 and track.expert_speed.flags["C_CONTIGUOUS"]
+    monkeypatch.setattr(config, "EXPERT_GRIP_MARGIN", 0.8)
+    slower = circuits.circuit_track("Spielberg", True)
+    assert np.array_equal(slower.expert_speed, profile(slower))
+
+
 def test_start_pose(circle_track):
     assert np.allclose(circle_track.start_position, [0, -50], atol=1e-9)
     assert abs(circle_track.start_heading) < 0.01                         # driving +x at the bottom

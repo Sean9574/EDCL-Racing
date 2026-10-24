@@ -38,3 +38,33 @@ def test_a_straight_is_driven_at_the_top_speed_between_two_corners():
     length = 2000.0 + 2 * np.pi * 80.0
     lap = ideal.lap_time(points)
     assert length / config.TOP_SPEED < lap < length / float(ideal.corner_speed(1 / 80.0))
+
+
+def test_the_stop_speed_stops_within_its_distance():
+    for distance, share in ((150.0, 0.85), (200.0, 1.0), (60.0, 1.0)):
+        v = ideal.stop_speed(distance, share)
+        speeds = np.linspace(v, 0.0, 200001)
+        travelled = np.trapezoid(speeds / (share * sim.grip_at(speeds)), -speeds)
+        assert np.isclose(travelled, distance, rtol=1e-4)
+    assert 97.5 < ideal.stop_speed(150.0, 0.85) < 98.5           # version 3.9's sight speed
+    assert ideal.stop_speed(200.0, 1.0) > config.TOP_SPEED      # 200 m at full grip stops from the top speed
+
+
+def test_on_a_circle_the_target_speed_is_the_corner_speed_everywhere():
+    radius = 100.0
+    points = circle_points(radius, step=1.0)
+    curvature = np.full(len(points), 1.0 / radius)
+    target = ideal.sight_speeds(points, curvature, 1.0, 1.0, 200.0)
+    assert np.allclose(target, min(float(ideal.corner_speed(1 / radius)), config.TOP_SPEED))
+
+
+def test_the_target_slows_for_a_corner_within_the_sight_only():
+    """A straight ending in a 30 m radius bend: far from the bend the target is the top speed, within braking distance
+    it falls, and the drop starts no earlier than 200 m before the bend."""
+    straight = np.column_stack([np.arange(0.0, 1000.0, 1.0), np.zeros(1000)])
+    curvature = np.zeros(1000)
+    curvature[600:700] = 1.0 / 30.0
+    target = ideal.sight_speeds(straight, curvature, 1.0, 1.0, 200.0)
+    assert target[300] == config.TOP_SPEED and target[650] == min(float(ideal.corner_speed(1 / 30.0)),
+                                                                   config.TOP_SPEED)
+    assert np.all(target[:400] == config.TOP_SPEED) and target[550] < config.TOP_SPEED

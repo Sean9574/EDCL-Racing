@@ -1,71 +1,63 @@
 """Scripted expert driver (spec §7.1), whose steering and throttle are fractions of the grip a(v), and imitation
-dataset collection on generated maps and the real training layouts (spec §7.2-7.3)."""
+dataset collection on generated maps and the real training layouts (spec §7.2-7.3). From version 3.10 the expert
+follows the racing line, its target speed the track's speed profile of its sight along the line at its grip share."""
 import os
 import time
 from pathlib import Path
 
 import numpy as np
 
-from racing import checkpoint, config, fastsim, sim
+from racing import checkpoint, config, fastsim, ideal, sim
 from racing.actions import class_to_controls, controls_to_class
 from racing.tracks import get_track
 
 
 def expert_controls(track, cars):
     """Continuous steering and throttle chosen by the expert for every car, as fractions of the grip a(v) at the car's
-    speed (spec §7.1). The throttle is the speed error (target minus speed) divided by the band, the larger of
-    EXPERT_SPEED_BAND and one step's full speed change a(v) DT, clipped to [−1, 1]: once quantized, full gas or full
-    brake beyond the band, half gas or half brake within it and coast near the target, so a step of gas or brake never
-    carries it across the whole band, and in a steady corner it settles at a speed and keeps all of a(v) for turning.
-    While its steering is saturated the throttle is never above 0, so a corner's exit taken at full lock keeps all of
-    a(v) for turning."""
+    speed (spec §7.1, version 3.10). The steering follows the racing line: the path curvature it asks for is the
+    line's curvature EXPERT_PREVIEW_TIME × v ahead of the matched point, less EXPERT_CROSS_TRACK_GAIN × the car's
+    distance left of the line / L² and EXPERT_HEADING_GAIN × its heading relative to the line / L, where L = 6 m +
+    0.4 s × v (EXPERT_LOOKAHEAD_BASE, EXPERT_LOOKAHEAD_TIME); the steering is that curvature × v² / a(v), clipped to
+    [−1, 1]. The target speed is the track's profile at the matched point. The throttle is the speed error (target
+    minus speed) divided by the band, the larger of EXPERT_SPEED_BAND and one step's full speed change a(v) DT,
+    clipped to [−1, 1]: once quantized, full gas or full brake beyond the band, half gas or half brake within it and
+    coast near the target, so a step of gas or brake never carries it across the whole band, and in a steady corner it
+    settles at a speed and keeps all of a(v) for turning. While its steering is quantized to full lock the throttle is
+    never above 0, so a corner's exit taken at full lock keeps all of a(v) for turning."""
     m = len(track.centerline)
     here = np.mod(cars.index, m)
+    tangent = track.line_tangent[here]
+    dx, dy = cars.x - track.line[here, 0], cars.y - track.line[here, 1]
+    offset = -dx * tangent[:, 1] + dy * tangent[:, 0]                       # m left of the line
+    heading_error = np.angle(np.exp(1j * (cars.heading - track.line_heading[here])))   # rad, left of the line
+    preview = np.mod(here + np.round(cars.speed * config.EXPERT_PREVIEW_TIME / track.spacing).astype(np.int64), m)
     look = config.EXPERT_LOOKAHEAD_BASE + config.EXPERT_LOOKAHEAD_TIME * cars.speed
-    target = track.centerline[np.mod(here + np.round(look / track.spacing).astype(np.int64), m)]
-    dx, dy = target[:, 0] - cars.x, target[:, 1] - cars.y
-    alpha = np.angle(np.exp(1j * (np.arctan2(dy, dx) - cars.heading)))
-    path_curvature = 2.0 * np.sin(alpha) / np.maximum(np.hypot(dx, dy), 1e-6)
+    path_curvature = (track.line_curvature[preview] - config.EXPERT_CROSS_TRACK_GAIN * offset / (look * look)
+                      - config.EXPERT_HEADING_GAIN * heading_error / look)
     grip = sim.grip_at(cars.speed)
     steer = np.clip(cars.speed ** 2 * path_curvature / grip, -1.0, 1.0)
     target = target_speed(track, here)
     band = np.maximum(config.EXPERT_SPEED_BAND, grip * config.DT)
     throttle = np.clip((target - cars.speed) / band, -1.0, 1.0)
-    throttle = np.where(np.abs(steer) >= 1.0, np.minimum(throttle, 0.0), throttle)   # no gas at full lock
+    level = class_to_controls(controls_to_class(steer, throttle))[0]           # the steering level it will drive
+    throttle = np.where(np.abs(level) >= 1.0, np.minimum(throttle, 0.0), throttle)   # no gas at full lock
     return steer, throttle
 
 
 def corner_speed(kappa):
-    """The highest speed v with v² κ ≤ EXPERT_GRIP_MARGIN × a(v) for curvatures κ in 1/m (spec §7.1): below the grip
-    ceiling v² (κ − m c) ≤ m a0, at the ceiling v² κ ≤ m a_max; the lower of the two bounds."""
-    margin = config.EXPERT_GRIP_MARGIN
-    kappa = np.maximum(np.asarray(kappa, dtype=float), 1e-9)
-    excess = kappa - margin * config.GRIP_RISE
-    rising = np.where(excess > 0.0, np.sqrt(margin * config.GRIP_LOW / np.maximum(excess, 1e-12)), np.inf)
-    return np.minimum(rising, np.sqrt(margin * config.GRIP_MAX / kappa))
+    """The expert's corner speed: ideal.corner_speed at its grip share (spec §7.1)."""
+    return ideal.corner_speed(kappa, config.EXPERT_GRIP_MARGIN)
 
 
 def sight_speed(sight=None):
-    """The highest speed from which the expert stops within `sight` m (EXPERT_SIGHT) braking at EXPERT_GRIP_MARGIN ×
-    a(v) (spec §7.1): below GRIP_FULL_SPEED the braking distance from v is ln(a(v) / a0) / (2 m c), above it the
-    ceiling adds (v² − v_full²) / (2 m a_max). About 98 m/s for 150 m."""
-    sight = config.EXPERT_SIGHT if sight is None else float(sight)
-    margin, low, rise = config.EXPERT_GRIP_MARGIN, config.GRIP_LOW, config.GRIP_RISE
-    full = config.GRIP_FULL_SPEED
-    rising_distance = np.log((low + rise * full * full) / low) / (2.0 * margin * rise)
-    if sight <= rising_distance:
-        return float(np.sqrt(low * np.expm1(2.0 * margin * rise * sight) / rise))
-    return float(np.sqrt(full * full + 2.0 * margin * config.GRIP_MAX * (sight - rising_distance)))
+    """The speed from which the expert stops within its sight (spec §7.1)."""
+    return ideal.stop_speed(config.EXPERT_SIGHT if sight is None else float(sight), config.EXPERT_GRIP_MARGIN)
 
 
 def target_speed(track, here):
-    """The expert's target speed at centerline points `here` (spec §7.1): the corner speed of the tightest curve within
-    its sight, capped by the speed from which it can stop within its sight and by the top speed."""
-    m = len(track.centerline)
-    sight = int(round(config.EXPERT_SIGHT / track.spacing))
-    window = np.mod(here[:, None] + np.arange(sight + 1)[None, :], m)
-    kappa = np.max(np.abs(track.curvature[window]), axis=1)
-    return np.minimum(np.minimum(corner_speed(kappa), sight_speed()), config.TOP_SPEED)
+    """The expert's target speed at centerline points `here` (spec §7.1): the speed profile of its sight along the
+    racing line, computed when the track was built."""
+    return track.expert_speed[here]
 
 
 def expert_policy(track):
@@ -85,13 +77,14 @@ def expert_lap_time(track):
 
 
 def respawn(track, cars):
-    """Put every crashed car back on the centerline at its matched point, heading along the track at the
-    expert's target speed there, and let it continue. Returns the number of cars moved."""
+    """Put every crashed car back on the racing line at the line point of its matched centerline point, heading along
+    the line at the expert's target speed there, and let it continue (spec §7.2; on the centerline up to version 3.9).
+    Returns the number of cars moved."""
     j = np.flatnonzero(cars.crashed)
     here = np.mod(cars.index[j], len(track.centerline))
-    cars.x[j] = track.centerline[here, 0]
-    cars.y[j] = track.centerline[here, 1]
-    cars.heading[j] = np.arctan2(track.tangent[here, 1], track.tangent[here, 0])
+    cars.x[j] = track.line[here, 0]
+    cars.y[j] = track.line[here, 1]
+    cars.heading[j] = track.line_heading[here]
     cars.speed[j] = target_speed(track, here)
     cars.crashed[j] = False
     cars.done[j] = False
@@ -100,7 +93,7 @@ def respawn(track, cars):
 
 def collect_rows(track, rng):
     """One lap of expert driving with random steering disturbances. Labels are always the expert's own
-    choice. A crash puts the car back on the centerline (spec §7.2). Returns inputs, labels and the
+    choice. A crash puts the car back on the racing line (spec §7.2). Returns inputs, labels and the
     number of respawns."""
     cars = sim.start_cars(track, 1)
     next_kick = rng.uniform(*config.PERTURB_INTERVAL)

@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from racing import config
+from racing import config, ideal
 from racing.track import Track, road_grid, track_shape
 
 DATA_DIR = config.PROJECT_DIR / "data" / "racetracks" / "tracks"
@@ -221,18 +221,21 @@ def _line(name, reverse, shape):
 
 def circuit_track(name, reverse=False, seed=0, level=config.MAX_LEVEL):
     """Circuit `name` as a Track at real scale with its widths (spec §4.7), in its racing direction or reversed from
-    the same start; the road grid is that of the racing direction, which is the same road."""
+    the same start; the road grid is that of the racing direction, which is the same road. The expert's target speeds
+    (spec §7.1) are computed from the cached line, never cached: they follow EXPERT_GRIP_MARGIN."""
     points, left, right = outline(name)
     shape = track_shape(points, left, right)
     origin, dist = _grid(name, shape)
     if reverse:
         shape = track_shape(*reverse_outline(shape["center"], shape["half_left"], shape["half_right"]))
     line = _line(name, reverse, shape)
+    expert_speed = ideal.sight_speeds(line["line"], line["line_curvature"], shape["spacing"],
+                                      config.EXPERT_GRIP_MARGIN, config.EXPERT_SIGHT)
     m = len(shape["center"])
     return Track(seed=int(seed), level=int(level), centerline=shape["center"], tangent=shape["tangent"],
                  curvature=shape["curvature"], half_left=shape["half_left"], half_right=shape["half_right"],
                  left=shape["left"], right=shape["right"], spacing=shape["spacing"], length=m * shape["spacing"],
-                 origin=origin, dist=dist, **line, name=name)
+                 origin=origin, dist=dist, **line, expert_speed=expert_speed, name=name)
 
 
 def level_track(seed, level):

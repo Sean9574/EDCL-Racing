@@ -20,6 +20,36 @@ def corner_speed(kappa, share=1.0):
     return np.minimum(rising, np.sqrt(share * config.GRIP_MAX / kappa))
 
 
+def stop_speed(distance, share):
+    """The highest speed from which the car stops within `distance` m braking at share × a(v) (spec §7.1): below
+    GRIP_FULL_SPEED the braking distance from v is ln(a(v) / a0) / (2 share c), above it the ceiling adds
+    (v² − v_full²) / (2 share a_max)."""
+    low, rise, full = config.GRIP_LOW, config.GRIP_RISE, config.GRIP_FULL_SPEED
+    rising_distance = np.log((low + rise * full * full) / low) / (2.0 * share * rise)
+    if distance <= rising_distance:
+        return float(np.sqrt(low * np.expm1(2.0 * share * rise * distance) / rise))
+    return float(np.sqrt(full * full + 2.0 * share * config.GRIP_MAX * (distance - rising_distance)))
+
+
+def sight_speeds(points, curvature, spacing, share, sight):
+    """The expert's target speed at every point of a closed line (spec §7.1): the start of a speed profile of the next
+    round(sight / spacing) points, at every point the corner limit v²|κ| ≤ share × a(v) (and the top speed), then
+    backwards from the window's end the speed from which the car slows to the next point's speed braking with the grip
+    left after cornering over the step between them; capped by stop_speed(sight, share) and the top speed."""
+    m = len(points)
+    window = int(round(sight / spacing))
+    step = np.linalg.norm(np.roll(points, -1, axis=0) - points, axis=1)        # from point j to j + 1
+    bend = np.abs(np.asarray(curvature, dtype=float))
+    limit = np.minimum(corner_speed(bend, share), config.TOP_SPEED)
+    index = np.arange(m)
+    v = limit[(index + window) % m]
+    for k in range(window - 1, -1, -1):
+        here, ahead = (index + k) % m, (index + k + 1) % m
+        spare = np.sqrt(np.maximum((share * grip_at(v)) ** 2 - (v * v * bend[ahead]) ** 2, 0.0))
+        v = np.minimum(limit[here], np.sqrt(v * v + 2.0 * step[here] * spare))
+    return np.ascontiguousarray(np.minimum(np.minimum(v, stop_speed(sight, share)), config.TOP_SPEED))
+
+
 def path_curvature(points, smooth):
     """(points every 1 m, curvature in 1/m) of the closed path through `points` (first point not repeated): a periodic
     cubic spline over the arc length, sampled every metre, its curvature from the spline's derivatives, smoothed by a
