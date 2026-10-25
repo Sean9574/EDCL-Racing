@@ -115,7 +115,8 @@ EXPERT_HEADING_GAIN = 5.0    # ... and this × its heading relative to the line 
                              # were tuned on the 42 real layouts for the highest grip share at which all finish
 EXPERT_GRIP_MARGIN = 0.79    # the expert's grip share (spec §7.1): measured by scripts/expert_grip.py on 2026-10-24:
                              # Monza reversed not driven 3 laps at 0.80-0.88, Shanghai reversed at 0.84-0.88, more
-                             # real layouts above (33 of 42 at 1.00)
+                             # real layouts above (33 of 42 at 1.00); any change to the racing line, the grids, the
+                             # expert or the levels requires re-running scripts/expert_grip.py
 EXPERT_SPEED_BAND = 0.5      # m/s, the least of the expert's throttle band (spec §7.1): its throttle is the speed error
                              # over the larger of this and one step's speed change a(v) DT (0.9-2.5 m/s), so in a
                              # steady corner near 5 g it does not switch between gas and brake every step, which left
@@ -315,10 +316,12 @@ FONT_PATH = PROJECT_DIR / "racing" / "fonts" / "DejaVuSansCondensed.ttf"   # the
 RESULTS_DIR = PROJECT_DIR / "results"
 CIRCUIT_GRIDS_DIR = Path(os.environ.get("EC_RACING_CIRCUIT_GRIDS") or RESULTS_DIR / "circuit_grids")
                              # real circuits' road grids, built once per machine and memory-mapped (spec §4.7, §9.10);
-                             # EC_RACING_CIRCUIT_GRIDS names another folder, which worker processes also read
+                             # EC_RACING_CIRCUIT_GRIDS names another folder, which worker processes also read;
+                             # it must differ from RACING_LINES_DIR (each cache removes its own day-old files)
 RACING_LINES_DIR = Path(os.environ.get("EC_RACING_LINES") or RESULTS_DIR / "racing_lines")
                              # real circuits' racing lines, computed once per machine (spec §4.8, §9.10);
-                             # EC_RACING_LINES names another folder, which worker processes also read
+                             # EC_RACING_LINES names another folder, which worker processes also read; it must
+                             # differ from CIRCUIT_GRIDS_DIR (each cache removes its own day-old files)
 DATASET_PATH = RESULTS_DIR / "dataset.npz"
 DATASET_INFO_PATH = RESULTS_DIR / "dataset_info.json"
 RUNS_DIR = RESULTS_DIR / "runs"

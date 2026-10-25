@@ -92,7 +92,7 @@ class Innovations:
 
 
 def initial_genome(rng, innovations):
-    """Every input connected to every output (540 connections), standard normal weights, zero biases."""
+    """Every input connected to every output N_IN · N_OUT connections (810), standard normal weights, zero biases."""
     src = np.repeat(np.arange(N_IN, dtype=np.int64), N_OUT)
     dst = np.tile(np.arange(N_IN, N_IN + N_OUT, dtype=np.int64), N_IN)
     innov = np.array([innovations.conn(s, d) for s, d in zip(src.tolist(), dst.tolist())], dtype=np.int64)

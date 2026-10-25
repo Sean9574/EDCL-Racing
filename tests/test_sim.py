@@ -358,10 +358,24 @@ def test_the_line_inputs_follow_their_definitions(circle_track):
     assert sim.line_ahead_points(circle_track) == [int(round(d / circle_track.spacing)) for d in config.LINE_AHEAD]
 
 
+def test_the_curvature_inputs_read_the_look_ahead_points_not_the_matched_point(circle_track):
+    """Spec §5.2: on a ramp of curvature each input reads the value (i + look-ahead steps) points on."""
+    m = len(circle_track.centerline)
+    ramp = dataclasses.replace(circle_track, line_curvature=np.ascontiguousarray(np.arange(m) * 1e-4, dtype=np.float64))
+    i = 20
+    out = sim.line_inputs(ramp, car_at(ramp, i), np.array([0]))[0]
+    for k, d in enumerate(config.LINE_AHEAD):
+        steps = int(round(d / ramp.spacing))
+        assert np.isclose(out[2 + k], -((i + steps) % m) * 1e-4 * config.LINE_CURVATURE_SCALE) and steps > 0
+        assert not np.isclose(out[2 + k], -i * 1e-4 * config.LINE_CURVATURE_SCALE)
+
+
 def test_the_curvature_inputs_clip_at_5(circle_track):
     m = len(circle_track.centerline)
     tight = dataclasses.replace(circle_track, line_curvature=np.full(m, 0.2))      # a 5 m radius to the left
     assert np.all(sim.line_inputs(tight, car_at(tight, 10), np.array([0]))[0, 2:] == -5.0)
+    right = dataclasses.replace(circle_track, line_curvature=np.full(m, -0.2))     # ... and to the right
+    assert np.all(sim.line_inputs(right, car_at(right, 10), np.array([0]))[0, 2:] == 5.0)
 
 
 def test_sense_has_18_inputs_with_the_line_inputs_last(circle_track):

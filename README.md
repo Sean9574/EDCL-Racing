@@ -33,11 +33,11 @@ mutates with probability 0.5 and standard deviation 0.2, until the next target i
 exactly. `python scripts/boost_pilot.py boost` and `python scripts/boost_pilot.py plain` compare the speed push with
 and without it (spec §12.2); the results are in `results/pilots/revision3.6/`.
 
-Generated maps have a road width that changes along the lap, and the networks see their position across the road and
-the road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive any width rather than
-the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at constant road
-widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification is
-`docs/ec-racing-design.pdf` (version 3.10, which incorporates every revision).
+Generated maps have a road width that changes along the lap, and the networks see their position across the road and the
+road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
+any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
+constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
+is `docs/ec-racing-design.pdf` (version 3.10, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -242,6 +242,7 @@ Results are written to `results/`, which is not under version control:
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
 | `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/`, `results/pilots/revision3.10/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits), 3.9 (45 actions, speed push to 50%) and 3.10 (racing line, 18 inputs) |
 | `results/circuit_grids/` | The real circuits' road grids, built once per machine (23 files, about 570 MB), kept between runs |
+| `results/racing_lines/` | The real circuits' racing lines, one file per layout and code identity, built once per machine like the grids, kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
 | `results/archive/revision3.1/` | The revision 3.1 results (runs, controllers, dataset, run record), shown by the viewer's **Runs** button |
@@ -343,12 +344,14 @@ python scripts/fleet.py start
 
 **Version 3.10** gives every track a racing line (the minimum-curvature line within the road, `racing/racing_line.py`),
 gives the cars six inputs about it (18 in all), has the expert drive the line with a 200 m speed profile at the grip
-share `scripts/expert_grip.py` measures (0.79), steering by the line's curvature, and picks each run's final controller
+share measured once (0.79, below), steering by the line's curvature, and picks each run's final controller
 as the fastest car that succeeds on at least 18 of the 20 validation maps. Every result of version 3.9 is refused by
 `run_notebooks.py --check` and is set aside before the new run; the pole checks of the 3.9 populations stay with it.
 The expert's grip share is measured once with `python scripts/expert_grip.py` (it prints the value for
 `EXPERT_GRIP_MARGIN`); the pilots write to `results/pilots/revision3.10/`. Real circuits' racing lines are computed once
-per machine into `results/racing_lines/`.
+per machine into `results/racing_lines/`. This version's edits to `racing/track.py` and `racing/circuits.py` change the
+grid identity, so every machine rebuilds its 46 circuit grids (about 570 MB on disk, about 1 GB peak memory each) and
+its 46 racing lines on first use. Skip the `archive revision3.9` command where that archive already exists (it refuses).
 
 ```bash
 python scripts/fleet.py stop
@@ -468,7 +471,8 @@ On Windows 11 the window opens through WSLg.
   widths; the test circuits are the four held-out ones). Generated maps run clockwise or counter-clockwise and the
   panel's map line names the road width.
 - **Controllers of earlier revisions** have 10 or 12 inputs instead of 18 (or 15 actions instead of 45); the race view
-  leaves them out and says so. It draws the racing line thinly on the road.
+  leaves them out and says so.
+- **Racing line:** the race view draws the racing line thinly on the road.
 - **Playback speed:** 1× is twice real time.
 
 ## Tests

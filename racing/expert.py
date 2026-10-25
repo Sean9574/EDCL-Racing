@@ -49,11 +49,6 @@ def corner_speed(kappa):
     return ideal.corner_speed(kappa, config.EXPERT_GRIP_MARGIN)
 
 
-def sight_speed(sight=None):
-    """The speed from which the expert stops within its sight (spec §7.1)."""
-    return ideal.stop_speed(config.EXPERT_SIGHT if sight is None else float(sight), config.EXPERT_GRIP_MARGIN)
-
-
 def target_speed(track, here):
     """The expert's target speed at centerline points `here` (spec §7.1): the speed profile of its sight along the
     racing line, computed when the track was built."""

@@ -393,7 +393,14 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
             elif approach == "neat":
                 neat.run_neat(**common)
             else:
-                initial = es.dagger_baseline(seed) if approach == "es_seeded" else None
+                initial = None
+                if approach == "es_seeded":
+                    try:
+                        initial = es.dagger_baseline(seed)
+                    except ValueError as error:         # a refined baseline made for other inputs or actions
+                        print(f"The refined baseline of run {seed} cannot start the seeded ES: {error}",
+                              file=sys.stderr, flush=True)
+                        return UNUSABLE_RUN
                 es.run_es(**common, initial=initial, approach=approach)
         except UNUSABLE_ERRORS as error:
             print(f"The saved viewer run in {out_dir} cannot be resumed: {error}", file=sys.stderr, flush=True)

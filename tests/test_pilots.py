@@ -51,7 +51,7 @@ def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
     assert (tmp_path / name / "log.csv").exists()
 
 
-def test_revision_3_9_pilots_have_their_own_folder(pilots):
+def test_revision_3_10_pilots_have_their_own_folder(pilots):
     assert pilots.OUT == config.PILOTS_DIR / "revision3.10"
 
 

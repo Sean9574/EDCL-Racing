@@ -95,12 +95,16 @@ class ES(evolution.DenseMethod):
 
 
 def dagger_baseline(seed, runs_dir=None):
-    """Flat float64 weights of the baseline after its DAgger refinement, the start of the seeded ES (spec §9.8)."""
+    """Flat float64 weights of the baseline after its DAgger refinement, the start of the seeded ES (spec §9.8). A
+    baseline made for other inputs or actions (12 inputs in version 3.9) is refused with a ValueError (spec §10.3)."""
     from racing.backend import keras_cpu
     path = paths.run_dir("baseline", seed, runs_dir) / "dagger.keras"     # paths.stage_path(..., "dagger")
     if not path.exists():
         raise FileNotFoundError(f"no refined baseline for run {seed} at {path}; run notebook 03 first")
-    return nets.to_flat(keras_cpu().models.load_model(path))
+    model = keras_cpu().models.load_model(path)
+    nets.refuse_other_actions("baseline", seed, model.output_shape[-1])
+    nets.refuse_other_inputs("baseline", seed, model.input_shape[-1])
+    return nets.to_flat(model)
 
 
 def run_es(seed=0, pop_size=config.ES_POP, out_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1,

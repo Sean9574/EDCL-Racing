@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from racing import config, es, nets, paths, population
+from racing.backend import keras_cpu
 from racing.population import TrialResult
 
 
@@ -135,6 +136,17 @@ def test_dagger_baseline_reads_the_refined_baseline(tmp_path):
     model.save(path)
     flat = es.dagger_baseline(1, runs_dir=tmp_path)
     assert flat.shape == (nets.n_params(),) and np.array_equal(flat, nets.to_flat(model))
+
+
+def test_dagger_baseline_of_12_inputs_is_refused(tmp_path):
+    keras = keras_cpu()
+    old = keras.Sequential([keras.Input((12,)), keras.layers.Dense(16, activation="relu"),
+                            keras.layers.Dense(config.N_ACTIONS, activation="softmax")])
+    path = paths.run_dir("baseline", 1, tmp_path) / "dagger.keras"
+    path.parent.mkdir(parents=True)
+    old.save(path)
+    with pytest.raises(ValueError, match="made for 12 inputs"):
+        es.dagger_baseline(1, runs_dir=tmp_path)
 
 
 def test_dagger_baseline_missing(tmp_path):

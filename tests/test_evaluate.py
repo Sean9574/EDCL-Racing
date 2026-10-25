@@ -93,7 +93,7 @@ def test_best_seeds_fastest_reliable_run_then_most_successes_then_run_0(monkeypa
     rows = [("ga", 0, True, 30.0, 20.0), ("ga", 0, True, 30.0, 20.0),      # reliable, 1.5 × the expert
             ("ga", 1, True, 24.0, 20.0), ("ga", 1, True, 48.0, 40.0),      # reliable, 1.2 × the expert: the pick
             ("ga", 2, True, 20.0, 20.0), ("ga", 2, False, 200.0, 20.0),    # fastest, but 1 success: not reliable
-            ("es", 0, True, 30.0, 20.0), ("es", 0, False, 20.0, 20.0),     # none reliable: 1 success each ...
+            ("es", 0, True, 30.0, 20.0), ("es", 0, False, 5.0, 20.0),      # none reliable: 1 success each ...
             ("es", 1, True, 24.0, 20.0), ("es", 1, False, 20.0, 20.0),     # ... then the faster: run 1
             ("es", 2, False, 20.0, 20.0), ("es", 2, False, 20.0, 20.0),
             ("neat", 1, False, 25.0, 20.0), ("neat", 2, False, 25.0, 20.0),  # no success anywhere: the lower run

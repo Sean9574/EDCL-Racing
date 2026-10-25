@@ -152,14 +152,15 @@ def test_a_subset_reproduces_its_cars_results(fake_tracks):
     assert np.array_equal(full.fitness[[1, 7]], part.fitness) and np.array_equal(full.laps[:, [1, 7]], part.laps)
 
 
-def fake_validation(success, finish_time, expert_lap=None, fitness=None):
+def fake_validation(success, finish_time, expert_lap=None, fitness=None, factor=1.1):
     """An evaluate_population stand-in: success (maps, cars), finish_time (maps, cars), each map's expert lap."""
     maps, cars = success.shape
     expert_lap = np.full(maps, 20.0) if expert_lap is None else np.asarray(expert_lap, dtype=float)
     fitness = np.zeros(cars) if fitness is None else np.asarray(fitness, dtype=float)
 
-    def fake(population_, seeds, level, factor, n_jobs=1):
+    def fake(population_, seeds, level, factor_, n_jobs=1):
         assert len(population_) == cars and level == config.VALIDATION_LEVEL
+        assert list(seeds) == list(config.VAL_SEEDS) and factor_ == factor
         return population.TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 0),
                                       finish_time=np.where(success, finish_time, np.nan), expert_lap=expert_lap)
     return fake

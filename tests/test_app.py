@@ -1988,6 +1988,26 @@ def test_an_unusable_saved_run_ends_the_trainer_with_code_3(monkeypatch, tmp_pat
     assert reports.empty() and "cannot be resumed" in capsys.readouterr().err
 
 
+def test_the_seeded_es_of_a_baseline_with_12_inputs_is_unusable_not_trained(monkeypatch, tmp_path, capsys):
+    """Spec §10.3: a refined baseline of version 3.9 (12 inputs) cannot start the viewer's seeded ES."""
+    from racing import es
+    from racing.backend import keras_cpu
+    keras = keras_cpu()
+    old = keras.Sequential([keras.Input((12,)), keras.layers.Dense(16, activation="relu"),
+                            keras.layers.Dense(config.N_ACTIONS, activation="softmax")])
+    path = tmp_path / "runs" / "baseline" / "seed1" / "dagger.keras"
+    path.parent.mkdir(parents=True)
+    old.save(path)
+    monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(config, "APP_RUNS_DIR", tmp_path / "app")
+    trained = []
+    monkeypatch.setattr(es, "run_es", lambda **kwargs: trained.append(kwargs))
+    running = threading.Event()
+    running.set()
+    assert viewer.trainer_main("es_seeded", 12, 1, 1, queue.Queue(), running) == viewer.UNUSABLE_RUN
+    assert not trained and "made for 12 inputs" in capsys.readouterr().err
+
+
 def test_the_trainer_process_exits_with_the_trainer_code(monkeypatch):
     monkeypatch.setattr(viewer.os, "setpgrp", lambda: None)                 # never changes the test's process group
     monkeypatch.setattr(viewer, "watch_parent", lambda parent, kill: None)  # the watcher signals nothing

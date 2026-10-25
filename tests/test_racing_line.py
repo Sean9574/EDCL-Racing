@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
-from threadpoolctl import threadpool_info
+from threadpoolctl import threadpool_info, threadpool_limits
 
 from conftest import stadium
 from racing import circuits, config, ideal, racing_line, track_gen
@@ -96,6 +96,13 @@ def test_the_line_is_the_same_in_a_process_with_more_blas_threads(tmp_path):
     environ = {**os.environ, "OPENBLAS_NUM_THREADS": "4", "OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"}
     subprocess.run([sys.executable, "-c", code, str(out)], check=True, env=environ, cwd=config.PROJECT_DIR)
     assert np.array_equal(np.load(out), here)
+
+
+def test_the_one_thread_blas_limit_reaches_numpys_blas():
+    """Spec §4.8: threadpoolctl must see numpy's BLAS, else the one-thread limit of the solve would do nothing."""
+    with threadpool_limits(limits=1):
+        blas = [pool for pool in threadpool_info() if pool["user_api"] == "blas"]
+        assert blas and all(pool["num_threads"] == 1 for pool in blas)
 
 
 def test_solves_in_threads_at_once_give_the_lines_of_lone_solves_and_keep_the_blas_threads():
