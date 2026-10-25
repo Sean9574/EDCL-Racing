@@ -745,9 +745,9 @@ def test_a_trained_population_matches_numpy_on_real_layouts():
 def test_final_selection_with_setups_matches_numpy(monkeypatch, circle_track):
     monkeypatch.setattr(population, "get_track", lambda seed, level: circle_track)
     cars = dense_cars(6, seed=9)
-    compiled = population.select_final(cars, [3, 1], config.TARGET_FACTOR, seeds=[80])
+    compiled = population.select_final(cars, [3, 1], seeds=[80])
     monkeypatch.setattr(config, "SIMULATOR", "numpy")
-    reference = population.select_final(cars, [3, 1], config.TARGET_FACTOR, seeds=[80])
+    reference = population.select_final(cars, [3, 1], seeds=[80])
     assert compiled == reference
 
 

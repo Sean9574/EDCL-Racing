@@ -1,10 +1,11 @@
 # EC Racing
 
-EC Racing compares methods for finding small neural network driving controllers. Eight controllers race in a top-down
-2D simulator. The cars have the grip and top speed of a Formula 1 car (1.8 g at low speed, rising to 5 g at 250 km/h;
-at most 378 km/h; no engine power or drag model). Easy to Hard are generated circuits at Formula 1 size; Extra hard is
-19 real training circuits, driven in both directions. Four held-out circuits (Melbourne, Sakhir, Sepang and
-Silverstone) form the test, where each final controller's best flying lap is compared with the circuit's pole lap (lap times are whole steps of 0.05 s, so a lap within 0.05 s of pole is not resolvable):
+EC Racing compares methods for finding small neural network driving controllers. Eight controllers race in a top-down 2D
+simulator. The cars have the top speed of a Formula 1 car and two to three times its grip (5 g at low speed, rising to
+10 g at 250 km/h; at most 378 km/h; no engine power or drag model). Easy to Hard are generated circuits at Formula 1
+size; Extra hard is 19 real training circuits, driven in both directions. Four held-out circuits (Melbourne, Sakhir,
+Sepang and Silverstone) form the test, where each final controller's best flying lap is compared with the circuit's pole
+lap (lap times are whole steps of 0.05 s, so a lap within 0.05 s of pole is not resolvable):
 
 - **Imitation learning:** a hand-designed baseline and three Keras Tuner searches (random search, Hyperband,
   Bayesian optimization) are trained to imitate a scripted expert driver, refined by DAgger and then pushed for speed
@@ -37,7 +38,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.10, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.11, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -240,7 +241,7 @@ Results are written to `results/`, which is not under version control:
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
-| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/`, `results/pilots/revision3.10/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits), 3.9 (45 actions, speed push to 50%) and 3.10 (racing line, 18 inputs) |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/`, `results/pilots/revision3.10/`, `results/pilots/revision3.11/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits), 3.9 (45 actions, speed push to 50%), 3.10 (racing line, 18 inputs) and 3.11 (5-10 g grip) |
 | `results/circuit_grids/` | The real circuits' road grids, built once per machine (23 files, about 570 MB), kept between runs |
 | `results/racing_lines/` | The real circuits' racing lines, one file per layout and code identity, built once per machine like the grids, kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
@@ -360,6 +361,21 @@ python scripts/fleet.py archive revision3.9
 python scripts/fleet.py start
 ```
 
+**Version 3.11** raises the grip to 5 g at low speed, rising to 10 g at 250 km/h (1.8 g and 5 g before); throttle and
+brake are shares of the same grip, so the cars also launch and brake harder. The expert's steering is tuned again for
+it (preview 0.05 s, gains 8 and 8, lookahead 6 m + 0.2 s × v) and its grip share measured again (0.80). Each run's
+final controller is the fastest car that finishes at least 18 of the 20 validation maps within the time limit; if no
+car finishes that often, the car with the most finishes, then the highest validation fitness (the best run of each
+method likewise). Every result of version 3.10 is refused by `run_notebooks.py --check` and is set aside before the new
+run; the pilots write to `results/pilots/revision3.11/`. The racing lines and circuit grids stay valid.
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/fleet.py archive revision3.10
+python scripts/fleet.py start
+```
+
 Version 3.7 trained only the GA again; the runs of the other methods made with 3.6 stay valid:
 
 ```bash
@@ -407,7 +423,7 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.10/` (each pilot deletes only its own folder there, so the earlier pilots
+The pilots write to `results/pilots/revision3.11/` (each pilot deletes only its own folder there, so the earlier pilots
 stay) and are not part of the reported results; their summary includes the populations' final mean sensor length and
 steering sensitivity and the last speed-push target (`target_reduction`, percent shorter). Before notebook 03 has run, leave out the seeded
 pilot: it needs a refined baseline of this revision.
@@ -454,7 +470,7 @@ On Windows 11 the window opens through WSLg.
   generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App cars start switched
   off, race next to the reported controllers when switched on (drawn with a white border), and are never part of the
   reported results. When many cars race, the leaderboard lists as many as fit.
-- **Grip:** *Normal* (a(v), 1.8 g rising to 5 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the
+- **Grip:** *Normal* (a(v), 5 g rising to 10 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the
   cars you watch in both views. It never affects training or results.
 - **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.
 - **Camera:** *Whole map*, or *Follow 2×*, *4×* or *8×*: zoomed in and following the best car (the outlined one) in

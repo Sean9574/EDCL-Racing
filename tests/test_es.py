@@ -21,7 +21,7 @@ def no_success(population, seeds, level, factor, n_jobs=1, backend="loky"):
     return result(np.arange(n, dtype=float), np.zeros(n))
 
 
-def first_candidate(population, candidates, factor, n_jobs=1):
+def first_candidate(population, candidates, n_jobs=1):
     return int(candidates[0]), 0, 0.5
 
 

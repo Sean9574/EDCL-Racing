@@ -205,7 +205,7 @@ def test_final_selection_drives_the_candidates_with_their_setups(monkeypatch, ci
     cars = dense_with_setup()
     seen = []
     recording_simulate(monkeypatch, seen)
-    population.select_final(cars, [3, 1], config.TARGET_FACTOR, seeds=[80])
+    population.select_final(cars, [3, 1], seeds=[80])
     assert len(seen) == 1 and np.array_equal(seen[0], ROWS[[3, 1]])
 
 

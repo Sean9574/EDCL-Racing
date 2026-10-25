@@ -124,36 +124,34 @@ def test_a_stalled_run_still_saves_a_final_controller(evaluation, monkeypatch, t
     monkeypatch.setattr(evolution, "MasteryTracker", StallsAtOnce)
     chosen = []
 
-    def select(population, candidates, factor, n_jobs=1):
-        chosen.append(factor)
+    def select(population, candidates, n_jobs=1):
+        chosen.append(len(candidates))
         return int(candidates[0]), 3, 0.7
 
     monkeypatch.setattr(population, "select_final", select)
     summary, reports = train(tmp_path, None, champion_dir=tmp_path / "champions")
     assert len(reports) == 1 and reports[0]["event"] == "end_stalled"
     assert summary["goal_reached"] is False and summary["outcome"] == "stalled" and summary["level_reached"] == 1
-    assert chosen == [config.TARGET_FACTOR] and summary["val_successes"] == 3
+    assert len(chosen) == 1 and summary["val_successes"] == 3
     assert summary["champion_path"] == str(paths.champion_path("ga", 0, champion_dir=tmp_path / "champions"))
     assert paths.champion_path("ga", 0, ".npy", tmp_path / "champions").exists()
     assert "GA run 0: stopped at generation 0" in config.RUN_LOG_PATH.read_text()
 
 
-def test_the_final_controller_comes_from_the_kept_cars_at_the_tightest_mastered_target(evaluation, monkeypatch,
-                                                                                         tmp_path):
+def test_the_final_controller_comes_from_the_kept_cars(evaluation, monkeypatch, tmp_path):
     evaluation(1.0)
     chosen = []
 
-    def select(population, candidates, factor, n_jobs=1):
-        chosen.append((np.asarray(candidates), factor, population))
+    def select(population, candidates, n_jobs=1):
+        chosen.append((np.asarray(candidates), population))
         return int(candidates[-1]), 20, 1.9
 
     monkeypatch.setattr(population, "select_final", select)
     method = ga.GA(pop_size=20)
     summary = evolution.run(method, 4, tmp_path / "run", champion_dir=tmp_path / "champions",
                             start_level=config.MAX_LEVEL, max_generations=6)
-    candidates, factor, cars = chosen[0]                  # not `population`: that would shadow the module above
+    candidates, cars = chosen[0]                          # not `population`: that would shadow the module above
     assert np.array_equal(candidates, np.flatnonzero(method.is_kept)) and cars is method.population
-    assert math.isclose(factor, config.TARGET_FACTOR * config.SPEED_STEP)
     saved = np.load(paths.champion_path("ga", 4, ".npy", tmp_path / "champions"))
     assert np.array_equal(saved, method.population.weights[candidates[-1]])
     assert summary["val_successes"] == 20 and summary["wall_time"] > 0
@@ -229,7 +227,7 @@ def test_a_summary_cut_short_by_a_reboot_is_written_again_from_the_checkpoint(ev
 def test_experiment_runs_report_status_and_milestones(evaluation, monkeypatch, tmp_path):
     evaluation(1.0)
     monkeypatch.setattr(population, "select_final",
-                        lambda population, candidates, factor, n_jobs=1: (int(candidates[0]), 1, 1.0))
+                        lambda population, candidates, n_jobs=1: (int(candidates[0]), 1, 1.0))
     evolution.run(ga.GA(pop_size=20), 2, tmp_path / "run", champion_dir=tmp_path / "champions", max_generations=4)
     status = progress.read_status()
     assert status["approach"] == "ga" and status["seed"] == 2 and status["stage"] == "evolution"
@@ -248,7 +246,7 @@ def test_viewer_and_pilot_runs_report_nothing(evaluation, tmp_path):
 def test_a_reported_run_keeps_its_latest_generation_for_the_viewer(evaluation, monkeypatch, tmp_path):
     evaluation(0.5)
     monkeypatch.setattr(population, "select_final",
-                        lambda population, candidates, factor, n_jobs=1: (int(candidates[0]), 1, 1.0))
+                        lambda population, candidates, n_jobs=1: (int(candidates[0]), 1, 1.0))
     _, reports = train(tmp_path, 3, champion_dir=tmp_path / "champions")
     replay = checkpoint.load(tmp_path / "run" / paths.REPLAY_NAME)
     last = reports[-1]
@@ -413,7 +411,7 @@ def test_the_evaluated_population_carries_the_methods_setups(monkeypatch, tmp_pa
 def test_the_final_controller_keeps_its_setup(evaluation, monkeypatch, tmp_path):
     evaluation(0.5)
     monkeypatch.setattr(population, "select_final",
-                        lambda cars, candidates, factor, n_jobs=1: (int(candidates[-1]), 2, 0.9))
+                        lambda cars, candidates, n_jobs=1: (int(candidates[-1]), 2, 0.9))
     method = ga.GA(pop_size=20)
     summary = evolution.run(method, 5, tmp_path / "run", champion_dir=tmp_path / "champions", max_generations=2)
     expected = method.setup[int(np.flatnonzero(method.is_kept)[-1])]

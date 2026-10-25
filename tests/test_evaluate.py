@@ -85,23 +85,24 @@ def test_success_means_three_laps_within_the_target(monkeypatch, fake_tracks):
     assert list(frame["expert_lap"]) == [fake_tracks.expert_lap_time] * 3
 
 
-def test_best_seeds_fastest_reliable_run_then_most_successes_then_run_0(monkeypatch):
-    """Spec §11.1 (version 3.10): of the runs with at least FINAL_MIN_SUCCESSES validation successes, the fastest
-    mean lap relative to each map's expert lap over the maps it succeeded on; if none, the most successes, then the
-    fastest; then the lower run number."""
+def test_best_seeds_fastest_reliable_run_then_most_finishes_then_highest_fitness_then_run_0(monkeypatch):
+    """Spec §11.1 (version 3.11): of the runs that finish at least FINAL_MIN_SUCCESSES validation maps, the fastest
+    mean lap relative to each map's expert lap over the maps they finished; if none, the most finishes, then the
+    highest mean validation fitness; then the lower run number."""
     monkeypatch.setattr(config, "FINAL_MIN_SUCCESSES", 2)
-    rows = [("ga", 0, True, 30.0, 20.0), ("ga", 0, True, 30.0, 20.0),      # reliable, 1.5 × the expert
-            ("ga", 1, True, 24.0, 20.0), ("ga", 1, True, 48.0, 40.0),      # reliable, 1.2 × the expert: the pick
-            ("ga", 2, True, 20.0, 20.0), ("ga", 2, False, 200.0, 20.0),    # fastest, but 1 success: not reliable
-            ("es", 0, True, 30.0, 20.0), ("es", 0, False, 5.0, 20.0),      # none reliable: 1 success each ...
-            ("es", 1, True, 24.0, 20.0), ("es", 1, False, 20.0, 20.0),     # ... then the faster: run 1
-            ("es", 2, False, 20.0, 20.0), ("es", 2, False, 20.0, 20.0),
-            ("neat", 1, False, 25.0, 20.0), ("neat", 2, False, 25.0, 20.0),  # no success anywhere: the lower run
-            ("baseline", 3, True, 24.0, 20.0), ("baseline", 3, True, 24.0, 20.0),   # reliable and equally fast:
-            ("baseline", 1, True, 24.0, 20.0), ("baseline", 1, True, 24.0, 20.0)]   # the lower run
-    frame = pd.DataFrame([{"approach": a, "run_seed": r, "success": ok, "lap_time": lap, "expert_lap": e}
-                          for a, r, ok, lap, e in rows])
-    assert evaluate.best_seeds(frame) == {"baseline": 1, "es": 1, "ga": 1, "neat": 1}
+    rows = [("ga", 0, True, 30.0, 20.0, 1.2), ("ga", 0, True, 30.0, 20.0, 1.2),      # reliable, 1.5 × the expert
+            ("ga", 1, True, 24.0, 20.0, 1.4), ("ga", 1, True, 48.0, 40.0, 1.4),      # reliable, 1.2 ×: the pick
+            ("ga", 2, True, 20.0, 20.0, 1.5), ("ga", 2, False, 200.0, 20.0, 0.3),    # fastest, 1 finish: not reliable
+            ("es", 0, True, 30.0, 20.0, 1.2), ("es", 0, False, 5.0, 20.0, 0.9),      # none reliable: 1 finish each ...
+            ("es", 1, True, 24.0, 20.0, 1.4), ("es", 1, False, 20.0, 20.0, 0.2),     # ... faster, lower fitness
+            ("es", 2, False, 20.0, 20.0, 0.1), ("es", 2, False, 20.0, 20.0, 0.1),    # ... so run 0 wins
+            ("neat", 2, False, 25.0, 20.0, 0.6), ("neat", 1, False, 25.0, 20.0, 0.4),  # no finish: the higher fitness
+            ("neat", 3, False, 25.0, 20.0, 0.6),                                       # tied with run 2: the lower run
+            ("baseline", 3, True, 24.0, 20.0, 1.4), ("baseline", 3, True, 24.0, 20.0, 1.4),   # reliable, equally
+            ("baseline", 1, True, 24.0, 20.0, 1.4), ("baseline", 1, True, 24.0, 20.0, 1.4)]   # fast: the lower run
+    frame = pd.DataFrame([{"approach": a, "run_seed": r, "finished": ok, "lap_time": lap, "expert_lap": e,
+                           "fitness": f} for a, r, ok, lap, e, f in rows])
+    assert evaluate.best_seeds(frame) == {"baseline": 1, "es": 0, "ga": 1, "neat": 2}
 
 
 def test_inference_warm_up_matches_the_timed_calls():
@@ -252,11 +253,12 @@ def test_a_run_without_rows_shows_a_dash_and_an_archives_other_runs_follow(tmp_p
 
 def test_results_table_names_each_methods_best_run(tmp_path):
     per_track = drive_rows([(a, s, 1000, True, True, False, 50.0) for a in ("ga", "es", "neat") for s in (0, 1)])
-    rows = [("ga", 0, True, 30.0), ("ga", 0, False, 30.0), ("ga", 1, True, 30.0), ("ga", 1, True, 30.0),
-            ("es", 0, True, 30.0), ("es", 0, False, 30.0), ("es", 1, True, 24.0), ("es", 1, False, 24.0),
-            ("neat", 0, True, 30.0), ("neat", 1, True, 30.0)]            # none reliable: successes, pace, run 0
-    validation = pd.DataFrame([{"approach": a, "run_seed": s, "success": ok, "lap_time": lap, "expert_lap": 20.0}
-                               for a, s, ok, lap in rows])
+    rows = [("ga", 0, True, 30.0, 1.2), ("ga", 0, False, 30.0, 0.5), ("ga", 1, True, 30.0, 1.2),
+            ("ga", 1, True, 30.0, 1.2), ("es", 0, True, 30.0, 1.2), ("es", 0, False, 30.0, 0.5),
+            ("es", 1, True, 24.0, 1.4), ("es", 1, False, 24.0, 0.5),
+            ("neat", 0, True, 30.0, 1.2), ("neat", 1, True, 30.0, 1.2)]   # none reliable: finishes, fitness, run 0
+    validation = pd.DataFrame([{"approach": a, "run_seed": s, "finished": ok, "lap_time": lap, "expert_lap": 20.0,
+                                "fitness": f} for a, s, ok, lap, f in rows])
     table = evaluate.results_table(per_track, tmp_path, best=evaluate.best_seeds(validation)).set_index("Method")
     assert table["Best run"].to_dict() == {"ES": 1, "GA": 1, "NEAT": 0}
     assert "Best run" not in evaluate.results_table(per_track, tmp_path).columns

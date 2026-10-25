@@ -127,25 +127,25 @@ def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
 
 
 def best_seeds(validation):
-    """For each approach, its best run (spec §11.1, version 3.10), by the rule of the final pick (§9.5): of the runs
-    whose final controller succeeded on at least FINAL_MIN_SUCCESSES validation maps, the one with the fastest mean
-    lap relative to each map's expert lap over the maps it succeeded on; if none succeeded that often, the run with the
-    most successes, then the fastest; remaining ties go to the lower run number. The results table names it."""
+    """For each approach, its best run (spec §11.1, version 3.11), by the rule of the final pick (§9.5): of the runs
+    whose final controller finished at least FINAL_MIN_SUCCESSES validation maps within the time limit, the one with
+    the fastest mean lap relative to each map's expert lap over the maps it finished; if none finished that often, the
+    run with the most finishes, then the highest mean validation fitness; remaining ties go to the lower run number.
+    The results table names it."""
     best = {}
     for approach in config.APPROACHES:
         sub = validation[validation["approach"] == approach]
         if sub.empty:
             continue
-        success = sub["success"].astype(bool)
-        ratio = (sub["lap_time"] / sub["expert_lap"]).where(success)          # nan where it did not succeed
-        per_seed = sub.assign(success=success, ratio=ratio).groupby("run_seed").agg(
-            successes=("success", "sum"), pace=("ratio", "mean"))
-        per_seed["pace"] = per_seed["pace"].fillna(np.inf)                     # a run that succeeded nowhere
-        reliable = per_seed[per_seed["successes"] >= config.FINAL_MIN_SUCCESSES]
+        finished = sub["finished"].astype(bool)
+        ratio = (sub["lap_time"] / sub["expert_lap"]).where(finished)          # nan where it did not finish
+        per_seed = sub.assign(finished=finished, ratio=ratio).groupby("run_seed").agg(
+            finishes=("finished", "sum"), pace=("ratio", "mean"), fitness=("fitness", "mean"))
+        reliable = per_seed[per_seed["finishes"] >= config.FINAL_MIN_SUCCESSES]
         if len(reliable):
             ranked = sorted(reliable.itertuples(), key=lambda r: (r.pace, r.Index))
         else:
-            ranked = sorted(per_seed.itertuples(), key=lambda r: (-r.successes, r.pace, r.Index))
+            ranked = sorted(per_seed.itertuples(), key=lambda r: (-r.finishes, -r.fitness, r.Index))
         best[approach] = int(ranked[0].Index)
     return best
 

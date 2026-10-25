@@ -120,21 +120,21 @@ def lap_ratios(result):
     return np.where(count > 0, np.nansum(ratio, axis=0) / np.maximum(count, 1), np.inf)
 
 
-def select_final(population, candidates, factor, n_jobs=1, seeds=config.VAL_SEEDS):
-    """The final controller (spec §9.5, version 3.10): of the candidate indices, the fastest of the cars that succeed
-    on at least FINAL_MIN_SUCCESSES validation maps (the validation setting, spec §4.2) at target factor `factor`, by
-    lap_ratios; if no car succeeds that often, the car with the most successes, then the fastest; ties go to the
-    earliest candidate. Returns (index into population, validation successes, mean validation fitness)."""
+def select_final(population, candidates, n_jobs=1, seeds=config.VAL_SEEDS):
+    """The final controller (spec §9.5, version 3.11): of the candidate indices, the fastest, by lap_ratios, of the
+    cars that finish at least FINAL_MIN_SUCCESSES validation maps (the validation setting, spec §4.2) within the time
+    limit (TIME_LIMIT_FACTOR × the expert's laps); if no car finishes that often, the car with the most finishes, then
+    the highest mean validation fitness; ties go to the earliest candidate. Returns (index into population, validation
+    finishes, mean validation fitness)."""
     candidates = np.asarray(candidates, dtype=np.int64)
-    result = evaluate_population(population.subset(candidates), list(seeds), config.VALIDATION_LEVEL, factor,
-                                 n_jobs=n_jobs)
+    result = evaluate_population(population.subset(candidates), list(seeds), config.VALIDATION_LEVEL,
+                                 config.TIME_LIMIT_FACTOR, n_jobs=n_jobs)
     successes = result.success.sum(axis=0)
-    pace = lap_ratios(result)
     order = np.arange(len(candidates))
     if np.any(successes >= config.FINAL_MIN_SUCCESSES):
-        best = int(np.lexsort((order, pace, successes < config.FINAL_MIN_SUCCESSES))[0])
+        best = int(np.lexsort((order, lap_ratios(result), successes < config.FINAL_MIN_SUCCESSES))[0])
     else:
-        best = int(np.lexsort((order, pace, -successes))[0])
+        best = int(np.lexsort((order, -result.fitness, -successes))[0])
     return int(candidates[best]), int(successes[best]), float(result.fitness[best])
 
 

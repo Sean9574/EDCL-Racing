@@ -290,8 +290,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         candidates = np.flatnonzero(method.is_kept)                 # the kept cars of the last generation
         if candidates.size == 0:
             candidates = np.arange(len(method.population))
-        factor = tracker.mastered_factor if tracker.goal_reached else config.TARGET_FACTOR
-        index, successes, fitness = population.select_final(method.population, candidates, factor, n_jobs=n_jobs)
+        index, successes, fitness = population.select_final(method.population, candidates, n_jobs=n_jobs)
         summary.update(val_successes=int(successes), val_fitness=float(fitness),
                        champion_path=str(method.save_champion(index, seed, champion_dir)),
                        final_setup=setup.to_dict(method.population.setup[index]))
@@ -300,6 +299,6 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
     checkpoint.write_json(out_dir / SUMMARY_NAME, summary)
     if reporting:
         found = "" if summary["val_successes"] is None else (
-            f", final controller succeeds on {summary['val_successes']} of {len(config.VAL_SEEDS)} validation maps")
+            f", final controller finishes {summary['val_successes']} of {len(config.VAL_SEEDS)} validation maps")
         progress.milestone(f"{label(method, seed)}: finished after {generation} generations{found}")
     return summary

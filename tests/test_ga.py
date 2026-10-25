@@ -274,7 +274,7 @@ def test_run_ga_records_the_ga_settings_and_saves_a_champion_of_its_own_shape(mo
     monkeypatch.setattr(config, "RUNS_DIR", tmp_path / "runs")
     monkeypatch.setattr(population, "evaluate_population", no_success)
     monkeypatch.setattr(population, "select_final",
-                        lambda population, candidates, factor, n_jobs=1: (int(candidates[0]), 0, 0.5))
+                        lambda population, candidates, n_jobs=1: (int(candidates[0]), 0, 0.5))
     summary = ga.run_ga(seed=3, pop_size=20, max_generations=2, champion_dir=tmp_path / "champions")
     assert (tmp_path / "runs" / "ga" / "seed3" / "log.csv").exists() and summary["approach"] == "ga"
     assert summary["settings"] == checkpoint.settings_record("ga")
