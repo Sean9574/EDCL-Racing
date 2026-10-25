@@ -9,6 +9,8 @@ with the ssh command of scripts/fleet.toml (Windows' ssh.exe, which goes through
   python scripts/fleet.py status    one line per run in training on every machine, and the latest milestones
   python scripts/fleet.py stop      Ctrl+C in every session: the runs stop and continue where they stopped at the
                                     next start
+  python scripts/fleet.py end       an end request on every machine (results/end_runs): each run ends before its
+                                    next generation and picks its final controller (version 3.13); start removes it
   python scripts/fleet.py collect   the servers' finished runs are copied into this machine's results
   python scripts/fleet.py archive NAME   every machine moves its earlier results to results/archive/NAME/
   python scripts/fleet.py archive NAME --runs ga:0,ga:1   ... only those runs (version 3.7: the GA)
@@ -58,6 +60,7 @@ CODE_PATHS = ("racing", "scripts", "requirements.txt")    # what a server runs; 
 BUNDLE = ".fleet/code.bundle"                             # under a server's project folder
 INCOMING = ".incoming"                                    # under results/: runs being collected
 STOP_WAIT = 120.0                                         # s `stop` waits for the runners to end
+END_FILE = "results/end_runs"                             # config.END_FILE, under a machine's project folder
 LOG_LINES = 6                                             # milestones `status` shows per machine
 MACHINE_KEYS = {"host", "ssh", "dir", "at_once", "workers", "runs"}
 CONNECT_HINT = ("Is GlobalProtect connected on this desktop (tray icon), and is the SSH key installed on the server "
@@ -703,7 +706,8 @@ def start(machines, out=sys.stdout):
     if problems:
         raise FleetError("nothing was started:\n  " + "\n  ".join(problems))
     for machine in busy:
-        if "started" not in shell(machine, session_script(machine, train_command(machine))):
+        script = f"rm -f {machine.root}/{END_FILE}\n" + session_script(machine, train_command(machine))
+        if "started" not in shell(machine, script):          # a start trains: an earlier end request is removed
             raise FleetError(f"{machine.where}: the tmux session did not start")
         print(f"{machine.where}: training {', '.join(map(train_label, machine.runs))}, {machine.at_once} at a time, "
               f"in tmux session '{SESSION}'", file=out)
@@ -783,6 +787,27 @@ def stop(machines, out=sys.stdout, wait=STOP_WAIT):
         print(f"{machine.where}: still ending after {wait:.0f} s; check with: python scripts/fleet.py status",
               file=out)
     return 1 if asked else 0
+
+
+def end_script(machine):
+    return (f"cd {machine.root} 2>/dev/null || {{ echo '@@project missing'; exit 0; }}\n"
+            f"mkdir -p results\ndate '+%Y-%m-%dT%H:%M:%S' > {END_FILE}\necho '@@ended'\n")
+
+
+def end(machines, out=sys.stdout):
+    """An end request on every machine (spec §9.4, version 3.13): each run ends before its next generation and picks
+    its final controller; `finish` reports them once all 32 have ended."""
+    problems = 0
+    for machine in machines:
+        try:
+            answer = shell(machine, end_script(machine), timeout=120)
+        except FleetError as error:
+            print(f"{machine.where}: {error}", file=out)
+            problems += 1
+            continue
+        print(f"{machine.where}: " + ("the runs end before their next generation and pick their final controllers"
+                                      if "@@ended" in answer else "no project here, nothing to end"), file=out)
+    return 1 if problems else 0
 
 
 # ----- collect and finish -----
@@ -956,7 +981,7 @@ def archive(machines, name, out=sys.stdout, runs=None):
     return 1 if problems else 0
 
 
-COMMANDS = {"setup": setup, "start": start, "status": status, "stop": stop, "finish": finish}
+COMMANDS = {"setup": setup, "start": start, "status": status, "stop": stop, "end": end, "finish": finish}
 
 
 def main(argv=None, plan=PLAN, out=sys.stdout):

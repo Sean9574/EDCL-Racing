@@ -76,7 +76,8 @@ class MasteryTracker:
         self.streak = 0
         self.goal_reached = False
         self.mastered_factor = float("nan")
-        self.outcome = None             # None, "speed_limit" or "stalled"
+        self.outcome = None             # None, "speed_limit", "stalled" or "time_limit" (an end request, set by
+                                        # evolution.run)
         self.recent = []                # the level's latest lowest shares (at most MASTERY_STREAK, i.e. the three
                                         # generations of spec §9.4), for the safety stop
         self.best_mean = float("-inf")

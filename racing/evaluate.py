@@ -487,7 +487,8 @@ def milestone_cell(summary, level):
 
 
 def end_cell(summary):
-    """How a run ended: at its speed limit, stalled on a level, or stopped by a generation limit."""
+    """How a run ended: at its speed limit, stalled on a level, by an end request, or stopped by a generation
+    limit."""
     if not summary:
         return "–"
     outcome = summary.get("outcome")
@@ -495,6 +496,8 @@ def end_cell(summary):
         how = "speed limit"
     elif outcome == "stalled":
         how = f"stalled on level {summary.get('level_reached', '?')}"
+    elif outcome == "time_limit":
+        how = "ended by time"
     else:
         how = "stopped"
     return f"{how} · gen {int(summary.get('generations', 0)):,}"

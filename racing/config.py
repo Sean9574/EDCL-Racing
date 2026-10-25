@@ -341,6 +341,9 @@ BEST_SEEDS_NAME = "best_seeds.json"
 PILOTS_DIR = RESULTS_DIR / "pilots"
 RUN_INFO_PATH = RESULTS_DIR / "run_info.json"
 RUN_LOG_PATH = RESULTS_DIR / "run_log.txt"
+END_FILE = RESULTS_DIR / "end_runs"   # an end request (spec §9.4, version 3.13): while it exists, every run of the
+                             # experiment ends before its next generation with its final pick; fleet.py end writes it
+                             # on every machine and fleet.py start removes it
 STATUS_PATH = Path(os.environ.get("EC_RACING_STATUS") or RESULTS_DIR / "status.json")   # a job trained side by side
                              # gets its own status file, also inside a notebook's kernel (spec §3.3)
 STATUS_DIR = RESULTS_DIR / "status"          # one status file per run when runs train side by side (fleet)

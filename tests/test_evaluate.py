@@ -319,6 +319,9 @@ def test_training_cost_table(tmp_path):
     write_json(paths.run_dir("ga", 1, tmp_path) / "summary.json", {
         "start_level": 1, "goal_reached": False, "outcome": "stalled", "generations": 2100, "evals": 2_100_000,
         "wall_time": 5000.0, "level_reached": 2, "levels": [level(1, 30, 90.0)]})
+    write_json(paths.run_dir("es", 3, tmp_path) / "summary.json", {
+        "start_level": 1, "goal_reached": False, "outcome": "time_limit", "generations": 700, "evals": 770_000,
+        "wall_time": 25000.0, "level_reached": 3, "levels": [level(1, 25, 60.0), level(2, 90, 900.0)]})
     write_json(paths.run_dir("baseline", 0, tmp_path) / "summary.json", {"wall_time": 15.0})
     write_json(paths.run_dir("baseline", 0, tmp_path) / "dagger.json",
                {"rounds": 7, "goal_reached": True, "wall_time": 3600.0})
@@ -328,8 +331,10 @@ def test_training_cost_table(tmp_path):
     write_json(paths.search_dir("kt_random", tmp_path) / "summary.json", {"wall_time": 914.2})
     write_json(paths.run_dir("kt_random", 0, tmp_path) / "summary.json", {"wall_time": 12.0})
     table = evaluate.training_cost_table(tmp_path)
-    assert list(table["Method"]) == ["Baseline", "KT Random", "GA", "GA"] and list(table["Run"]) == [0, 0, 0, 1]
-    base, kt, ga0, ga1 = (table.iloc[k] for k in range(4))
+    assert list(table["Method"]) == ["Baseline", "KT Random", "ES", "GA", "GA"]
+    assert list(table["Run"]) == [0, 0, 3, 0, 1]
+    base, kt, es3, ga0, ga1 = (table.iloc[k] for k in range(5))
+    assert es3["Run end"] == "ended by time · gen 700" and es3["Hard cleared"] == "not reached"
     assert ga0["Easy cleared"] == "gen 25 · 25,000 evals · 0.02 h"
     assert ga0["Mastery goal"] == "gen 300 · 300,000 evals · 2.00 h"
     assert ga0["Run end"] == "speed limit · gen 1,200" and ga0["Evaluations"] == "1,200,000"

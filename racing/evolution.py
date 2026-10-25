@@ -184,8 +184,10 @@ def lower_priority(nice=config.EVOLUTION_NICE):
 
 def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_generation=None, start_level=1,
         max_generations=None, rng_seed=None):
-    """Train `method` with run seed `seed` until the speed push ends or the safety stop (spec §9.4), or
-    after `max_generations` (viewer, pilots, tests). A completed run in `out_dir` with the current settings is
+    """Train `method` with run seed `seed` until the speed push ends, the safety stop or an end request (spec §9.4),
+    or after `max_generations` (viewer, pilots, tests). An end request (config.END_FILE, version 3.13) ends a run of
+    the experiment before its next generation, once it has trained at least one; it then picks its final controller
+    as at any other end. A completed run in `out_dir` with the current settings is
     returned at once; an interrupted one resumes from its checkpoint. With champion_dir None no final controller is
     selected or saved and nothing is written to the status file or the run log: only the experiment's runs report
     progress. Returns the summary."""
@@ -232,6 +234,10 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         return elapsed + time.time() - began        # run time, accumulated across resumptions
 
     while not tracker.done and (max_generations is None or generation < max_generations):
+        if reporting and generation > 0 and config.END_FILE.exists():      # an end request (spec §9.4)
+            tracker.outcome = "time_limit"
+            progress.milestone(f"{label(method, seed)}: ended by request at generation {generation}")
+            break
         level, factor = tracker.level, tracker.factor
         maps = seeds.draw(config.TRACKS_PER_GEN, level)
         result = population.evaluate_population(method.population, maps, level, factor, n_jobs=n_jobs)

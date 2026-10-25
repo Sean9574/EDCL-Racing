@@ -158,6 +158,50 @@ def test_the_final_controller_comes_from_the_kept_cars(evaluation, monkeypatch, 
     assert summary["machine"] == checkpoint.machine_record()     # runs of one experiment may come from several machines
 
 
+def test_an_end_request_ends_a_run_after_one_generation_with_its_final_controller(evaluation, monkeypatch, tmp_path):
+    evaluation(0.5)
+    chosen = []
+
+    def select(population, candidates, n_jobs=1):
+        chosen.append(np.asarray(candidates))
+        return int(candidates[0]), 18, 1.5
+
+    monkeypatch.setattr(population, "select_final", select)
+    config.END_FILE.write_text("2026-10-25T23:15:00")
+    method, reports = ga.GA(pop_size=20), []
+    summary = evolution.run(method, 1, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=reports.append)
+    assert [report["generation"] for report in reports] == [0]
+    assert summary["outcome"] == "time_limit" and summary["generations"] == 1 and summary["val_successes"] == 18
+    assert len(chosen) == 1 and np.array_equal(chosen[0], np.flatnonzero(method.is_kept))
+    assert paths.champion_path("ga", 1, ".npy", tmp_path / "champions").exists()
+    log = config.RUN_LOG_PATH.read_text()
+    assert "GA run 1: ended by request at generation 1" in log and "GA run 1: finished after 1 generations" in log
+
+
+def test_a_run_resumed_under_an_end_request_picks_its_final_controller_without_training(evaluation, monkeypatch,
+                                                                                         tmp_path):
+    evaluation(0.5)
+    monkeypatch.setattr(population, "select_final",
+                        lambda population, candidates, n_jobs=1: (int(candidates[0]), 2, 0.4))
+    with pytest.raises(Interrupt):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                      on_generation=interrupt_at(3))
+    config.END_FILE.write_text("2026-10-25T23:15:00")
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=lambda report: pytest.fail("trained again"))
+    assert summary["outcome"] == "time_limit" and summary["generations"] == 3 and summary["val_successes"] == 2
+    assert list(pd.read_csv(tmp_path / "run" / "log.csv")["generation"]) == [0, 1, 2]
+    assert paths.champion_path("ga", 0, ".npy", tmp_path / "champions").exists()
+
+
+def test_viewer_and_pilot_runs_ignore_an_end_request(evaluation, tmp_path):
+    evaluation(0.5)
+    config.END_FILE.write_text("2026-10-25T23:15:00")
+    summary, reports = train(tmp_path, 4)
+    assert len(reports) == 4 and summary["outcome"] is None and summary["generations"] == 4
+
+
 def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):
     evaluation(0.5)
     evolution.run(ga.GA(pop_size=20), 0, tmp_path / "whole", champion_dir=None, max_generations=5)

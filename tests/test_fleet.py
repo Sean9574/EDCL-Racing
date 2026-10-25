@@ -421,6 +421,31 @@ def test_stop_presses_ctrl_c_in_every_session_and_waits(fake):
     assert out.getvalue().count("stopped; the runs continue") == 2
 
 
+def test_end_writes_an_end_request_on_every_machine(fake):
+    fake.ready_server()
+    out = io.StringIO()
+    assert fake.fleet.end(fake.machines(), out=out) == 0
+    for project in (fake.desktop, fake.server_project()):
+        assert (project / "results" / "end_runs").read_text().startswith("20")
+    assert out.getvalue().count("the runs end before their next generation") == 2
+    assert fake.fleet.config.END_FILE.name == "end_runs" and fake.fleet.END_FILE == "results/end_runs"
+
+
+def test_end_on_a_server_without_the_project_does_nothing_there(fake):
+    out = io.StringIO()
+    assert fake.fleet.end(fake.machines(), out=out) == 0
+    assert "no project here, nothing to end" in out.getvalue()
+    assert not (fake.server_project() / "results").exists()
+
+
+def test_start_removes_an_earlier_end_request(fake):
+    fake.ready_server()
+    fake.fleet.end(fake.machines(), out=io.StringIO())
+    assert fake.fleet.start(fake.machines(), out=io.StringIO()) == 0
+    for project in (fake.desktop, fake.server_project()):
+        assert not (project / "results" / "end_runs").exists()
+
+
 def test_stop_without_sessions_does_nothing(fake):
     out = io.StringIO()
     assert fake.fleet.stop(fake.machines(), out=out, wait=1) == 0

@@ -39,7 +39,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.12, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.13, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -307,6 +307,7 @@ python scripts/fleet.py setup      # the server gets this commit's code, Python 
 python scripts/fleet.py start      # every machine starts its runs in a detached tmux session named "fleet"
 python scripts/fleet.py status     # one line per run in training on every machine, and the latest milestones
 python scripts/fleet.py stop       # Ctrl+C in every session; the next start continues where the runs stopped
+python scripts/fleet.py end        # end request: every run ends before its next generation with its final controller
 python scripts/fleet.py collect    # copies the servers' finished runs here (any time; finished runs only)
 python scripts/fleet.py archive revision3.1   # every machine moves its earlier results to results/archive/revision3.1/
 python scripts/fleet.py finish     # once all 32 runs have finished: collect, then notebooks 02 to 08 here
@@ -377,6 +378,21 @@ python scripts/fleet.py stop
 python scripts/fleet.py setup
 python scripts/fleet.py archive revision3.10
 python scripts/fleet.py start
+```
+
+**Version 3.13** adds an end request. With the safety stop off, a run ends only when its speed push stalls, so
+`fleet.py stop` keeps the runs resumable but gives no final controllers. `fleet.py end` writes `results/end_runs` on
+every machine: each run ends before its next generation, selects its final controller as at any other end, and records
+the outcome "time_limit" ("ended by time" in the training-cost table). Once every run has its summary, `finish`
+reports them, lap times against the pole laps included. `start` removes the file. No setting changes, so the runs
+continue from their checkpoints:
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/fleet.py start
+python scripts/fleet.py end        # at the time the runs should end
+python scripts/fleet.py finish     # once every run has ended (it says which have not)
 ```
 
 **Version 3.12** lowers NEAT's weight replacement from 0.05 to 0.002 per weight and bias. A NEAT genome starts with

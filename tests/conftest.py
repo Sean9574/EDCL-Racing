@@ -85,12 +85,13 @@ def private_circuit_grids(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def private_progress_files(tmp_path_factory, monkeypatch):
-    """The status file and the run log of every test live in a temporary folder, never in results/
-    (spec §3.3)."""
+    """The status file, the run log and the end request of every test live in a temporary folder, never in results/
+    (spec §3.3, §9.4)."""
     from racing import config
     folder = tmp_path_factory.mktemp("progress")
     monkeypatch.setattr(config, "STATUS_PATH", folder / "status.json")
     monkeypatch.setattr(config, "RUN_LOG_PATH", folder / "run_log.txt")
+    monkeypatch.setattr(config, "END_FILE", folder / "end_runs")
     monkeypatch.setattr(config, "STATUS_DIR", folder / "status")
     monkeypatch.setattr(config, "TRAIN_LOGS_DIR", folder / "train_logs")
 
