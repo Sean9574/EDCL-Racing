@@ -91,13 +91,13 @@ def test_the_expert_never_switches_between_full_throttle_and_full_brake_in_a_ste
 def test_the_expert_never_applies_gas_at_full_lock(circle_track):
     """Spec §7.1: while its steering is saturated the expert's throttle is at most 0, so the friction circle
     leaves all of a(v) for turning; below its target speed with the steering short of full lock it still applies gas."""
-    cars = on_the_line(circle_track, 2, 20.0)              # well below the line's corner speed of about 28 m/s
+    cars = on_the_line(circle_track, 2, 20.0)              # well below the line's corner speed of about 51 m/s
     cars.heading[0] += 1.0                                 # pointing off the line: the steering saturates
     steer, throttle = expert.expert_controls(circle_track, cars)
     assert np.all(cars.speed < expert.target_speed(circle_track, cars.index) - 1.5)
     assert abs(steer[0]) == 1.0 and throttle[0] == 0.0
     assert abs(steer[1]) < 1.0 and throttle[1] == 1.0
-    cars.speed[0] = 40.0                                   # above the target: it still brakes at full lock
+    cars.speed[0] = 60.0                                   # above the target: it still brakes at full lock
     assert expert.expert_controls(circle_track, cars)[1][0] == -1.0
 
 

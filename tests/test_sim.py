@@ -211,9 +211,9 @@ def test_start_cars_rejects_a_setup_of_the_wrong_shape(circle_track):
 # ----- the Formula 1 car and its sensors (spec §5.1, §5.2, version 3.8) -----
 
 def test_the_grip_rises_with_speed_to_its_ceiling():
-    """Spec §5.1: a(v) = min(a0 + c v², a_max), 1.8 g at rest, 5 g from 250 km/h, never more."""
-    assert config.GRIP_LOW == 1.8 * 9.81 and config.GRIP_MAX == 5.0 * 9.81 and config.TOP_SPEED == 105.0
-    assert np.isclose(config.GRIP_RISE, 0.00651, atol=5e-6)
+    """Spec §5.1: a(v) = min(a0 + c v², a_max), 5 g at rest, 10 g from 250 km/h, never more (version 3.11)."""
+    assert config.GRIP_LOW == 5.0 * 9.81 and config.GRIP_MAX == 10.0 * 9.81 and config.TOP_SPEED == 105.0
+    assert np.isclose(config.GRIP_RISE, 0.01017, atol=5e-6)
     a = sim.grip_at(np.array([0.0, 250.0 / 3.6, 105.0, 30.0]))
     assert a[0] == config.GRIP_LOW and np.isclose(a[1], config.GRIP_MAX) and a[2] == config.GRIP_MAX
     assert a[3] == config.GRIP_LOW + config.GRIP_RISE * 30.0 * 30.0

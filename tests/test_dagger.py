@@ -131,7 +131,7 @@ def test_check_counts_time_trials_completed_within_the_target(monkeypatch, circl
     monkeypatch.setattr(dagger, "get_track", lambda seed, level: circle_track)
     assert dagger.check(Constant(FULL_RIGHT), [1, 2]) == 0
     assert dagger.check(Expert(circle_track), [1, 2]) == 2                # 3 laps well within 1.3 × 3 × 20 s
-    assert dagger.check(Expert(circle_track), [1], factor=0.3) == 0       # 18 s for three laps: impossible
+    assert dagger.check(Expert(circle_track), [1], factor=0.2) == 0       # 12 s for three laps: impossible
 
 
 def test_rounds_reach_the_goal_and_rows_accumulate(monkeypatch, toy_data, trained_runs):

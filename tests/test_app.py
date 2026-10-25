@@ -183,8 +183,8 @@ def test_playback_drives_each_car_with_its_setup_and_the_display_grip(circle_tra
                                 grip_scale=config.APP_GRIPS["Unlimited"])
     assert normal.grip_scale == 1.0 and unlimited.grip_scale == 10.0
     assert np.array_equal(normal.cars.ray_length, [30.0, 150.0]) and np.array_equal(normal.cars.steer_gain, [1.0, 0.5])
-    normal.advance(5)
-    unlimited.advance(5)
+    normal.advance(2)
+    unlimited.advance(2)                                     # before 10 × 5-10 g puts a car into the wall
     assert np.all(unlimited.cars.speed > 5 * normal.cars.speed)    # ten times the grip accelerates far harder
 
 
@@ -277,7 +277,7 @@ def test_the_display_grip_never_reaches_training(window, monkeypatch, tmp_path):
     running.set()
     viewer.trainer_main("ga", 30, 0, 1, reports, running)
     assert "grip" not in calls and "grip_scale" not in calls and calls["pop_size"] == 30
-    assert (config.GRIP_LOW, config.GRIP_MAX) == (1.8 * config.G, 5.0 * config.G)
+    assert (config.GRIP_LOW, config.GRIP_MAX) == (5.0 * config.G, 10.0 * config.G)
     assert config.APP_GRIPS == {"Normal": 1.0, "Unlimited": 10.0}
 
 

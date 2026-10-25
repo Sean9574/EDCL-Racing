@@ -130,7 +130,7 @@ def test_expert_succeeds_at_the_target_and_counts_laps_when_too_slow(fake_tracks
     cars = ExpertCars(fake_tracks, 2)
     easy = population.evaluate_population(cars, [0], 1, config.TARGET_FACTOR)
     assert easy.success.all() and np.all(easy.laps == config.LAPS) and np.all(easy.fitness > 1)
-    tight = population.evaluate_population(cars, [0], 1, 0.4)                   # 24 s for three laps
+    tight = population.evaluate_population(cars, [0], 1, 0.2)                   # 12 s for three laps
     assert not tight.success.any() and np.all((tight.laps >= 1) & (tight.laps < config.LAPS))
     assert np.all(tight.fitness < 1)
 
@@ -152,43 +152,53 @@ def test_a_subset_reproduces_its_cars_results(fake_tracks):
     assert np.array_equal(full.fitness[[1, 7]], part.fitness) and np.array_equal(full.laps[:, [1, 7]], part.laps)
 
 
-def fake_validation(success, finish_time, expert_lap=None, fitness=None, factor=1.1):
-    """An evaluate_population stand-in: success (maps, cars), finish_time (maps, cars), each map's expert lap."""
+def fake_validation(success, finish_time, expert_lap=None, fitness=None):
+    """An evaluate_population stand-in at the time limit: success (maps, cars) is finishing, finish_time (maps,
+    cars), each map's expert lap."""
     maps, cars = success.shape
     expert_lap = np.full(maps, 20.0) if expert_lap is None else np.asarray(expert_lap, dtype=float)
     fitness = np.zeros(cars) if fitness is None else np.asarray(fitness, dtype=float)
 
     def fake(population_, seeds, level, factor_, n_jobs=1):
         assert len(population_) == cars and level == config.VALIDATION_LEVEL
-        assert list(seeds) == list(config.VAL_SEEDS) and factor_ == factor
+        assert list(seeds) == list(config.VAL_SEEDS) and factor_ == config.TIME_LIMIT_FACTOR
         return population.TrialResult(fitness=fitness, success=success, laps=np.where(success, config.LAPS, 0),
                                       finish_time=np.where(success, finish_time, np.nan), expert_lap=expert_lap)
     return fake
 
 
-def test_the_fastest_car_with_18_successes_wins_over_a_car_with_more_successes(monkeypatch):
-    """Spec §9.5 (version 3.10): of the cars with ≥ 18 of 20 successes, the lowest mean lap ratio wins."""
+def test_the_fastest_car_with_18_finishes_wins_over_a_car_with_more_finishes(monkeypatch):
+    """Spec §9.5 (version 3.11): of the cars that finish ≥ 18 of 20 maps, the lowest mean lap ratio wins."""
     success = np.ones((20, 3), dtype=bool)
-    success[:2, 1] = False                                     # car 1: 18 successes, the fastest
-    success[:3, 2] = False                                     # car 2: 17 successes, faster still but not eligible
+    success[:2, 1] = False                                     # car 1: 18 finishes, the fastest
+    success[:3, 2] = False                                     # car 2: 17 finishes, faster still but not eligible
     finish = np.tile(np.array([75.0, 60.0, 45.0]), (20, 1))
     monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
-    assert population.select_final(dense(6), [4, 2, 5], 1.1)[:2] == (2, 18)
+    assert population.select_final(dense(6), [4, 2, 5])[:2] == (2, 18)
 
 
-def test_without_18_successes_the_most_successes_win_then_the_fastest(monkeypatch):
+def test_without_18_finishes_the_most_finishes_win_then_the_highest_fitness(monkeypatch):
+    """Spec §9.5 (version 3.11): car 1 is faster than car 2, but car 2's validation fitness is higher."""
     success = np.zeros((20, 3), dtype=bool)
     success[:15, 0] = success[:16, 1] = success[:16, 2] = True
-    finish = np.tile(np.array([40.0, 70.0, 65.0]), (20, 1))
-    monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
-    assert population.select_final(dense(6), [0, 1, 2], 1.1)[:2] == (2, 16)
+    finish = np.tile(np.array([40.0, 60.0, 65.0]), (20, 1))
+    monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish, fitness=[1.5, 1.1, 1.2]))
+    assert population.select_final(dense(6), [0, 1, 2])[:2] == (2, 16)
+
+
+def test_when_no_car_finishes_the_highest_fitness_wins_not_the_first_candidate(monkeypatch):
+    """Version 3.10 saved the first candidate when every car had 0 successes; fitness tells the cars apart."""
+    success = np.zeros((20, 3), dtype=bool)
+    finish = np.full((20, 3), np.nan)
+    monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish, fitness=[0.14, 0.9, 0.5]))
+    assert population.select_final(dense(6), [3, 5, 4]) == (5, 0, 0.9)
 
 
 def test_ties_go_to_the_earliest_candidate(monkeypatch):
     success = np.ones((20, 3), dtype=bool)
     finish = np.full((20, 3), 60.0)
     monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
-    assert population.select_final(dense(6), [3, 1, 4], 1.1)[0] == 3
+    assert population.select_final(dense(6), [3, 1, 4])[0] == 3
 
 
 def test_lap_ratios_count_only_the_maps_a_car_succeeded_on():

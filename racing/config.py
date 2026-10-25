@@ -10,8 +10,8 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 # --- Simulation (spec §5) ---
 DT = 0.05                    # s, fixed time step (20 Hz)
 G = 9.81                     # m/s²
-GRIP_LOW = 1.8 * G           # m/s², the tyres' grip at low speed (spec §5.1)
-GRIP_MAX = 5.0 * G           # m/s², the grip ceiling, reached at GRIP_FULL_SPEED
+GRIP_LOW = 5.0 * G           # m/s², the tyres' grip at low speed (spec §5.1; 1.8 g to version 3.10)
+GRIP_MAX = 10.0 * G          # m/s², the grip ceiling, reached at GRIP_FULL_SPEED (5 g to version 3.10)
 GRIP_FULL_SPEED = 250.0 / 3.6   # m/s (250 km/h)
 GRIP_RISE = (GRIP_MAX - GRIP_LOW) / GRIP_FULL_SPEED ** 2   # 1/m: a(v) = min(GRIP_LOW + GRIP_RISE v², GRIP_MAX)
 TOP_SPEED = 105.0            # m/s (378 km/h), the highest speed of a Formula 1 car in an official session (spec §5.1)
@@ -106,21 +106,24 @@ BASELINE_HIDDEN = (16,)
 
 # --- Expert driver and dataset (spec §7) ---
 EXPERT_LOOKAHEAD_BASE = 6.0  # m
-EXPERT_LOOKAHEAD_TIME = 0.4  # s
-EXPERT_PREVIEW_TIME = 0.1    # s: the expert's steering feed-forward reads the line's curvature v × this ahead of its
-                             # matched point, so it turns in as its one-step delay requires (spec §7.1, version 3.10)
-EXPERT_CROSS_TRACK_GAIN = 3.0  # its steering asks for this × its distance from the line / L² less curvature, L the
-                             # lookahead 6 m + 0.4 s × v (spec §7.1); pure pursuit's linearization is 2
-EXPERT_HEADING_GAIN = 5.0    # ... and this × its heading relative to the line / L less (pure pursuit: 2); these three
-                             # were tuned on the 42 real layouts for the highest grip share at which all finish
-EXPERT_GRIP_MARGIN = 0.79    # the expert's grip share (spec §7.1): measured by scripts/expert_grip.py on 2026-10-24:
-                             # Monza reversed not driven 3 laps at 0.80-0.88, Shanghai reversed at 0.84-0.88, more
-                             # real layouts above (33 of 42 at 1.00); any change to the racing line, the grids, the
-                             # expert or the levels requires re-running scripts/expert_grip.py
+EXPERT_LOOKAHEAD_TIME = 0.2  # s (0.4 to version 3.10)
+EXPERT_PREVIEW_TIME = 0.05   # s: the expert's steering feed-forward reads the line's curvature v × this ahead of its
+                             # matched point, so it turns in as its one-step delay requires (spec §7.1; 0.1 in 3.10)
+EXPERT_CROSS_TRACK_GAIN = 8.0  # its steering asks for this × its distance from the line / L² less curvature, L the
+                             # lookahead 6 m + 0.2 s × v (spec §7.1); pure pursuit's linearization is 2 (3 in 3.10)
+EXPERT_HEADING_GAIN = 8.0    # ... and this × its heading relative to the line / L less (pure pursuit: 2; 5 in 3.10);
+                             # these four were tuned again at the version 3.11 grip on the 42 real layouts for the
+                             # highest grip share at which all finish (144 combinations; the version 3.10 values
+                             # reached 0.58 there, 0.53 with the generated maps; 0.82-0.83 on a broad plateau of these)
+EXPERT_GRIP_MARGIN = 0.80    # the expert's grip share (spec §7.1): measured by scripts/expert_grip.py on 2026-10-25
+                             # at the version 3.11 grip: Monza reversed not driven 3 laps at 0.81-0.85, Shanghai
+                             # reversed at 0.86-0.92, more real layouts above (33 of 42 at 1.00); any change to the
+                             # grip, the racing line, the grids, the expert or the levels requires re-running
+                             # scripts/expert_grip.py (0.79 in version 3.10)
 EXPERT_SPEED_BAND = 0.5      # m/s, the least of the expert's throttle band (spec §7.1): its throttle is the speed error
-                             # over the larger of this and one step's speed change a(v) DT (0.9-2.5 m/s), so in a
-                             # steady corner near 5 g it does not switch between gas and brake every step, which left
-                             # 1/√2 of a(v) to turn
+                             # over the larger of this and one step's speed change a(v) DT (2.5-4.9 m/s; 0.9-2.5 to
+                             # version 3.10), so in a steady corner it does not switch between gas and brake every
+                             # step, which left 1/√2 of a(v) to turn
 EXPERT_SIGHT = 200.0         # m, the expert's sight: the reach of the cars' curvature inputs (spec §7.1; 150 m
                              # to version 3.9)
 EXPERT_VALIDATION_TIME = 600.0  # s, time limit when validating a track with the expert

@@ -46,7 +46,7 @@ def test_the_stop_speed_stops_within_its_distance():
         speeds = np.linspace(v, 0.0, 200001)
         travelled = np.trapezoid(speeds / (share * sim.grip_at(speeds)), -speeds)
         assert np.isclose(travelled, distance, rtol=1e-4)
-    assert 97.5 < ideal.stop_speed(150.0, 0.85) < 98.5           # version 3.9's sight speed
+    assert 151.5 < ideal.stop_speed(150.0, 0.85) < 152.5         # version 3.11's grip (97.5-98.5 m/s to 3.10)
     assert ideal.stop_speed(200.0, 1.0) > config.TOP_SPEED      # 200 m at full grip stops from the top speed
 
 
@@ -67,4 +67,4 @@ def test_the_target_slows_for_a_corner_within_the_sight_only():
     target = ideal.sight_speeds(straight, curvature, 1.0, 1.0, 200.0)
     assert target[300] == config.TOP_SPEED and target[650] == min(float(ideal.corner_speed(1 / 30.0)),
                                                                    config.TOP_SPEED)
-    assert np.all(target[:400] == config.TOP_SPEED) and target[550] < config.TOP_SPEED
+    assert np.all(target[:400] == config.TOP_SPEED) and target[580] < config.TOP_SPEED   # braking from 552 m
