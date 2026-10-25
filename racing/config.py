@@ -93,7 +93,8 @@ RACING_LINE_SMOOTHING = 10.0  # m, standard deviation of the Gaussian that smoot
 LINE_AHEAD = (25.0, 50.0, 100.0, 200.0)   # m ahead of the matched point where the curvature inputs are read (§5.2)
 LINE_CURVATURE_SCALE = 50.0  # m: a curvature input is −κ × 50 m, so a 50 m radius reads 1
 LINE_CURVATURE_CLIP = 5.0    # curvature inputs are clipped to ±5, a 10 m radius
-FINAL_MIN_SUCCESSES = 18     # validation successes (of 20) a car needs to be picked by its pace (spec §9.5)
+FINAL_MIN_SUCCESSES = 18     # validation maps (of 20) a car must finish within the time limit to be picked by its
+                             # pace (spec §9.5; successes at the run's tightest target to version 3.10)
 
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)
@@ -113,8 +114,9 @@ EXPERT_CROSS_TRACK_GAIN = 8.0  # its steering asks for this × its distance from
                              # lookahead 6 m + 0.2 s × v (spec §7.1); pure pursuit's linearization is 2 (3 in 3.10)
 EXPERT_HEADING_GAIN = 8.0    # ... and this × its heading relative to the line / L less (pure pursuit: 2; 5 in 3.10);
                              # these four were tuned again at the version 3.11 grip on the 42 real layouts for the
-                             # highest grip share at which all finish (144 combinations; the version 3.10 values
-                             # reached 0.58 there, 0.53 with the generated maps; 0.82-0.83 on a broad plateau of these)
+                             # highest grip share at which all finish one lap (144 combinations; the version 3.10
+                             # values reached 0.58 there, 0.53 with the generated maps; 0.82-0.83 on a broad plateau
+                             # of these, 0.80 over three laps)
 EXPERT_GRIP_MARGIN = 0.80    # the expert's grip share (spec §7.1): measured by scripts/expert_grip.py on 2026-10-25
                              # at the version 3.11 grip: Monza reversed not driven 3 laps at 0.81-0.85, Shanghai
                              # reversed at 0.86-0.92, more real layouts above (33 of 42 at 1.00); any change to the

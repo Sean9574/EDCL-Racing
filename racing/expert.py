@@ -17,7 +17,7 @@ def expert_controls(track, cars):
     speed (spec §7.1, version 3.10). The steering follows the racing line: the path curvature it asks for is the
     line's curvature EXPERT_PREVIEW_TIME × v ahead of the matched point, less EXPERT_CROSS_TRACK_GAIN × the car's
     distance left of the line / L² and EXPERT_HEADING_GAIN × its heading relative to the line / L, where L = 6 m +
-    0.4 s × v (EXPERT_LOOKAHEAD_BASE, EXPERT_LOOKAHEAD_TIME); the steering is that curvature × v² / a(v), clipped to
+    0.2 s × v (EXPERT_LOOKAHEAD_BASE, EXPERT_LOOKAHEAD_TIME); the steering is that curvature × v² / a(v), clipped to
     [−1, 1]. The target speed is the track's profile at the matched point. The throttle is the speed error (target
     minus speed) divided by the band, the larger of EXPERT_SPEED_BAND and one step's full speed change a(v) DT,
     clipped to [−1, 1]: once quantized, full gas or full brake beyond the band, half gas or half brake within it and

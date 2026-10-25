@@ -234,7 +234,7 @@ def test_experiment_runs_report_status_and_milestones(evaluation, monkeypatch, t
     assert status["level"] == 2 and status["generation"] == 3 and status["min_share"] == 1.0
     log = config.RUN_LOG_PATH.read_text()
     assert "GA run 2: started" in log and "Easy mastered at generation 2, now Medium" in log
-    assert "GA run 2: finished" in log
+    assert "GA run 2: finished" in log and "final controller finishes 1 of 20 validation maps" in log
 
 
 def test_viewer_and_pilot_runs_report_nothing(evaluation, tmp_path):

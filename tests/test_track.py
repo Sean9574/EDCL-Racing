@@ -42,9 +42,11 @@ def test_a_built_track_has_the_experts_target_speeds(monkeypatch, circle_track):
     for track in (circle_track, circuits.circuit_track("Spielberg", True)):
         assert np.array_equal(track.expert_speed, profile(track))
         assert track.expert_speed.dtype == np.float64 and track.expert_speed.flags["C_CONTIGUOUS"]
-    monkeypatch.setattr(config, "EXPERT_GRIP_MARGIN", 0.8)
+    before = circuits.circuit_track("Spielberg", True).expert_speed
+    monkeypatch.setattr(config, "EXPERT_GRIP_MARGIN", config.EXPERT_GRIP_MARGIN - 0.1)   # a share other than 0.80
     slower = circuits.circuit_track("Spielberg", True)
-    assert np.array_equal(slower.expert_speed, profile(slower))
+    assert np.array_equal(slower.expert_speed, profile(slower)) and np.all(slower.expert_speed <= before)
+    assert np.any(slower.expert_speed < before)          # the speeds follow the share, not the cached racing line
 
 
 def test_start_pose(circle_track):
