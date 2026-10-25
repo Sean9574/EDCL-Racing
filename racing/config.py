@@ -156,12 +156,14 @@ STALL_GENERATIONS = 100      # generations of the speed push without a mastered 
 STALL_BOOST = 3.0            # in a stall, the decision layer's mutation is this many times as strong (spec §9.4)
 STALL_STEER_P = 0.5          # in a stall, a child's steering sensitivity mutates with this probability ...
 STALL_STEER_SD = 0.2         # ... and this standard deviation on the log scale (spec §9.4, §9.11)
-SAFETY_PATIENCE = 2000       # generations without a new best 3-generation mean lowest share that end a run (spec §9.4)
+SAFETY_PATIENCE = None       # off from version 3.11: a run climbs the levels until it masters Extra hard, however long
+                             # it takes (spec §9.4); a number n ends a run after n generations without a new best
+                             # 3-generation mean lowest share (2000 to version 3.10)
 KEEP_MAX_FRACTION = 0.9      # kept cars fill at most this share of the population (spec §9.3)
 ELITE_FLOOR = 50             # at least this many of the fittest cars are kept
 
 # --- Genetic algorithm (spec §9.6) ---
-GA_POP = 1000
+GA_POP = 2000                # cars (1,000 to version 3.10)
 GA_TOURNAMENT = 5
 GA_CROSSOVER_P = 0.5
 GA_MUTATION_P = 0.1
@@ -174,15 +176,15 @@ GA_ADD_LAYER = 0.01          # per child: an identity hidden layer is inserted a
 GA_REMOVE_LAYER = 0.01       # per child: a random hidden layer is removed, its neighbours joined by their product
 
 # --- Evolution strategy (spec §9.7) ---
-ES_POP = 550
-ES_MU = 50                   # children are copies of one of the ES_MU fittest cars
+ES_POP = 1100                # cars (550 to version 3.10)
+ES_MU = 100                  # children are copies of one of the ES_MU fittest cars (50 to version 3.10, the same share)
 ES_SIGMA0 = 0.1
 ES_FACTOR = 0.82
 ES_SIGMA_MIN = 1e-4
 ES_SIGMA_MAX = 1.0
 
 # --- NEAT (spec §9.9) ---
-NEAT_POP = 1000
+NEAT_POP = 2000              # genomes (1,000 to version 3.10)
 NEAT_CROSSOVER = 0.75        # share of children produced by crossover; the rest are mutated copies
 NEAT_TOURNAMENT = 3          # parents are the winners of tournaments within their species
 NEAT_DISABLE_INHERIT = 0.75  # a gene disabled in either parent is disabled in the child with this probability

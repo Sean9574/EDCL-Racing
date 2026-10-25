@@ -171,6 +171,13 @@ def test_safety_stop_ends_a_run_that_stops_improving(monkeypatch):
     assert math.isnan(t.target_reduction) and t.update(1.0) is None
 
 
+def test_without_the_safety_stop_a_run_that_stops_improving_keeps_training():
+    """Spec §9.4 (version 3.11): the safety stop is off, so a run climbs the levels until it masters Extra hard."""
+    assert config.SAFETY_PATIENCE is None
+    t = MasteryTracker()
+    assert all(t.update(0.5) is None for _ in range(10_000)) and not t.done and t.outcome is None
+
+
 def test_improvement_postpones_the_safety_stop(monkeypatch):
     monkeypatch.setattr(config, "SAFETY_PATIENCE", 3)
     t = MasteryTracker()

@@ -133,7 +133,7 @@ class MasteryTracker:
             self.best_mean, self.since_best = mean, 0
         else:
             self.since_best += 1
-            if self.since_best >= config.SAFETY_PATIENCE:
+            if config.SAFETY_PATIENCE is not None and self.since_best >= config.SAFETY_PATIENCE:
                 self.outcome = "stalled"
                 return "end_stalled"
         return None

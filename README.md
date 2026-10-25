@@ -17,12 +17,13 @@ lap (lap times are whole steps of 0.05 s, so a lap within 0.05 s of pole is not 
 
 Every method trains until it masters the curriculum: on every map of a generation (generated, or real circuits drawn
 from the 38 training layouts), at least 90% of its population must complete three laps within the target time, three
-generations in a row, on each level from Easy to Extra hard. In the speed push that follows, the target time is
-shortened by 2% at a time whenever half of the population beats it three generations in a row, until 1,000 generations
-pass without that. Every method is trained four times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set
-no seed, so their random choices differ every time; results are reported for each run and their mean. Every evolved
-car also evolves its own setup next to its network: the length of its distance sensors (30–1,000 m, 150 m at the
-start) and its steering sensitivity (⅓–3), judged only by success and lap time.
+generations in a row, on each level from Easy to Extra hard, however long that takes (version 3.11 has no safety stop).
+In the speed push that follows, the target time is shortened by 2% at a time whenever half of the population beats it
+three generations in a row, until 1,000 generations pass without that. Every method is trained four times: run 0 is
+seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ every time; results are
+reported for each run and their mean. Every evolved car also evolves its own setup next to its network: the length of
+its distance sensors (30–1,000 m, 150 m at the start) and its steering sensitivity (⅓–3), judged only by success and lap
+time.
 
 Every car chooses one of 45 actions: nine steering levels in steps of 0.25 (full lock left to full lock right) and five
 throttle levels (full and half brake, coast, half and full gas), so a network has 45 outputs (spec §6).
@@ -366,8 +367,10 @@ brake are shares of the same grip, so the cars also launch and brake harder. The
 it (preview 0.05 s, gains 8 and 8, lookahead 6 m + 0.2 s × v) and its grip share measured again (0.80). Each run's
 final controller is the fastest car that finishes at least 18 of the 20 validation maps within the time limit; if no
 car finishes that often, the car with the most finishes, then the highest validation fitness (the best run of each
-method likewise). Every result of version 3.10 is refused by `run_notebooks.py --check` and is set aside before the new
-run; the pilots write to `results/pilots/revision3.11/`. The racing lines and circuit grids stay valid.
+method likewise). The populations double (GA 2,000, ES 1,100 with 100 parents, NEAT 2,000), so a generation takes
+about twice as long, and the safety stop is off: a run climbs the levels until it masters Extra hard, however long that
+takes. Every result of version 3.10 is refused by `run_notebooks.py --check` and is set aside before the new run; the
+pilots write to `results/pilots/revision3.11/`. The racing lines and circuit grids stay valid.
 
 ```bash
 python scripts/fleet.py stop
