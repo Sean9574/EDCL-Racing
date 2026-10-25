@@ -51,8 +51,8 @@ def test_a_short_pilot_summarizes_its_run(pilots, tmp_path, name):
     assert (tmp_path / name / "log.csv").exists()
 
 
-def test_revision_3_11_pilots_have_their_own_folder(pilots):
-    assert pilots.OUT == config.PILOTS_DIR / "revision3.11"
+def test_revision_3_12_pilots_have_their_own_folder(pilots):
+    assert pilots.OUT == config.PILOTS_DIR / "revision3.12"
 
 
 def test_a_pilot_always_starts_over(pilots, tmp_path):

@@ -39,10 +39,6 @@ SETTINGS_KEYS = (
     "SAFETY_PATIENCE", "KEEP_MAX_FRACTION", "ELITE_FLOOR",
     "GA_POP", "GA_TOURNAMENT", "GA_CROSSOVER_P", "GA_MUTATION_P", "GA_S_MAX", "GA_S_MIN",
     "ES_POP", "ES_MU", "ES_SIGMA0", "ES_FACTOR", "ES_SIGMA_MIN", "ES_SIGMA_MAX",
-    "NEAT_POP", "NEAT_CROSSOVER", "NEAT_TOURNAMENT", "NEAT_DISABLE_INHERIT", "NEAT_PERTURB",
-    "NEAT_REPLACE", "NEAT_ADD_CONN", "NEAT_ADD_NODE", "NEAT_TOGGLE", "NEAT_SIGMA0", "NEAT_C1",
-    "NEAT_C2", "NEAT_C3", "NEAT_SMALL_GENOME", "NEAT_THRESHOLD0", "NEAT_THRESHOLD_STEP",
-    "NEAT_TARGET_SPECIES", "NEAT_STAGNATION",
     "DAGGER_MAPS", "DAGGER_EPOCHS", "DAGGER_HOLDOUT", "DAGGER_GOAL", "DAGGER_STREAK", "DAGGER_PATIENCE",
     "DAGGER_SALT",
     "LEARNING_RATE", "BATCH_SIZE", "MAX_EPOCHS", "PATIENCE", "KT_TRIALS", "KT_BAYES_INITIAL", "HYPERBAND_FACTOR",
@@ -50,9 +46,14 @@ SETTINGS_KEYS = (
 )
 
 # Settings that affect only one method's results (spec §3.3): recorded and checked only in that method's runs, so the
-# runs of the other methods made before such a setting existed stay valid.
+# runs of the other methods made before such a setting existed stay valid. NEAT's settings were shared until version
+# 3.11: a record made before version 3.12 still lists them, and check_settings ignores them in another method's run.
 METHOD_SETTINGS_KEYS = {
     "ga": ("GA_START_HIDDEN", "GA_ADD_UNIT", "GA_REMOVE_UNIT", "GA_ADD_LAYER", "GA_REMOVE_LAYER"),
+    "neat": ("NEAT_POP", "NEAT_CROSSOVER", "NEAT_TOURNAMENT", "NEAT_DISABLE_INHERIT", "NEAT_PERTURB",
+             "NEAT_REPLACE", "NEAT_ADD_CONN", "NEAT_ADD_NODE", "NEAT_TOGGLE", "NEAT_SIGMA0", "NEAT_C1",
+             "NEAT_C2", "NEAT_C3", "NEAT_SMALL_GENOME", "NEAT_THRESHOLD0", "NEAT_THRESHOLD_STEP",
+             "NEAT_TARGET_SPECIES", "NEAT_STAGNATION"),
 }
 
 
@@ -110,11 +111,14 @@ def machine_record():
 
 def check_settings(recorded, approach=None):
     """Raise SettingsMismatch if `recorded` differs from the current settings of `approach`'s runs, naming every
-    difference."""
+    difference. Another method's own settings in `recorded` (NEAT's, in a record made before version 3.12) are
+    ignored."""
     current = settings_record(approach)
     recorded = plain(recorded)
+    foreign = {name for method, names in METHOD_SETTINGS_KEYS.items() if method != approach for name in names}
     differences = [f"{name}: recorded {recorded.get(name)!r}, now {current.get(name)!r}"
-                   for name in sorted(set(recorded) | set(current)) if recorded.get(name) != current.get(name)]
+                   for name in sorted((set(recorded) - foreign) | set(current))
+                   if recorded.get(name) != current.get(name)]
     if differences:
         raise SettingsMismatch("this run was made with other settings (" + "; ".join(differences)
                                + "); start over with scripts/run_notebooks.py --fresh")

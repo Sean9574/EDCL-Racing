@@ -1,8 +1,8 @@
-"""Pilot runs of revision 3.11 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
-which show whether the 90% requirement can be reached with the reported settings, now with the grip of version 3.11
-(5 g at low speed, rising to 10 g) and the expert retuned to drive the racing line at its measured grip share,
-before the reported run starts. Each pilot starts over in
-results/pilots/revision3.11/<name>/ and adds a row to results/pilots/revision3.11/summary.md, with the population's mean
+"""Pilot runs of revision 3.12 (spec §12.2, §14): short runs of each evolutionary method from Easy with seed 0,
+which show whether the 90% requirement can be reached with the reported settings, with the grip of version 3.11
+(5 g at low speed, rising to 10 g), the expert retuned to drive the racing line at its measured grip share and
+NEAT's weight replacement of version 3.12, before the reported run starts. Each pilot starts over in
+results/pilots/revision3.12/<name>/ and adds a row to results/pilots/revision3.12/summary.md, with the population's mean
 sensor length and steering sensitivity and, for the GA, its network size at the end. Pilots are not part of the
 reported results.
 
@@ -25,7 +25,7 @@ from racing import config, es, ga, neat, paths  # noqa: E402
 
 PILOTS = ("ga", "es", "neat", "seeded")
 NAMES = {"ga": "GA", "es": "ES", "neat": "NEAT", "seeded": "Seeded ES"}
-OUT = config.PILOTS_DIR / "revision3.11"
+OUT = config.PILOTS_DIR / "revision3.12"
 
 
 def level_ups(log):

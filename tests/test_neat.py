@@ -51,9 +51,9 @@ def test_neat_is_an_evolutionary_approach_with_its_own_color():
 
 def test_neat_settings_are_recorded_for_resumption():
     from racing import checkpoint
-    record = checkpoint.settings_record()
+    record = checkpoint.settings_record("neat")
     for name in NEAT_NAMES:
-        assert name in checkpoint.SETTINGS_KEYS
+        assert name in checkpoint.settings_keys("neat") and name not in checkpoint.SETTINGS_KEYS
         assert record[name] == getattr(config, name)
 
 
@@ -157,7 +157,7 @@ def test_weight_mutation_rates(monkeypatch):
     before = np.concatenate([g.weight for g in genomes])
     still = np.concatenate([neat.mutate(rng, g, innovations, 0.0).weight for g in genomes])
     replaced = np.mean(still != before)
-    assert abs(replaced - config.NEAT_REPLACE) < 0.02                 # σ = 0: only replacements change weights
+    assert abs(replaced - config.NEAT_REPLACE) < 0.001                # σ = 0: only replacements change weights
     moved = np.concatenate([neat.mutate(rng, g, innovations, 1.0).weight for g in genomes])
     assert abs(np.mean(moved != before) - (config.NEAT_REPLACE + config.NEAT_PERTURB)) < 0.03
     assert all(g.n_params == 855 for g in genomes)                     # the parents are unchanged

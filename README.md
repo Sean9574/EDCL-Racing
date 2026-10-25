@@ -39,7 +39,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.11, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.12, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -242,7 +242,7 @@ Results are written to `results/`, which is not under version control:
 | `results/status.json`, `results/run_info.json`, `results/run_log.txt`, `results/run_console.txt` | Live status, record, log and console output of the run |
 | `results/status/`, `results/train_logs/` | Status file and output of each run trained side by side (`--runs`) |
 | `results/machines/<name>/` | Run log and record of a server, copied by `scripts/fleet.py collect` |
-| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/`, `results/pilots/revision3.10/`, `results/pilots/revision3.11/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits), 3.9 (45 actions, speed push to 50%), 3.10 (racing line, 18 inputs) and 3.11 (5-10 g grip) |
+| `results/pilots/revision3/`, `results/pilots/revision3.1/`, `results/pilots/revision3.2/`, `results/pilots/revision3.8/`, `results/pilots/revision3.9/`, `results/pilots/revision3.10/`, `results/pilots/revision3.11/`, `results/pilots/revision3.12/` | Pilot runs of revisions 3, 3.1 (with setup evolution), 3.2 (with road widths), 3.8 (Formula 1 car, real circuits), 3.9 (45 actions, speed push to 50%), 3.10 (racing line, 18 inputs), 3.11 (5-10 g grip) and 3.12 (NEAT weight replacement 0.002) |
 | `results/circuit_grids/` | The real circuits' road grids, built once per machine (23 files, about 570 MB), kept between runs |
 | `results/racing_lines/` | The real circuits' racing lines, one file per layout and code identity, built once per machine like the grids, kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
@@ -379,6 +379,20 @@ python scripts/fleet.py archive revision3.10
 python scripts/fleet.py start
 ```
 
+**Version 3.12** lowers NEAT's weight replacement from 0.05 to 0.002 per weight and bias. A NEAT genome starts with
+810 connections, so 0.05 replaced about 41 weights of every child with random values, and in the version 3.11 run half
+of the children of cars that finished did not; 0.002 replaces about 1.6. NEAT's settings move to NEAT's own settings
+record, as GA's own settings did in version 3.7, so the runs of the other methods made with 3.11 stay valid (a record
+of 3.11 still lists NEAT's settings; they are ignored outside NEAT runs). Only the NEAT runs are trained again; the
+pilots write to `results/pilots/revision3.12/`:
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/fleet.py archive revision3.11-neat --runs neat:0,neat:1,neat:2,neat:3
+python scripts/fleet.py start
+```
+
 Version 3.7 trained only the GA again; the runs of the other methods made with 3.6 stay valid:
 
 ```bash
@@ -426,7 +440,7 @@ python -m racing.bench keras              # Keras epoch time per steps_per_execu
                                           # off: on the desktop it failed after ~130 Keras Tuner trials)
 ```
 
-The pilots write to `results/pilots/revision3.11/` (each pilot deletes only its own folder there, so the earlier pilots
+The pilots write to `results/pilots/revision3.12/` (each pilot deletes only its own folder there, so the earlier pilots
 stay) and are not part of the reported results; their summary includes the populations' final mean sensor length and
 steering sensitivity and the last speed-push target (`target_reduction`, percent shorter). Before notebook 03 has run, leave out the seeded
 pilot: it needs a refined baseline of this revision.

@@ -199,7 +199,7 @@ def test_a_methods_own_settings_are_recorded_only_in_its_runs():
     assert own == {"GA_START_HIDDEN", "GA_ADD_UNIT", "GA_REMOVE_UNIT", "GA_ADD_LAYER", "GA_REMOVE_LAYER"}
     assert not own & set(checkpoint.SETTINGS_KEYS)
     assert own <= set(checkpoint.settings_record("ga"))
-    for approach in (None, "es", "es_seeded", "neat", "baseline", "kt_random"):
+    for approach in (None, "es", "es_seeded", "baseline", "kt_random"):
         assert checkpoint.settings_record(approach) == checkpoint.settings_record()
     assert checkpoint.settings_record("ga")["GA_START_HIDDEN"] == [] and config.GA_ADD_UNIT == 0.03
     assert (config.GA_REMOVE_UNIT, config.GA_ADD_LAYER, config.GA_REMOVE_LAYER) == (0.03, 0.01, 0.01)
@@ -218,4 +218,39 @@ def test_completed_checks_the_methods_own_settings(tmp_path):
     (tmp_path / "summary.json").write_text(json.dumps({"settings": checkpoint.settings_record()}))
     with pytest.raises(checkpoint.SettingsMismatch, match="GA_START_HIDDEN"):
         checkpoint.completed(tmp_path, approach="ga")
-    assert checkpoint.completed(tmp_path, approach="neat")["settings"] == checkpoint.settings_record()
+    assert checkpoint.completed(tmp_path, approach="es")["settings"] == checkpoint.settings_record()
+
+
+def version_3_11_record(approach=None):
+    """A record of version 3.11, when NEAT's settings were shared by every run and NEAT_REPLACE was 0.05."""
+    record = json.loads(json.dumps(checkpoint.settings_record(approach)))
+    record.update({name: getattr(config, name) for name in checkpoint.METHOD_SETTINGS_KEYS["neat"]})
+    record["NEAT_REPLACE"] = 0.05
+    return record
+
+
+def test_neats_settings_are_recorded_only_in_neat_runs():
+    own = set(checkpoint.METHOD_SETTINGS_KEYS["neat"])
+    assert {"NEAT_POP", "NEAT_REPLACE", "NEAT_PERTURB", "NEAT_STAGNATION"} <= own and len(own) == 18
+    assert not own & set(checkpoint.SETTINGS_KEYS) and not own & set(checkpoint.METHOD_SETTINGS_KEYS["ga"])
+    assert own <= set(checkpoint.settings_record("neat"))
+    for approach in (None, "ga", "es", "es_seeded", "baseline", "kt_random"):
+        assert not own & set(checkpoint.settings_record(approach))
+    assert config.NEAT_REPLACE == 0.002
+
+
+def test_a_version_3_11_record_is_accepted_by_every_method_but_neat():
+    for approach in (None, "es", "es_seeded", "baseline", "kt_hyperband"):
+        checkpoint.check_settings(version_3_11_record(approach), approach)
+    checkpoint.check_settings(version_3_11_record("ga"), "ga")
+    with pytest.raises(checkpoint.SettingsMismatch, match="NEAT_REPLACE: recorded 0.05, now 0.002"):
+        checkpoint.check_settings(version_3_11_record(), "neat")
+    checkpoint.check_settings(json.loads(json.dumps(checkpoint.settings_record("neat"))), "neat")
+
+
+def test_another_methods_settings_do_not_hide_a_shared_difference():
+    record = version_3_11_record()
+    record["LAPS"] = 5
+    with pytest.raises(checkpoint.SettingsMismatch, match="LAPS") as error:
+        checkpoint.check_settings(record, "es")
+    assert "NEAT" not in str(error.value)

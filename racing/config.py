@@ -189,7 +189,9 @@ NEAT_CROSSOVER = 0.75        # share of children produced by crossover; the rest
 NEAT_TOURNAMENT = 3          # parents are the winners of tournaments within their species
 NEAT_DISABLE_INHERIT = 0.75  # a gene disabled in either parent is disabled in the child with this probability
 NEAT_PERTURB = 0.8           # per weight and bias: perturbation by N(0, σ²)
-NEAT_REPLACE = 0.05          # per weight and bias: replacement by a standard normal value
+NEAT_REPLACE = 0.002         # per weight and bias: replacement by a standard normal value, about 1.6 of a starting
+                             # genome's 810 connections per child (0.05 to version 3.11, about 41: half the
+                             # children of a population that finishes failed to; spec §9.9)
 NEAT_ADD_CONN = 0.05         # per child: one new connection
 NEAT_ADD_NODE = 0.03         # per child: one connection split by a new hidden node
 NEAT_TOGGLE = 0.01           # per child: one connection's enabled flag toggled
