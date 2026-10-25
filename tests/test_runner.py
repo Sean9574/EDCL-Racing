@@ -800,7 +800,8 @@ def test_a_search_job_runs_racing_train_search_with_its_own_status_file(runner, 
 
 def test_version_3_6_runs_of_other_methods_stay_valid_and_its_ga_runs_do_not(runner, tmp_path):
     runs = tmp_path / "results" / "runs"
-    shared = checkpoint.settings_record()                                # what version 3.6 recorded
+    shared = checkpoint.settings_record()                                # what version 3.6 recorded: the shared
+    shared.update({name: getattr(config, name) for name in checkpoint.METHOD_SETTINGS_KEYS["neat"]})   # ones, NEAT's too
     for approach in ("es", "neat", "es_seeded", "ga"):
         folder = runs / approach / "seed0"
         folder.mkdir(parents=True)
@@ -810,6 +811,24 @@ def test_version_3_6_runs_of_other_methods_stay_valid_and_its_ga_runs_do_not(run
     (runs / "ga" / "seed0" / "summary.json").write_text(
         json.dumps({"approach": "ga", "settings": checkpoint.settings_record("ga")}))
     assert runner.check_results(runs) == ([], [])
+
+
+def test_version_3_11_runs_of_other_methods_stay_valid_and_its_neat_runs_do_not(runner, tmp_path):
+    runs = tmp_path / "results" / "runs"
+
+    def version_3_11(approach=None):                                     # NEAT's settings shared, replacement 0.05
+        record = checkpoint.settings_record(approach)
+        record.update({name: getattr(config, name) for name in checkpoint.METHOD_SETTINGS_KEYS["neat"]})
+        return {**record, "NEAT_REPLACE": 0.05}
+
+    for approach in ("es", "neat", "es_seeded", "ga", "baseline"):
+        folder = runs / approach / "seed0"
+        folder.mkdir(parents=True)
+        (folder / "summary.json").write_text(json.dumps({"approach": approach, "settings": version_3_11(approach)}))
+    (runs.parent / config.DATASET_INFO_PATH.name).write_text(json.dumps({"settings": version_3_11()}))
+    problems, unreadable = runner.check_results(runs)
+    assert not unreadable and len(problems) == 1 and problems[0].startswith("neat/seed0/summary.json")
+    assert "NEAT_REPLACE: recorded 0.05, now 0.002" in problems[0]
 
 
 def test_a_dataset_record_of_other_settings_is_a_problem_even_without_runs(runner, tmp_path):
