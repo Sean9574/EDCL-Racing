@@ -613,11 +613,14 @@ def test_a_log_without_the_boost_column_resumes_without_it(evaluation, tmp_path)
 # ----- hardening (spec §9.4, version 3.15) -----
 
 class EndsAsBeforeVersion3_15(curriculum.MasteryTracker):
-    """The tracker of version 3.14: the end of the speed push ends the run."""
+    """The tracker of version 3.14: the end of the speed push ends the run at the target it could not master, with
+    the generations without a mastered target counted."""
     def update(self, min_share):
         event = super().update(min_share)
-        if event == "end_speed":
+        if event == "end_speed":                                 # undo harden(), which version 3.14 did not have
             self.hardening, self.outcome = False, "speed_limit"
+            self.factor = self.mastered_factor * config.SPEED_STEP
+            self.since_mastered = config.SPEED_PATIENCE
         return event
 
 
@@ -642,8 +645,10 @@ def as_before_version_3_15(run_dir):
 
 
 def ended_at_its_speed_limit(monkeypatch, tmp_path, calls):
-    """A run that reached the goal, mastered no shorter target and ended at its speed limit under version 3.14."""
+    """A run that reached the goal, mastered no shorter target and ended at its speed limit under version 3.14, stalled
+    (STALL_GENERATIONS 2) at a target 2% shorter than its last mastered one."""
     monkeypatch.setattr(config, "SPEED_PATIENCE", 3)
+    monkeypatch.setattr(config, "STALL_GENERATIONS", 2)
     monkeypatch.setattr(population, "evaluate_population", masters_only_the_first_target)
     monkeypatch.setattr(population, "select_final", picks_the_first_candidate(calls))
     monkeypatch.setattr(evolution, "MasteryTracker", EndsAsBeforeVersion3_15)
@@ -651,6 +656,8 @@ def ended_at_its_speed_limit(monkeypatch, tmp_path, calls):
                             start_level=config.MAX_LEVEL)
     monkeypatch.setattr(evolution, "MasteryTracker", curriculum.MasteryTracker)
     assert summary["outcome"] == "speed_limit" and summary["generations"] == 6
+    tracker = checkpoint.load(tmp_path / "run" / checkpoint.CHECKPOINT_NAME)["tracker"]
+    assert tracker["factor"] < tracker["mastered_factor"] and tracker["since_mastered"] >= config.STALL_GENERATIONS
     return as_before_version_3_15(tmp_path / "run")
 
 
@@ -708,6 +715,33 @@ def test_a_run_resumed_into_hardening_under_an_end_request_ends_at_once(monkeypa
                             on_generation=lambda report: pytest.fail("trained again"))
     assert summary["outcome"] == "time_limit" and summary["generations"] == 6 and len(calls) == 2
     assert summary["hardening"] == {"factor": config.TARGET_FACTOR, "from_generation": 6}
+
+
+def test_a_run_ended_by_time_in_its_speed_push_hardens_at_its_last_mastered_target(monkeypatch, tmp_path):
+    """The server's GA runs 0 and 1 and ES run 3 of version 3.14: an end request in a stalled speed push leaves a
+    checkpoint whose tracker has no outcome, a target 2% shorter than the last mastered one and the stall on."""
+    monkeypatch.setattr(config, "STALL_GENERATIONS", 2)
+    monkeypatch.setattr(population, "evaluate_population", masters_only_the_first_target)
+    calls = []
+    monkeypatch.setattr(population, "select_final", picks_the_first_candidate(calls))
+
+    def end_after(report):
+        if report["generation"] == 5:
+            config.END_FILE.write_text("2026-10-26T07:00:00")
+
+    evolution.run(ga.GA(pop_size=20), 1, tmp_path / "run", champion_dir=tmp_path / "champions",
+                  start_level=config.MAX_LEVEL, on_generation=end_after)
+    as_before_version_3_15(tmp_path / "run")
+    state = checkpoint.load(tmp_path / "run" / checkpoint.CHECKPOINT_NAME)
+    tracker = curriculum.MasteryTracker.from_state(state["tracker"])
+    assert tracker.outcome is None and tracker.stalled and tracker.factor < tracker.mastered_factor
+    config.END_FILE.unlink()                                  # fleet.py start removes it
+    reports = []
+    summary = evolution.run(ga.GA(pop_size=20), 1, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=reports.append)
+    assert [r["event"] for r in reports] == [None, None, "hardened"]
+    assert all(r["factor"] == config.TARGET_FACTOR and not r["speed_push"] and r["boost"] == 0 for r in reports)
+    assert summary["outcome"] == "hardened" and summary["hardening"]["from_generation"] == 6 and len(calls) == 2
 
 
 def test_a_run_ended_before_its_goal_continues_its_levels_and_ends_hardened_at_the_goal(monkeypatch, tmp_path):
