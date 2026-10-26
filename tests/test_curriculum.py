@@ -151,7 +151,7 @@ def test_speed_push_ends_after_patience_without_mastery(monkeypatch):
     for _ in range(3):
         t.update(1.0)
     assert [t.update(0.4) for _ in range(4)] == [None, None, None, "end_speed"]
-    assert t.done and t.outcome == "speed_limit" and t.update(1.0) is None
+    assert t.hardening and not t.done and t.outcome is None and t.factor == t.mastered_factor
 
 
 def test_mastery_wins_over_the_end_of_the_speed_push(monkeypatch):
@@ -299,7 +299,7 @@ def test_no_stall_before_the_goal_or_after_the_push_and_the_patience_is_1000():
     assert not tracker.goal_reached and not tracker.stalled
     ended = at_goal()
     events = [ended.update(0.0) for _ in range(config.SPEED_PATIENCE)]
-    assert events[-1] == "end_speed" and ended.done and not ended.stalled
+    assert events[-1] == "end_speed" and ended.hardening and not ended.done and not ended.stalled
     assert config.SPEED_PATIENCE == 1000 and config.STALL_GENERATIONS == 100 and config.STALL_BOOST == 3.0
     assert (config.STALL_STEER_P, config.STALL_STEER_SD) == (0.5, 0.2)
 
@@ -310,3 +310,41 @@ def test_the_stall_comes_back_from_the_trackers_state():
         tracker.update(0.0)
     copy = MasteryTracker.from_state(pickle.loads(pickle.dumps(tracker.state())))
     assert copy.stalled and "stalled" not in tracker.state()  # derived from the state, never stored
+
+
+# ----- hardening (spec §9.4, version 3.15) -----
+
+def test_the_end_of_the_speed_push_starts_hardening_at_the_last_mastered_target(monkeypatch):
+    monkeypatch.setattr(config, "SPEED_PATIENCE", 4)
+    t = at_goal()
+    assert [t.update(0.4) for _ in range(4)] == [None, None, None, "end_speed"]
+    assert t.hardening and not t.done and not t.speed_push and not t.stalled
+    assert t.factor == t.mastered_factor == config.TARGET_FACTOR
+
+
+def test_hardening_is_judged_by_the_level_rule_and_never_tightens():
+    t = at_goal()
+    target = t.mastered_factor
+    t.harden()
+    assert t.factor == target and t.streak == 0
+    assert [t.update(0.8) for _ in range(5)] == [None] * 5               # the speed push's 50% no longer passes
+    assert [t.update(M), t.update(M), t.update(M - 0.01)] == [None] * 3   # two, then a miss: not hardened
+    assert [t.update(M) for _ in range(3)] == [None, None, "hardened"]
+    assert t.done and t.outcome == "hardened" and t.factor == target and t.update(1.0) is None
+
+
+def test_a_run_hardening_before_its_goal_ends_hardened_at_the_goal():
+    t = MasteryTracker(level=config.MAX_LEVEL - 1)
+    t.harden()
+    assert [t.update(1.0) for _ in range(6)] == [None, None, "level_up", None, None, "hardened"]
+    assert t.done and t.goal_reached and t.mastered_factor == t.factor == config.TARGET_FACTOR
+
+
+def test_a_tracker_ended_before_version_3_15_hardens_after_its_end():
+    state = at_goal().state()
+    state.pop("hardening", None)
+    state["outcome"] = "speed_limit"
+    old = MasteryTracker.from_state(state)
+    assert old.done and not old.hardening
+    old.harden()
+    assert not old.done and old.outcome is None and old.factor == old.mastered_factor and not old.stalled

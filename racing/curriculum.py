@@ -4,7 +4,7 @@ import numpy as np
 
 from racing import config
 
-EVENTS = ("level_up", "goal", "tightened", "end_speed", "end_stalled")
+EVENTS = ("level_up", "goal", "tightened", "end_speed", "end_stalled", "hardened")
 
 
 class SeedSource:
@@ -67,7 +67,7 @@ def mastery_fraction(speed_push):
 
 
 class MasteryTracker:
-    """Levels, the mastery goal, the speed push and the safety stop (spec §9.4). update() takes the lowest
+    """Levels, the mastery goal, the speed push, hardening and the safety stop (spec §9.4). update() takes the lowest
     map success share of one generation and returns one of EVENTS or None."""
 
     def __init__(self, level=1, factor=config.TARGET_FACTOR):
@@ -75,9 +75,10 @@ class MasteryTracker:
         self.factor = float(factor)
         self.streak = 0
         self.goal_reached = False
+        self.hardening = False          # the run hardens (spec §9.4, version 3.15)
         self.mastered_factor = float("nan")
-        self.outcome = None             # None, "speed_limit", "stalled" or "time_limit" (an end request, set by
-                                        # evolution.run)
+        self.outcome = None             # None, "hardened", "stalled" or "time_limit" (an end request, set by
+                                        # evolution.run); "speed_limit" to version 3.14
         self.recent = []                # the level's latest lowest shares (at most MASTERY_STREAK, i.e. the three
                                         # generations of spec §9.4), for the safety stop
         self.best_mean = float("-inf")
@@ -89,11 +90,16 @@ class MasteryTracker:
         return self.outcome is not None
 
     @property
+    def speed_push(self):
+        """Whether a generation is judged by the speed push's rule (spec §9.4): after the goal, before hardening."""
+        return self.goal_reached and not self.hardening
+
+    @property
     def stalled(self):
         """The speed push has gone STALL_GENERATIONS generations without mastering its target (spec §9.4): the
         stall boost is on until the next mastered target. Unrelated to outcome == "stalled" (the safety stop before the
         goal)."""
-        return self.goal_reached and not self.done and self.since_mastered >= config.STALL_GENERATIONS
+        return self.speed_push and not self.done and self.since_mastered >= config.STALL_GENERATIONS
 
     @property
     def target_reduction(self):
@@ -106,17 +112,33 @@ class MasteryTracker:
         self.streak = 0
         self.since_mastered = 0
 
+    def harden(self):
+        """Start hardening (spec §9.4, version 3.15): every later generation is judged by the level rule at the last
+        mastered target, which no longer tightens; before the goal the levels go on and the goal ends hardening. Clears
+        the outcome of a run that ended before version 3.15."""
+        self.hardening = True
+        self.outcome = None
+        if self.goal_reached:
+            self.factor = self.mastered_factor
+        self.streak = 0
+        self.since_mastered = 0
+
     def update(self, min_share):
         if self.done:
             return None
-        self.streak = self.streak + 1 if min_share >= mastery_fraction(self.goal_reached) else 0
+        self.streak = self.streak + 1 if min_share >= mastery_fraction(self.speed_push) else 0
+        if self.hardening and self.goal_reached:
+            if self.streak >= config.MASTERY_STREAK:
+                self.outcome = "hardened"
+                return "hardened"
+            return None
         if self.goal_reached:
             if self.streak >= config.MASTERY_STREAK:
                 self._master()
                 return "tightened"
             self.since_mastered += 1
             if self.since_mastered >= config.SPEED_PATIENCE:
-                self.outcome = "speed_limit"
+                self.harden()
                 return "end_speed"
             return None
         if self.streak >= config.MASTERY_STREAK:
@@ -126,6 +148,10 @@ class MasteryTracker:
                 self.recent, self.best_mean, self.since_best = [], float("-inf"), 0
                 return "level_up"
             self.goal_reached = True
+            if self.hardening:                  # a run hardening before its goal ends at it
+                self.mastered_factor = self.factor
+                self.outcome = "hardened"
+                return "hardened"
             self._master()
             return "goal"
         self.recent = (self.recent + [float(min_share)])[-config.MASTERY_STREAK:]
