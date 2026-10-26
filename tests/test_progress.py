@@ -305,3 +305,12 @@ def test_the_speed_push_line_shows_its_50_percent_requirement(order):
     push = progress.format_status(status(stage="speed push", target_reduction=0.1, level=4))
     levels = progress.format_status(status())
     assert "/ 50%" in push and "/ 90%" not in push and "/ 90%" in levels
+
+
+def test_the_hardening_line_shows_its_target_and_the_90_percent_rule(order):
+    """Spec §9.4 (version 3.15)."""
+    line = progress.format_status(status(stage="hardening", level=4, target_reduction=0.04))
+    assert "GA run 1 · Extra hard · hardening −4.0% · gen 412 · worst map" in line
+    assert "/ 90%" in line and "/ 50%" not in line
+    before_goal = progress.format_status(status(stage="hardening", level=3))
+    assert "· Hard · hardening · gen 412" in before_goal

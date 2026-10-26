@@ -487,12 +487,14 @@ def milestone_cell(summary, level):
 
 
 def end_cell(summary):
-    """How a run ended: at its speed limit, stalled on a level, by an end request, or stopped by a generation
-    limit."""
+    """How a run ended: hardened (version 3.15), at its speed limit, stalled on a level, by an end request, or stopped
+    by a generation limit."""
     if not summary:
         return "–"
     outcome = summary.get("outcome")
-    if outcome == "speed_limit":
+    if outcome == "hardened":
+        how = "hardened"
+    elif outcome == "speed_limit":
         how = "speed limit"
     elif outcome == "stalled":
         how = f"stalled on level {summary.get('level_reached', '?')}"

@@ -143,9 +143,9 @@ def format_status(status):
     else:
         level = status.get("level")
         parts.append(config.DIFFICULTIES.get(level, f"level {'?' if level is None else level}"))
-        if stage == "speed push":
+        if stage in ("speed push", "hardening"):
             reduction = _number(status.get("target_reduction"))
-            parts.append("speed push" if math.isnan(reduction) else f"speed push −{100 * reduction:.1f}%")
+            parts.append(stage if math.isnan(reduction) else f"{stage} −{100 * reduction:.1f}%")
         share = _number(status.get("min_share"))
         need = config.SPEED_MASTERY_FRACTION if stage == "speed push" else config.MASTERY_FRACTION   # spec §9.4
         fill = 0.0 if math.isnan(share) else share / need
