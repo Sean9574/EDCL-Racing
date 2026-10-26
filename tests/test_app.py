@@ -390,6 +390,33 @@ def test_a_follow_camera_centres_on_the_race_leader(window, tmp_path):
                                            cars.y[still[np.argmax(cars.progress[still])]]])
 
 
+def test_the_race_leader_is_the_furthest_car_still_racing():
+    cars = sim.Cars.__new__(sim.Cars)
+    cars.progress, cars.done = np.array([5.0, 9.0, 7.0]), np.array([False, True, False])
+    assert viewer.race_leader(cars) == 2
+    cars.done[:] = True                                                  # the race is over: the furthest car
+    assert viewer.race_leader(cars) == 1
+
+
+def test_speed_text_is_in_miles_per_hour():
+    assert viewer.speed_text(86.8) == "194 mph"
+    assert viewer.speed_text(0.0) == "0 mph"
+
+
+def test_the_race_view_shows_the_leaders_speed(window, tmp_path):
+    race_window(window, tmp_path)
+    assert window.leader_speed_line() is None                            # no race yet
+    window.update(1 / 60)
+    window.start_race()
+    for _ in range(60):
+        window.update(1 / 60)
+    cars = window.race.cars
+    leader = viewer.race_leader(cars)
+    line = window.leader_speed_line()
+    assert line.startswith("1st ") and line.endswith(viewer.speed_text(float(cars.speed[leader])))
+    window.draw()
+
+
 def test_without_cars_a_follow_camera_looks_at_the_start_line(window, circle_track):
     window.cycle_camera()
     start = (circle_track.left[0] + circle_track.right[0]) / 2
@@ -903,7 +930,8 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
     monkeypatch.setattr(window, "text", recording_text)
     window.draw()
     rows = [string for string in drawn if string[:1].isdigit() and ". " in string]
-    assert sorted(row.split(" lap")[0].split(". ", 1)[1] for row in rows) == ["GA s0", "GA s1", "GA s2"]
+    assert sorted(row.split(" lap")[0].split(". ", 1)[1] for row in rows) == sorted(["GA s0", "GA s1", "GA s2",
+                                                                                     window.ghost.name])
     window.stop_race()
     window.cycle_race_runs()
     assert window.lineup == [("ga", 0)]
@@ -933,6 +961,8 @@ def test_run_1_cars_carry_a_white_stripe(window, tmp_path, monkeypatch):
                                                                                   width)))
     window.draw_racers(window.race, camera)
     fills = [k for k, call in enumerate(calls) if call[0] == "polygon" and call[3] == 0]
+    assert calls[fills[0]][1] == viewer.GHOST_COLOR                     # the pole ghost, under the cars
+    fills = fills[1:]
     stripes = [k for k, call in enumerate(calls) if call[0] == "line"]
     assert len(fills) == 4 and len(stripes) == 1 and fills[2] < stripes[0] < fills[3]      # only ga run 1's
     nose, left, right = calls[fills[2]][2]
@@ -1383,9 +1413,9 @@ def test_a_race_of_both_runs_of_every_method_fits_the_panel(window, tmp_path, mo
     rows = [string for string, _, _, _ in drawn if string[:1].isdigit() and ". " in string]
     more = [string for string, _, _, _ in drawn if string.startswith("… ")]
     if size == config.WINDOW_SIZE:      # the track name and five difficulties take rows: the rest is counted (§10.3)
-        assert len(rows) >= 12 and more == [f"… {16 - len(rows)} more"]
+        assert len(rows) >= 12 and more == [f"… {17 - len(rows)} more"]                 # 16 cars and the pole ghost
     else:
-        assert len(rows) == 16 and not more
+        assert len(rows) == 17 and not more
     switches = method_switches(buttons)
     assert [label for label, _, _ in switches] == [config.LABELS[approach] for approach in config.APPROACHES]
     assert len({rect.left for _, _, rect in switches}) == 3 and len({rect.top for _, _, rect in switches}) == 3
@@ -2637,10 +2667,10 @@ def test_a_race_of_all_32_runs_shows_the_rows_that_fit_then_a_count(window, tmp_
                 [string for string, *_ in drawn if string.startswith("… ")])
 
     rows, more = panel(8)                                                   # best: one run per method
-    assert len(rows) == 8 and more == []
+    assert len(rows) == 9 and more == []                                    # and the pole ghost
     window.cycle_race_runs()                                                # all
     rows, more = panel(32)
-    assert 0 < len(rows) < 32 and more == [f"… {32 - len(rows)} more"]
+    assert 0 < len(rows) < 33 and more == [f"… {33 - len(rows)} more"]
 
 
 def recording_tracks(monkeypatch, circle_track):
@@ -2691,6 +2721,52 @@ def test_the_leaderboard_shows_the_flying_laps_gap_to_pole(circle_track):
     gaps = {row[1]: row[-1] for row in rows}
     assert gaps[0] == "-0.49" and gaps[1] == "–"
     assert all(row[-1] == "–" for row in viewer.leaderboard(playback, 2))           # no pole: not a test circuit
+
+
+def test_the_pole_ghost_laps_in_exactly_the_pole_time(circle_track):
+    ghost = viewer.PoleGhost(circle_track, circuits.PoleLap(30.0, "A Driver", 2019, "test"), laps=3)
+    assert ghost.name == "A Driver 2019 (pole)"
+    start = ghost.state(0.0)
+    assert start.progress == 0.0 and start.laps == 0 and not start.finished
+    assert (start.x, start.y) == pytest.approx(tuple(circle_track.line[0]))
+    assert ghost.state(15.0).progress == pytest.approx(circle_track.length / 2, rel=0.01)   # a circle: even pace
+    one = ghost.state(30.0)
+    assert one.laps == 1 and one.progress == pytest.approx(circle_track.length)
+    end = ghost.state(1000.0)
+    assert end.finished and end.laps == 3 and end.progress == pytest.approx(3 * circle_track.length)
+
+
+def test_the_leaderboard_places_the_pole_ghost_by_distance(circle_track):
+    playback = viewer.Playback(circle_track, lambda obs, cars: np.zeros(len(cars.x), dtype=np.int64), 2, laps=3)
+    playback.cars.progress[:] = [10.0, 0.9 * circle_track.length]
+    playback.elapsed = 15.0                                              # the ghost is halfway round
+    ghost = viewer.PoleGhost(circle_track, circuits.PoleLap(30.0, "A Driver", 2019, "test"), laps=3)
+    rows = viewer.leaderboard(playback, 2, pole=30.0, ghost=ghost)
+    assert [row[1] for row in rows] == [1, viewer.GHOST, 0] and [row[0] for row in rows] == [1, 2, 3]
+    laps, last, best, status, gap = rows[1][2:]
+    assert laps == 0 and np.isnan(last) and np.isnan(best) and status == "racing" and gap == "–"   # no lap yet
+    playback.elapsed = 31.0
+    ghost_row = next(row for row in viewer.leaderboard(playback, 2, pole=30.0, ghost=ghost) if row[1] == viewer.GHOST)
+    assert ghost_row[2:] == (1, 30.0, 30.0, "racing", "+0.00")
+
+
+def test_a_test_circuit_race_has_the_pole_drivers_ghost_car(window, tmp_path, monkeypatch, circle_track):
+    recording_tracks(monkeypatch, circle_track)
+    race_window(window, tmp_path)
+    window.set_race_level(config.MAX_LEVEL)
+    window.update(1 / 60)
+    window.start_race()
+    pole = circuits.POLE_LAPS[config.TEST_CIRCUITS[0]]
+    assert window.ghost.name == f"{pole.driver} {pole.season} (pole)"
+    for _ in range(60):
+        window.update(1 / 60)
+    assert window.race.elapsed > 0.0
+    window.draw()
+    window.stop_race()
+    window.set_race_level(1)                                             # a generated map has no pole lap
+    window.update(1 / 60)
+    window.start_race()
+    assert window.ghost is None
 
 
 def test_the_race_and_training_panels_draw_with_every_difficulty(window, tmp_path, monkeypatch, circle_track):

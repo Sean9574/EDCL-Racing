@@ -531,6 +531,12 @@ On Windows 11 the window opens through WSLg.
 - **Controllers of earlier revisions** have 10 or 12 inputs instead of 18 (or 15 actions instead of 45); the race view
   leaves them out and says so.
 - **Racing line:** the race view draws the racing line thinly on the road.
+- **Leader's speed:** during a race, a box at the map's top-left corner names the race leader (the car the follow
+  camera tracks) and its speed in mph.
+- **Pole lap's car:** on a test circuit, the pole lap's driver races as a dark car with a white border, named for
+  example *Lewis Hamilton 2020 (pole)*, with its own leaderboard row. It starts at speed on the start line and laps the
+  racing line in exactly the pole time, its speed along the lap the car's ideal speed profile scaled to that time: only
+  its lap time is real, where the driver was within a lap is an estimate. The cars never sense it.
 - **Playback speed:** 1× is twice real time.
 
 ## Tests

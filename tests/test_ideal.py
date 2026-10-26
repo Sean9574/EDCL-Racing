@@ -26,6 +26,12 @@ def test_the_ideal_lap_of_a_circle_is_its_length_over_its_corner_speed():
         assert np.isclose(ideal.lap_time(circle_points(radius), smooth=0.0), 2 * np.pi * radius / speed, rtol=2e-3)
 
 
+def test_the_speed_profile_of_a_circle_is_its_corner_speed_everywhere():
+    radius, n = 100.0, 600
+    v = ideal.speed_profile(np.full(n, 1 / radius), np.full(n, 2 * np.pi * radius / n))
+    assert np.allclose(v, min(float(ideal.corner_speed(1 / radius)), config.TOP_SPEED))
+
+
 def test_a_straight_is_driven_at_the_top_speed_between_two_corners():
     """A stadium of two 1 km straights: the ideal lap is faster than driving it all at the corner speed and slower
     than driving it all at the top speed."""

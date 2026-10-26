@@ -13,6 +13,7 @@ import signal
 import sys
 import threading
 import time
+from collections import namedtuple
 from pathlib import Path
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -20,7 +21,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import numpy as np
 import pygame
 
-from racing import checkpoint, circuits, config, curriculum, netwindow, nets, paths, population, runs, sim
+from racing import checkpoint, circuits, config, curriculum, ideal, netwindow, nets, paths, population, runs, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
 
@@ -183,6 +184,7 @@ class Playback:
         self.grip_scale = float(grip_scale)
         self.cars = sim.start_cars(track, n, laps, setup)
         self.time_limit = sim.time_limit_for(track, laps) if time_limit is None else time_limit
+        self.elapsed = 0.0              # s of race time simulated
 
     @property
     def over(self):
@@ -194,6 +196,7 @@ class Playback:
                 return
             steer, throttle = class_to_controls(self.policy(sim.sense(self.track, self.cars), self.cars))
             sim.step(self.track, self.cars, steer, throttle, self.time_limit, grip_scale=self.grip_scale)
+            self.elapsed += config.DT
 
 
 def report_policy(report, indices):
@@ -306,16 +309,68 @@ def pole_gap(flying_lap, pole):
     return "–" if pole is None or np.isnan(flying_lap) else f"{flying_lap - pole:+.2f}"
 
 
-def leaderboard(playback, count, pole=None):
+MPH_PER_MPS = 3600 / 1609.344   # miles per hour in one m/s
+
+
+def race_leader(cars):
+    """The race leader's index: the car furthest along that is still racing, else the car furthest along."""
+    racing = np.flatnonzero(~cars.done)
+    pool = racing if racing.size else np.arange(len(cars.progress))
+    return int(pool[np.argmax(cars.progress[pool])])
+
+
+def speed_text(speed):
+    """A speed in m/s as whole miles per hour, '194 mph'."""
+    return f"{speed * MPH_PER_MPS:.0f} mph"
+
+
+GHOST = -1                      # the pole ghost's car index in leaderboard rows
+GHOST_COLOR = (34, 38, 48)      # the pole ghost: a dark neutral car with a white border, never a method's color
+GhostState = namedtuple("GhostState", "x y heading progress laps finished")
+
+
+class PoleGhost:
+    """A test circuit's pole lap driven as a car of the race view (display only; cars never sense it): it starts on
+    the start line at speed and laps the racing line in exactly the pole time, its speed along the lap the car's
+    speed profile (ideal.speed_profile) scaled to that time. Only the lap time is real; where the driver was within a
+    lap is an estimate."""
+
+    def __init__(self, track, pole, laps):
+        self.track, self.pole, self.laps = track, pole, laps
+        self.name = f"{pole.driver} {pole.season} (pole)"
+        step = np.linalg.norm(np.roll(track.line, -1, axis=0) - track.line, axis=1)
+        v = ideal.speed_profile(np.abs(track.line_curvature), step)
+        times = np.concatenate([[0.0], np.cumsum(step / ((v + np.roll(v, -1)) / 2.0))])
+        self.times = times * (pole.seconds / times[-1])       # s at each line point; the last closes the lap
+
+    def state(self, elapsed):
+        """The ghost after `elapsed` s of the race: position, heading, distance along the centerline in m (as the
+        cars' progress), laps completed and whether it has finished."""
+        lap, line = self.pole.seconds, self.track.line
+        done = min(int(max(elapsed, 0.0) // lap), self.laps)
+        if done == self.laps:
+            return GhostState(float(line[0, 0]), float(line[0, 1]), float(self.track.line_heading[0]),
+                              self.laps * self.track.length, done, True)
+        into = elapsed - done * lap
+        k = min(int(np.searchsorted(self.times, into, side="right")) - 1, len(line) - 1)
+        f = (into - self.times[k]) / (self.times[k + 1] - self.times[k])
+        x, y = line[k] + f * (line[(k + 1) % len(line)] - line[k])
+        return GhostState(float(x), float(y), float(self.track.line_heading[k]),
+                          done * self.track.length + (k + f) * self.track.spacing, done, False)
+
+
+def leaderboard(playback, count, pole=None, ghost=None):
     """Rows (position, car index, laps completed, last lap, best lap, status, gap to pole), ordered by distance
-    covered. On a test circuit (`pole` in seconds) the gap is the car's flying lap minus the pole lap (spec §10.3)."""
+    covered. On a test circuit (`pole` in seconds) the gap is the car's flying lap minus the pole lap (spec §10.3).
+    With the pole `ghost` (PoleGhost), its row, car index GHOST, takes its place by distance, behind cars level with
+    it."""
     nan = float("nan")
     if playback is None:
         return [(k + 1, k, 0, nan, nan, "ready", "–") for k in range(count)]
     cars = playback.cars
     flying = sim.flying_laps(cars.lap_times)
     rows = []
-    for position, i in enumerate(np.argsort(-cars.progress, kind="stable")):
+    for i in np.argsort(-cars.progress, kind="stable"):
         if cars.crashed[i]:
             status = "crashed"
         elif cars.finished[i]:
@@ -324,9 +379,14 @@ def leaderboard(playback, count, pole=None):
             status = "stopped"
         else:
             status = "racing"
-        rows.append((position + 1, int(i), int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]),
-                     status, pole_gap(float(flying[i]), pole)))
-    return rows
+        rows.append((int(i), int(cars.laps_done[i]), float(cars.last_lap[i]), float(cars.best_lap[i]), status,
+                     pole_gap(float(flying[i]), pole)))
+    if ghost is not None:
+        g = ghost.state(playback.elapsed)
+        lap = ghost.pole.seconds if g.laps else nan
+        rows.insert(int(np.sum(cars.progress >= g.progress)),
+                    (GHOST, g.laps, lap, lap, "finished" if g.finished else "racing", pole_gap(lap, pole)))
+    return [(position + 1, *row) for position, row in enumerate(rows)]
 
 
 def save_app_car(report, champion_dir):
@@ -472,11 +532,13 @@ def car_name(approach, seed, app=False, archived=False):
     return f"{label} r{seed}"
 
 
-def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False, gap=None):
-    """One leaderboard row: position, car name, laps completed, last/best lap time (s), status and, on a test
-    circuit (`gap` given), the flying lap's difference to the pole lap."""
+def leaderboard_line(position, approach, seed, laps, last, best, status, app=False, archived=False, gap=None,
+                     name=None):
+    """One leaderboard row: position, car name (`name`, or the car's name from its approach and seed), laps completed,
+    last/best lap time (s), status and, on a test circuit (`gap` given), the flying lap's difference to the pole
+    lap."""
     times = "/".join("–" if np.isnan(value) else f"{value:.1f}" for value in (last, best))
-    line = f"{position}. {car_name(approach, seed, app, archived)} lap {laps} {times} {status}"
+    line = f"{position}. {name or car_name(approach, seed, app, archived)} lap {laps} {times} {status}"
     return line if gap is None else f"{line} {gap}"
 
 
@@ -619,6 +681,8 @@ class App:
         self.drivers = {}                   # (approach, seed) -> DenseNet
         self.lineup = []                    # (approach, seed) of the cars in the race
         self.race = None                    # Playback: the preview until the race starts
+        self.ghost = None                   # PoleGhost of a test circuit's race, else None
+        self.ghosts = {}                    # (circuit, track length, pole lap) -> PoleGhost, built once
         self.racing = False
         self.failed = set()                 # (approach, seed) whose controller file could not be loaded
         self.app_available = {}             # approach -> run seeds with a saved app car (spec §10.6)
@@ -1107,9 +1171,7 @@ class App:
         if self.mode == "train":
             i = self.best_slot if self.best_slot < len(cars.x) else 0
         else:
-            racing = np.flatnonzero(~cars.done)
-            pool = racing if racing.size else np.arange(len(cars.x))
-            i = int(pool[np.argmax(cars.progress[pool])])
+            i = race_leader(cars)
         return np.array([cars.x[i], cars.y[i]])
 
     def view_camera(self, track, playback):
@@ -1298,6 +1360,7 @@ class App:
         """Back to the map preview: the selected controllers and app cars wait on the start line."""
         self.racing = False
         self.race = None
+        self.ghost = None
         self.step_budget = 0.0
         selected = self.selected_car()
         self.lineup = [(approach, seed) for approach in self.race_available for seed in self.race_seeds(approach)
@@ -1331,12 +1394,27 @@ class App:
         seeds, level = self.race_tracks()
         return self.request_track(seeds[self.race_index % len(seeds)], level)
 
-    def pole_lap(self):
-        """The pole lap in seconds of the selected test circuit, or None at the generated levels."""
+    def pole_record(self):
+        """The selected test circuit's pole lap (circuits.PoleLap), or None at the generated levels."""
         seeds, level = self.race_tracks()
         if level != config.TEST_LEVEL:
             return None
-        return circuits.POLE_LAPS[config.TEST_CIRCUITS[seeds[self.race_index % len(seeds)]]].seconds
+        return circuits.POLE_LAPS[config.TEST_CIRCUITS[seeds[self.race_index % len(seeds)]]]
+
+    def pole_lap(self):
+        """The pole lap in seconds of the selected test circuit, or None at the generated levels."""
+        record = self.pole_record()
+        return None if record is None else record.seconds
+
+    def pole_ghost(self, track):
+        """The selected test circuit's pole ghost on `track`, or None at the generated levels."""
+        record = self.pole_record()
+        if record is None:
+            return None
+        key = (track.name, track.length, record)
+        if key not in self.ghosts:
+            self.ghosts[key] = PoleGhost(track, record, config.RACE_LAPS)
+        return self.ghosts[key]
 
     def race_name(self):
         """The selected race track as shown in the panel (spec §10.3): a test circuit with its pole lap, otherwise
@@ -1364,6 +1442,7 @@ class App:
                 if drivers:
                     self.race = Playback(track, nets.mixed_policy(drivers), len(drivers), laps=config.RACE_LAPS,
                                          setup=nets.drivers_setup(drivers), grip_scale=self.grip_scale)
+                    self.ghost = self.pole_ghost(track)
 
     def start_race(self):
         self.prepare_race()
@@ -1481,6 +1560,7 @@ class App:
                 self.draw_population(playback, camera)
             elif playback is not None:
                 self.draw_racers(playback, camera)
+                self.draw_leader_speed()
             self.screen.set_clip(None)
         self.draw_panel()
 
@@ -1520,6 +1600,12 @@ class App:
                                               cars.y[i] + np.sin(angles) * lengths[row])
                     for k in range(config.N_RAYS):
                         pygame.draw.line(self.screen, RAY, (sx[i], sy[i]), (ex[k], ey[k]), 1)
+        if self.ghost is not None:                      # the pole lap's car, under the controllers' cars
+            g = self.ghost.state(playback.elapsed)
+            gx, gy = camera.to_screen(g.x, g.y)
+            shape = car_polygon(gx, gy, g.heading, size)
+            pygame.draw.polygon(self.screen, GHOST_COLOR, shape)
+            pygame.draw.polygon(self.screen, WHITE, shape, 2)
         archived = self.archived()                      # every run of an archive was seeded: no stripe
         for i, car in enumerate(self.race_cars()):
             color = hex_to_rgb(config.COLORS[car[0]])
@@ -1534,6 +1620,26 @@ class App:
                 pygame.draw.line(self.screen, WHITE, ((left_x + right_x) / 2, (left_y + right_y) / 2),
                                  (nose_x, nose_y), 2)
             pygame.draw.polygon(self.screen, INK, shape, 1)
+
+    def leader_speed_line(self):
+        """The race leader's name and speed, '1st  KT Random r1  194 mph'; None before a race."""
+        if self.race is None or len(self.race.cars.x) == 0:
+            return None
+        i = race_leader(self.race.cars)
+        car = self.race_cars()[i]
+        name = car_name(car[0], car[1], app=is_app(car), archived=self.archived())
+        return f"1st  {name}  {speed_text(float(self.race.cars.speed[i]))}"
+
+    def draw_leader_speed(self):
+        """The race leader's speed in a box at the map's top-left corner."""
+        line = self.leader_speed_line()
+        if line is None:
+            return
+        surface = self.font.render(line, True, INK)
+        box = surface.get_rect(topleft=(self.view.left + 10, self.view.top + 10)).inflate(16, 10)
+        pygame.draw.rect(self.screen, PANEL_BG, box, border_radius=6)
+        pygame.draw.rect(self.screen, MUTED, box, 1, border_radius=6)
+        self.screen.blit(surface, (box.left + 8, box.top + 5))
 
     def text(self, string, x, y, font=None, color=INK):
         surface = (font or self.font).render(string, True, color)
@@ -1775,10 +1881,15 @@ class App:
         y = self.text(heading + (", vs pole" if self.pole_lap() else ""), x, y, self.small, MUTED)
         cars = self.race_cars()
         pole = self.pole_lap()
-        rows = leaderboard(self.race, len(cars), pole)
+        rows = leaderboard(self.race, len(cars), pole, ghost=self.ghost)
         room = max((self.panel.bottom - 30 - y) // (self.small.get_linesize() + 4), 1)
         shown = rows if len(rows) <= room else rows[:room - 1]
         for position, i, laps, last, best, status, gap in shown:
+            if i == GHOST:
+                pygame.draw.rect(self.screen, GHOST_COLOR, pygame.Rect(x, y + 3, 10, 10))
+                y = self.text(leaderboard_line(position, None, None, laps, last, best, status, gap=gap,
+                                               name=self.ghost.name), x + 16, y, self.small)
+                continue
             car = cars[i]
             self.swatch(car[0], pygame.Rect(x, y + 3, 10, 10))
             y = self.text(leaderboard_line(position, car[0], car[1], laps, last, best, status, app=is_app(car),

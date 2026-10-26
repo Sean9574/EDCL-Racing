@@ -72,10 +72,20 @@ def lap_time(points, smooth=config.RACING_LINE_SMOOTHING, share=1.0):
     closed = np.vstack([points, points[:1]])
     length = float(np.cumsum(np.hypot(*np.diff(closed, axis=0).T))[-1])   # as path_curvature measures it
     _, kappa = path_curvature(points, smooth)
-    bend = np.abs(kappa)
+    n = len(kappa)
+    step = np.append(np.ones(n - 1), length - (n - 1))             # step[k]: from sample k to sample k + 1
+    v = speed_profile(np.abs(kappa), step, share)
+    return float(np.sum(step / ((v + np.roll(v, -1)) / 2.0)))
+
+
+def speed_profile(bend, step, share=1.0):
+    """The car's speed at every point of a closed path, as lap_time drives it: the corner limit for the curvatures
+    `bend` (1/m, unsigned) and the top speed, then three rounds of passes forwards (acceleration) and backwards
+    (braking) around the loop with the grip left after cornering, so the start joins up; step[k] is the distance in m
+    from point k to point k + 1."""
+    bend = np.asarray(bend, dtype=float)
     v = np.minimum(corner_speed(bend, share), config.TOP_SPEED)
     n = len(v)
-    step = np.append(np.ones(n - 1), length - (n - 1))             # step[k]: from sample k to sample k + 1
 
     def spare(k):
         return np.sqrt(max((share * float(grip_at(v[k]))) ** 2 - (v[k] ** 2 * bend[k]) ** 2, 0.0))
@@ -87,4 +97,4 @@ def lap_time(points, smooth=config.RACING_LINE_SMOOTHING, share=1.0):
         for i in range(2 * n, 0, -1):                                  # braking, backwards
             a, b = i % n, (i - 1) % n
             v[b] = min(v[b], np.sqrt(v[a] ** 2 + 2.0 * spare(a) * step[b]))
-    return float(np.sum(step / ((v + np.roll(v, -1)) / 2.0)))
+    return v
