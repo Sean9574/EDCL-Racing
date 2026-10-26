@@ -189,6 +189,13 @@ def read_record(path):
     return record
 
 
+def ended_before_hardening(summary):
+    """Whether `summary` records a run of the experiment that ended under version 3.14 or earlier, at its speed limit
+    or by an end request: it has no hardening record. With its checkpoint beside it, such a run is not finished; it
+    resumes into hardening (spec §3.3, §9.4, version 3.15)."""
+    return "hardening" not in summary and summary.get("outcome") in ("speed_limit", "time_limit")
+
+
 def completed(run_dir, name="summary.json", state_name=CHECKPOINT_NAME, approach=None):
     """The summary of a completed run in `run_dir`, or None if the run has not completed. A summary made with other
     settings, or without a settings record (an earlier version), raises SettingsMismatch. A summary that cannot be

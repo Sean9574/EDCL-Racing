@@ -570,14 +570,14 @@ def test_jobs_whose_inputs_the_machine_makes_itself_need_nothing_sent(fake):
 
 def test_a_dagger_run_on_a_server_counts_as_finished_only_after_its_speed_push(fake):
     script = fake.fleet.collect_script(fake.fleet.Machine("s", jobs.parse_jobs("baseline:1,nb:01"), host="h"))
-    assert "results/runs/baseline/seed1/speed/summary.json" in script and "nb" not in script.split("done=()")[1]
+    assert "fin results/runs/baseline/seed1/speed &&" in script and "nb" not in script.split("done=()")[1]
 
 
 def test_a_search_job_is_no_run_to_collect(fake):
     script = fake.fleet.collect_script(fake.fleet.Machine("s", jobs.parse_jobs("nb:01,search:kt_random,ga:0"),
                                                           host="h"))
     listed = script.split("done=()")[1]
-    assert "results/runs/ga/seed0/summary.json" in listed
+    assert "fin results/runs/ga/seed0 &&" in listed
     assert "search" not in listed and "kt_random" not in listed and "None" not in listed
 
 
@@ -587,6 +587,39 @@ def test_collect_does_not_wait_for_a_search(fake):
     out = io.StringIO()
     assert fake.fleet.collect([fake.machines()[0], server], out=out) == 0, out.getvalue()
     assert "not finished yet: ga:0" in out.getvalue() and "search" not in out.getvalue()
+
+
+def ended_under_version_3_14(results, approach, seed, outcome="speed_limit"):
+    """A run as version 3.14 ended it: its summary without a hardening record, its checkpoint beside it."""
+    finished_run(results, approach, seed)
+    record = paths.final_record(approach, seed, results / "runs")
+    checkpoint.write_json(record, {**json.loads(record.read_text()), "outcome": outcome})
+    record.with_name(checkpoint.CHECKPOINT_NAME).write_bytes(b"state")
+    return record
+
+
+def test_a_run_that_resumes_into_hardening_is_not_collected(fake):
+    """Spec §3.3 (version 3.15): a summary written before version 3.15 next to its checkpoint belongs to a run that
+    resumes into hardening, so a collect does not take it for a finished run."""
+    fake.ready_server()
+    record = ended_under_version_3_14(fake.server_project() / "results", "ga", 0, outcome="time_limit")
+    out = io.StringIO()
+    assert fake.fleet.collect(fake.machines(), out=out) == 0
+    assert "not finished yet: ga:0" in out.getvalue() and not (fake.desktop / "results" / "runs" / "ga").exists()
+    checkpoint.write_json(record, {**json.loads(record.read_text()), "hardening": None})     # ended under 3.15
+    assert fake.fleet.collect(fake.machines(), out=io.StringIO()) == 0
+    assert (fake.desktop / "results" / "runs" / "ga" / "seed0" / "checkpoint.pkl").exists()
+
+
+def test_finish_waits_for_a_run_that_resumes_into_hardening(fake):
+    results = fake.tmp / "results"
+    for approach in config.APPROACHES:
+        for seed in config.RUN_SEEDS:
+            finished_run(results, approach, seed)
+    assert fake.fleet.unfinished(results) == []                  # summaries without a checkpoint: finished
+    ended_under_version_3_14(results, "ga", 1)
+    ended_under_version_3_14(results, "baseline", 2)
+    assert fake.fleet.unfinished(results) == [("baseline", 2), ("ga", 1)]
 
 
 def test_the_plan_reads_jobs(fake):

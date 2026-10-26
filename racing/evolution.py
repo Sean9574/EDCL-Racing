@@ -150,12 +150,6 @@ def truncate_log(path, generation, fields=LOG_FIELDS):
     os.replace(temporary, path)
 
 
-def ended_before_hardening(summary):
-    """Whether `summary` records a run that ended under version 3.14 or earlier, at its speed limit or by an end
-    request, so it hardens now (spec §9.4, version 3.15): it has no hardening record."""
-    return "hardening" not in summary and summary.get("outcome") in ("speed_limit", "time_limit")
-
-
 def label(method, seed):
     return f"{config.LABELS.get(method.approach, method.approach)} run {seed}"
 
@@ -214,7 +208,8 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
     reporting = champion_dir is not None
     done = checkpoint.completed(out_dir, SUMMARY_NAME, approach=method.approach)
     if done is not None:
-        if not (reporting and ended_before_hardening(done) and (out_dir / checkpoint.CHECKPOINT_NAME).exists()):
+        if not (reporting and checkpoint.ended_before_hardening(done)
+                and (out_dir / checkpoint.CHECKPOINT_NAME).exists()):
             return done
         os.replace(out_dir / SUMMARY_NAME, out_dir / EARLIER_SUMMARY_NAME)   # kept beside the run, which hardens
     lower_priority()                                   # Keras jobs beside it come first (spec §3.3)

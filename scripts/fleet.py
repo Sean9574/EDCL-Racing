@@ -813,13 +813,18 @@ def end(machines, out=sys.stdout):
 # ----- collect and finish -----
 
 def collect_script(machine):
-    """Name the machine's finished runs and pack them, with the run log and record, into OUTGOING."""
-    lines = [f"cd {machine.root} 2>/dev/null || exit 0", "done=()"]
+    """Name the machine's finished runs and pack them, with the run log and record, into OUTGOING. A summary written
+    before version 3.15 next to its run's checkpoint is a run that resumes into hardening, not a finished one
+    (finished)."""
+    lines = [f"cd {machine.root} 2>/dev/null || exit 0", "done=()",
+             # finished: the folder's summary exists and is not one that checkpoint.ended_before_hardening names
+             f"fin() {{ f=$1/summary.json; [ -f $f ] && {{ [ ! -f $1/{checkpoint.CHECKPOINT_NAME} ] || "
+             "grep -q '\"hardening\"' $f || ! grep -Eq '\"outcome\": \"(speed_limit|time_limit)\"' $f; }; }"]
     for job in machine.runs:
         if job.is_notebook or job.is_search:
             continue
-        final = paths.final_record(job.approach, job.seed, Path("results") / "runs").as_posix()
-        lines.append(f"[ -f {final} ] && "
+        final = paths.final_record(job.approach, job.seed, Path("results") / "runs")
+        lines.append(f"fin {final.parent.as_posix()} && "
                      f"{{ echo 'done {job.approach} {job.seed}'; done+=(results/runs/{job.approach}/seed{job.seed} "
                      f"results/champions/{job.approach}/seed{job.seed}.*); }}")
     return "\n".join(lines) + "\n" + pack_lines(['"${done[@]}"', "results/run_log.txt", "results/run_info.json"])
@@ -938,11 +943,25 @@ def collect(machines, out=sys.stdout, results=None):
     return problems
 
 
+def finished(record):
+    """Whether the run whose final record is `record` has finished: the record exists and is not a summary written
+    before version 3.15 next to the run's checkpoint, whose run resumes into hardening (spec §3.3, §9.4). An
+    unreadable record next to its checkpoint is a run that finishes again (checkpoint.completed)."""
+    if not record.exists():
+        return False
+    if not record.with_name(checkpoint.CHECKPOINT_NAME).exists():
+        return True
+    try:
+        return not checkpoint.ended_before_hardening(checkpoint.read_record(record))
+    except checkpoint.UnreadableRecord:
+        return False
+
+
 def unfinished(results=None):
-    """The experiment's runs (every approach and run) without their final record here."""
+    """The experiment's runs (every approach and run) that have not finished here."""
     results = Path(config.RESULTS_DIR if results is None else results)
     return [(approach, seed) for approach in config.APPROACHES for seed in config.RUN_SEEDS
-            if not paths.final_record(approach, seed, results / "runs").exists()]
+            if not finished(paths.final_record(approach, seed, results / "runs"))]
 
 
 def finish(machines, out=sys.stdout):
