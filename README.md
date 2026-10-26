@@ -19,7 +19,9 @@ Every method trains until it masters the curriculum: on every map of a generatio
 from the 38 training layouts), at least 90% of its population must complete three laps within the target time, three
 generations in a row, on each level from Easy to Extra hard, however long that takes (version 3.11 has no safety stop).
 In the speed push that follows, the target time is shortened by 2% at a time whenever half of the population beats it
-three generations in a row, until 1,000 generations pass without that. Every method is trained four times: run 0 is
+three generations in a row, until 1,000 generations pass without that. The run then hardens (version 3.15): at its
+last mastered target, which no longer tightens, it trains until 90% of the population finishes every map within it,
+three generations in a row, and its final controller must finish all 20 validation maps. Every method is trained four times: run 0 is
 seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ every time; results are
 reported for each run and their mean. Every evolved car also evolves its own setup next to its network: the length of
 its distance sensors (30–1,000 m, 150 m at the start) and its steering sensitivity (⅓–3), judged only by success and lap
@@ -39,7 +41,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.14, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.15, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -402,6 +404,27 @@ holds every run, the evaluation runs again:
 
 ```bash
 python scripts/run_notebooks.py --from 08
+```
+
+**Version 3.15** adds hardening and a stricter final pick. In the version 3.14 results the final controllers finished
+109 of 128 test races, and only 1 of the 32 finished all 20 validation maps. After its speed push a run now hardens at
+its last mastered target until 90% of the population finishes every map within it, three generations in a row (the
+rule of the levels; no stall boost, no 1,000-generation limit), and the final controller is the fastest kept car that
+finishes all 20 validation maps (`FINAL_MIN_SUCCESSES` 20, 18 to version 3.14). The setting is recorded but no longer
+compared, so every checkpoint stays valid: a run that ended under version 3.14 resumes into hardening, keeping its old
+summary as `summary_before_hardening.json`; a run still on a level continues its levels, and mastering Extra hard ends
+its hardening. An end request ends hardening too. Table 3 shows "hardened · gen N". On the desktop, keep the version
+3.14 results first: move its copies of the server's runs, then copy the rest (the checkpoints stay in place):
+
+```bash
+python scripts/fleet.py stop
+python scripts/fleet.py setup
+python scripts/run_notebooks.py --archive revision3.14 --runs ga:0,ga:1,ga:2,ga:3,es:0,es:1,es:2,es:3,neat:0,neat:1,neat:2,neat:3
+rsync -a --exclude checkpoint.pkl results/runs results/champions results/tables results/figures results/machines \
+      results/run_info.json results/run_log.txt results/archive/revision3.14/
+python scripts/fleet.py start
+python scripts/fleet.py end        # at the time the runs should end
+python scripts/fleet.py finish     # once every run has ended (it says which have not)
 ```
 
 **Version 3.12** lowers NEAT's weight replacement from 0.05 to 0.002 per weight and bias. A NEAT genome starts with
