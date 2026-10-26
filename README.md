@@ -39,7 +39,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.13, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.14, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -393,6 +393,15 @@ python scripts/fleet.py setup
 python scripts/fleet.py start
 python scripts/fleet.py end        # at the time the runs should end
 python scripts/fleet.py finish     # once every run has ended (it says which have not)
+```
+
+**Version 3.14** compares each test circuit with the fastest pole lap set on the database's layout instead of the last
+season's: Lewis Hamilton's laps of 2020 at Sakhir (1:27.264) and Silverstone (1:24.303). Melbourne keeps its 2019 lap,
+the last before the circuit was rebuilt for 2022, and Sepang its 2017 lap. Nothing trains again; on the machine that
+holds every run, the evaluation runs again:
+
+```bash
+python scripts/run_notebooks.py --from 08
 ```
 
 **Version 3.12** lowers NEAT's weight replacement from 0.05 to 0.002 per weight and bias. A NEAT genome starts with

@@ -49,11 +49,11 @@ class PoleLap:
     source: str
 
 
-POLE_LAPS = {                # spec §11.1, Table 5: the last season run on the database's layout
+POLE_LAPS = {                # spec §11.1, Table 5 (version 3.14): the fastest pole lap on the database's layout
     "Melbourne": PoleLap(80.486, "Lewis Hamilton", 2019, "Formula1.com qualifying report"),
-    "Sakhir": PoleLap(87.866, "Charles Leclerc", 2019, "FIA; Sky Sports timesheet"),
+    "Sakhir": PoleLap(87.264, "Lewis Hamilton", 2020, "Formula1.com qualifying results"),
     "Sepang": PoleLap(90.076, "Lewis Hamilton", 2017, "FIA pole position document"),
-    "Silverstone": PoleLap(85.093, "Valtteri Bottas", 2019, "Formula1.com qualifying report"),
+    "Silverstone": PoleLap(84.303, "Lewis Hamilton", 2020, "Formula1.com qualifying results"),
 }
 
 

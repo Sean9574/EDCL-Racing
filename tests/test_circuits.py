@@ -82,9 +82,10 @@ def test_layouts_are_every_training_circuit_both_ways():
 
 
 def test_the_pole_laps_of_the_test_circuits():
-    assert {c: lap.seconds for c, lap in circuits.POLE_LAPS.items()} == {
-        "Melbourne": 80.486, "Sakhir": 87.866, "Sepang": 90.076, "Silverstone": 85.093}
-    assert {lap.season for lap in circuits.POLE_LAPS.values()} == {2019, 2017}
+    """Spec §11.1, Table 5 (version 3.14): the fastest pole lap on the database's layout of each circuit."""
+    assert {c: (lap.seconds, lap.driver, lap.season) for c, lap in circuits.POLE_LAPS.items()} == {
+        "Melbourne": (80.486, "Lewis Hamilton", 2019), "Sakhir": (87.264, "Lewis Hamilton", 2020),
+        "Sepang": (90.076, "Lewis Hamilton", 2017), "Silverstone": (84.303, "Lewis Hamilton", 2020)}
     assert circuits.NAMES["SaoPaulo"] == "São Paulo" and circuits.NAMES["Nuerburgring"] == "Nürburgring"
 
 
