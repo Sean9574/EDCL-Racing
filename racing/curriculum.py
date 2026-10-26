@@ -1,5 +1,6 @@
 """Curriculum rules (spec §4.6, §9.3-9.4, §9.6-9.7): fresh training seeds and the real training layouts, survival,
-levels with the mastery goal, the speed push and the safety stop, GA mutation strength and the ES/NEAT step size."""
+levels with the mastery goal, the speed push, hardening and the safety stop, GA mutation strength and the ES/NEAT step
+size."""
 import numpy as np
 
 from racing import config
