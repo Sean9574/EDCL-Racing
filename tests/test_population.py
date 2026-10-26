@@ -167,17 +167,16 @@ def fake_validation(success, finish_time, expert_lap=None, fitness=None):
     return fake
 
 
-def test_the_fastest_car_with_18_finishes_wins_over_a_car_with_more_finishes(monkeypatch):
-    """Spec §9.5 (version 3.11): of the cars that finish ≥ 18 of 20 maps, the lowest mean lap ratio wins."""
+def test_the_fastest_car_with_20_finishes_wins_over_a_faster_car_with_19(monkeypatch):
+    """Spec §9.5 (version 3.15): of the cars that finish all 20 maps, the lowest mean lap ratio wins."""
     success = np.ones((20, 3), dtype=bool)
-    success[:2, 1] = False                                     # car 1: 18 finishes, the fastest
-    success[:3, 2] = False                                     # car 2: 17 finishes, faster still but not eligible
+    success[:1, 2] = False                                     # car 2: 19 finishes, the fastest but not eligible
     finish = np.tile(np.array([75.0, 60.0, 45.0]), (20, 1))
     monkeypatch.setattr(population, "evaluate_population", fake_validation(success, finish))
-    assert population.select_final(dense(6), [4, 2, 5])[:2] == (2, 18)
+    assert population.select_final(dense(6), [4, 2, 5])[:2] == (2, 20)
 
 
-def test_without_18_finishes_the_most_finishes_win_then_the_highest_fitness(monkeypatch):
+def test_without_20_finishes_the_most_finishes_win_then_the_highest_fitness(monkeypatch):
     """Spec §9.5 (version 3.11): car 1 is faster than car 2, but car 2's validation fitness is higher."""
     success = np.zeros((20, 3), dtype=bool)
     success[:15, 0] = success[:16, 1] = success[:16, 2] = True

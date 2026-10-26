@@ -93,8 +93,8 @@ RACING_LINE_SMOOTHING = 10.0  # m, standard deviation of the Gaussian that smoot
 LINE_AHEAD = (25.0, 50.0, 100.0, 200.0)   # m ahead of the matched point where the curvature inputs are read (§5.2)
 LINE_CURVATURE_SCALE = 50.0  # m: a curvature input is −κ × 50 m, so a 50 m radius reads 1
 LINE_CURVATURE_CLIP = 5.0    # curvature inputs are clipped to ±5, a 10 m radius
-FINAL_MIN_SUCCESSES = 18     # validation maps (of 20) a car must finish within the time limit to be picked by its
-                             # pace (spec §9.5; successes at the run's tightest target to version 3.10)
+FINAL_MIN_SUCCESSES = 20     # validation maps (of 20) a car must finish within the time limit to be picked by its
+                             # pace (spec §9.5; 18 to version 3.14; successes at the run's tightest target to 3.10)
 
 # --- Network interface (spec §6) ---
 WIDTH_SCALE = 20.0           # m, input scale of the road width (spec §5.2)

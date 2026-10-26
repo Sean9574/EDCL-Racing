@@ -57,6 +57,11 @@ METHOD_SETTINGS_KEYS = {
 }
 
 
+# Settings used only when a run picks its final controller (spec §3.3, §9.5, version 3.15): recorded with every run but
+# never compared, so a stricter final pick refuses no checkpoint and redoes no stored result.
+END_SETTINGS_KEYS = ("FINAL_MIN_SUCCESSES",)
+
+
 def settings_keys(approach=None):
     """The settings that affect the results of `approach`'s runs: the shared ones, then the method's own."""
     return SETTINGS_KEYS + METHOD_SETTINGS_KEYS.get(approach, ())
@@ -112,12 +117,13 @@ def machine_record():
 def check_settings(recorded, approach=None):
     """Raise SettingsMismatch if `recorded` differs from the current settings of `approach`'s runs, naming every
     difference. Another method's own settings in `recorded` (NEAT's, in a record made before version 3.12) are
-    ignored."""
+    ignored, and the settings of END_SETTINGS_KEYS are never compared."""
     current = settings_record(approach)
     recorded = plain(recorded)
-    foreign = {name for method, names in METHOD_SETTINGS_KEYS.items() if method != approach for name in names}
+    ignored = {name for method, names in METHOD_SETTINGS_KEYS.items() if method != approach for name in names}
+    ignored |= set(END_SETTINGS_KEYS)
     differences = [f"{name}: recorded {recorded.get(name)!r}, now {current.get(name)!r}"
-                   for name in sorted((set(recorded) - foreign) | set(current))
+                   for name in sorted((set(recorded) | set(current)) - ignored)
                    if recorded.get(name) != current.get(name)]
     if differences:
         raise SettingsMismatch("this run was made with other settings (" + "; ".join(differences)

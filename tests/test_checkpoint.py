@@ -254,3 +254,22 @@ def test_another_methods_settings_do_not_hide_a_shared_difference():
     with pytest.raises(checkpoint.SettingsMismatch, match="LAPS") as error:
         checkpoint.check_settings(record, "es")
     assert "NEAT" not in str(error.value)
+
+
+def test_the_final_picks_setting_is_recorded_but_never_compared():
+    """Spec §3.3 (version 3.15): FINAL_MIN_SUCCESSES acts only at the final pick."""
+    assert checkpoint.END_SETTINGS_KEYS == ("FINAL_MIN_SUCCESSES",)
+    for approach in (None, "ga", "neat", "baseline"):
+        recorded = checkpoint.settings_record(approach)
+        assert recorded["FINAL_MIN_SUCCESSES"] == 20
+        recorded["FINAL_MIN_SUCCESSES"] = 18                             # a version 3.14 record
+        checkpoint.check_settings(recorded, approach)
+        recorded.pop("FINAL_MIN_SUCCESSES")
+        checkpoint.check_settings(recorded, approach)
+
+
+def test_completed_accepts_a_version_3_14_summary(tmp_path):
+    settings = checkpoint.settings_record("ga")
+    settings["FINAL_MIN_SUCCESSES"] = 18
+    checkpoint.write_json(tmp_path / "summary.json", {"settings": settings, "generations": 5})
+    assert checkpoint.completed(tmp_path, approach="ga")["generations"] == 5
