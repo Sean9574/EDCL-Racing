@@ -16,6 +16,7 @@ from racing.nets import DensePopulation
 
 LOG_NAME = "log.csv"
 SUMMARY_NAME = "summary.json"
+EARLIER_SUMMARY_NAME = "summary_before_hardening.json"   # the summary of a run that ended before version 3.15
 # Row g's `boost` is the boost used for the children bred after generation g (evaluate.stalls_broken depends on it).
 LOG_FIELDS = ["generation", "level", "factor", "evals", "best", "mean", "worst", "map_shares", "min_share", "n_kept",
               "kept_success", "child_success", "median_lap", "sensor_mean", "sensor_std", "steer_mean", "steer_std",
@@ -149,6 +150,12 @@ def truncate_log(path, generation, fields=LOG_FIELDS):
     os.replace(temporary, path)
 
 
+def ended_before_hardening(summary):
+    """Whether `summary` records a run that ended under version 3.14 or earlier, at its speed limit or by an end
+    request, so it hardens now (spec §9.4, version 3.15): it has no hardening record."""
+    return "hardening" not in summary and summary.get("outcome") in ("speed_limit", "time_limit")
+
+
 def label(method, seed):
     return f"{config.LABELS.get(method.approach, method.approach)} run {seed}"
 
@@ -163,9 +170,20 @@ def milestone_text(event, method, seed, generation, level, tracker):
     if event == "tightened":
         return f"{name}: target {100 * tracker.target_reduction:.1f}% shorter mastered at generation {generation}"
     if event == "end_speed":
-        return (f"{name}: speed push ended at generation {generation}, "
-                f"target {100 * tracker.target_reduction:.1f}% shorter")
+        return (f"{name}: speed push ended at generation {generation}, hardening at the target "
+                f"{100 * tracker.target_reduction:.1f}% shorter")
+    if event == "hardened":
+        return f"{name}: hardened at generation {generation}"
     return f"{name}: stopped at generation {generation}, {config.DIFFICULTIES[level]} not mastered"
+
+
+def hardening_text(method, seed, generation, tracker):
+    """The run log's line for a run that hardens from the generation it resumes at (spec §9.4, version 3.15)."""
+    name = label(method, seed)
+    if tracker.goal_reached:
+        return (f"{name}: hardening at the target {100 * tracker.target_reduction:.1f}% shorter, "
+                f"from generation {generation}")
+    return f"{name}: hardening from generation {generation}, on {config.DIFFICULTIES[tracker.level]}"
 
 
 def lower_priority(nice=config.EVOLUTION_NICE):
@@ -184,18 +202,21 @@ def lower_priority(nice=config.EVOLUTION_NICE):
 
 def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_generation=None, start_level=1,
         max_generations=None, rng_seed=None):
-    """Train `method` with run seed `seed` until the speed push ends, the safety stop or an end request (spec §9.4),
-    or after `max_generations` (viewer, pilots, tests). An end request (config.END_FILE, version 3.13) ends a run of
+    """Train `method` with run seed `seed` until it is hardened after its speed push, the safety stop or an end
+    request (spec §9.4), or after `max_generations` (viewer, pilots, tests). A run of the experiment that ended before
+    version 3.15 hardens when its checkpoint is beside its summary; that summary is kept as EARLIER_SUMMARY_NAME. An end request (config.END_FILE, version 3.13) ends a run of
     the experiment before its next generation, once it has trained at least one; it then picks its final controller
     as at any other end. A completed run in `out_dir` with the current settings is
     returned at once; an interrupted one resumes from its checkpoint. With champion_dir None no final controller is
     selected or saved and nothing is written to the status file or the run log: only the experiment's runs report
     progress. Returns the summary."""
     out_dir = Path(out_dir)
+    reporting = champion_dir is not None
     done = checkpoint.completed(out_dir, SUMMARY_NAME, approach=method.approach)
     if done is not None:
-        return done
-    reporting = champion_dir is not None
+        if not (reporting and ended_before_hardening(done) and (out_dir / checkpoint.CHECKPOINT_NAME).exists()):
+            return done
+        os.replace(out_dir / SUMMARY_NAME, out_dir / EARLIER_SUMMARY_NAME)   # kept beside the run, which hardens
     lower_priority()                                   # Keras jobs beside it come first (spec §3.3)
     population.fresh_workers(n_jobs)                   # every run builds its own tracks (spec §9.1)
     began = time.time()
@@ -207,7 +228,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         method.initialize(rng)
         seeds = SeedSource(rng)
         tracker = MasteryTracker(level=start_level)
-        generation, evals, elapsed, levels, tightenings = 0, 0, 0.0, [], []
+        generation, evals, elapsed, levels, tightenings, hardening = 0, 0, 0.0, [], [], None
         pop_size = len(method.population)
         if champion_dir is not None:
             population.clear_champion(method.approach, seed, champion_dir)
@@ -229,6 +250,11 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         fields = log_header(log_path)                     # a resumed run keeps the columns its log started with
         if reporting:
             progress.milestone(f"{label(method, seed)}: resumed at generation {generation}")
+        hardening = state.get("hardening")
+        if reporting and "hardening" not in state and (out_dir / EARLIER_SUMMARY_NAME).exists():
+            tracker.harden()                                   # a run ended before version 3.15 (spec §9.4)
+            hardening = {"factor": float(tracker.factor), "from_generation": generation}
+            progress.milestone(hardening_text(method, seed, generation, tracker))
 
     def active():
         return elapsed + time.time() - began        # run time, accumulated across resumptions
@@ -245,7 +271,8 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         evals += n
         cap = int(config.KEEP_MAX_FRACTION * n)
         kept = survivors(rng, result.fitness, result.all_success, result.lap_share, cap, config.ELITE_FLOOR)
-        speed_push = tracker.goal_reached                   # the rule this generation is judged by (spec §9.4)
+        goal_before = tracker.goal_reached
+        speed_push = tracker.speed_push                     # the rule this generation is judged by (spec §9.4)
         event = tracker.update(result.min_share)
         boost = tracker.stalled                             # the stall boost for the children (spec §9.4)
         now = active()
@@ -260,16 +287,21 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
                   "mean": float(result.fitness.mean()), "worst": float(result.fitness.min()), "evals": evals,
                   "elapsed": now, "event": event, **setup.summary(method.population.setup), **method.log_fields()}
         append_log(log_path, report, fields)
-        if event in ("level_up", "goal"):
+        if event == "level_up" or (event in ("goal", "hardened") and not goal_before):
             levels.append({"level": int(level), "generation": generation, "evals": evals, "elapsed": now})
         elif event == "tightened":
             tightenings.append({"factor": float(tracker.mastered_factor), "generation": generation, "evals": evals,
                                 "elapsed": now})
+        if event == "end_speed":
+            hardening = {"factor": float(tracker.factor), "from_generation": generation + 1}
+        elif event == "hardened":
+            hardening.update(generation=generation, evals=evals, elapsed=now)
         if reporting:
             if event is not None:
                 progress.milestone(milestone_text(event, method, seed, generation, level, tracker))
             progress.write_status({"approach": method.approach, "seed": seed,
-                                   "stage": "speed push" if tracker.goal_reached else "evolution",
+                                   "stage": ("hardening" if tracker.hardening
+                                             else "speed push" if tracker.goal_reached else "evolution"),
                                    "level": int(level), "generation": generation, "min_share": result.min_share,
                                    "streak": tracker.streak, "target_reduction": tracker.target_reduction,
                                    "elapsed": now})
@@ -283,15 +315,15 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
             "settings": checkpoint.settings_record(method.approach), "generation": generation, "evals": evals,
             "elapsed": active(), "rng": rng.bit_generator.state, "seeds": seeds.state(),
             "tracker": tracker.state(), "method": method.state(), "levels": levels, "tightenings": tightenings,
-            "start_level": start_level})
+            "hardening": hardening, "start_level": start_level})
 
     summary = {"approach": method.approach, "seed": seed, "settings": checkpoint.settings_record(method.approach),
                "generations": generation, "evals": evals, "pop_size": pop_size,
                "start_level": start_level, "level_reached": int(tracker.level),
                "goal_reached": bool(tracker.goal_reached), "outcome": tracker.outcome,
                "mastered_factor": plain(tracker.mastered_factor), "target_reduction": plain(tracker.target_reduction),
-               "levels": levels, "tightenings": tightenings, "val_successes": None, "val_fitness": None,
-               "champion_path": None, "final_setup": None}
+               "levels": levels, "tightenings": tightenings, "hardening": hardening, "val_successes": None,
+               "val_fitness": None, "champion_path": None, "final_setup": None}
     if champion_dir is not None:
         candidates = np.flatnonzero(method.is_kept)                 # the kept cars of the last generation
         if candidates.size == 0:

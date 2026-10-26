@@ -608,3 +608,152 @@ def test_a_log_without_the_boost_column_resumes_without_it(evaluation, tmp_path)
     evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=None, max_generations=4)
     resumed = pd.read_csv(path)
     assert "boost" not in resumed.columns and list(resumed["generation"]) == [0, 1, 2, 3]
+
+
+# ----- hardening (spec §9.4, version 3.15) -----
+
+class EndsAsBeforeVersion3_15(curriculum.MasteryTracker):
+    """The tracker of version 3.14: the end of the speed push ends the run."""
+    def update(self, min_share):
+        event = super().update(min_share)
+        if event == "end_speed":
+            self.hardening, self.outcome = False, "speed_limit"
+        return event
+
+
+def picks_the_first_candidate(calls):
+    def select(population, candidates, n_jobs=1):
+        calls.append(len(candidates))
+        return int(candidates[0]), 20, 1.0
+    return select
+
+
+def as_before_version_3_15(run_dir):
+    """The run as version 3.14 left it: no hardening record, FINAL_MIN_SUCCESSES 18. Returns its summary."""
+    summary = json.loads((run_dir / "summary.json").read_text())
+    del summary["hardening"]
+    summary["settings"]["FINAL_MIN_SUCCESSES"] = 18
+    (run_dir / "summary.json").write_text(json.dumps(summary))
+    state = checkpoint.load(run_dir / checkpoint.CHECKPOINT_NAME)
+    del state["hardening"]
+    state["settings"]["FINAL_MIN_SUCCESSES"] = 18
+    checkpoint.save(run_dir / checkpoint.CHECKPOINT_NAME, state)
+    return summary
+
+
+def ended_at_its_speed_limit(monkeypatch, tmp_path, calls):
+    """A run that reached the goal, mastered no shorter target and ended at its speed limit under version 3.14."""
+    monkeypatch.setattr(config, "SPEED_PATIENCE", 3)
+    monkeypatch.setattr(population, "evaluate_population", masters_only_the_first_target)
+    monkeypatch.setattr(population, "select_final", picks_the_first_candidate(calls))
+    monkeypatch.setattr(evolution, "MasteryTracker", EndsAsBeforeVersion3_15)
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            start_level=config.MAX_LEVEL)
+    monkeypatch.setattr(evolution, "MasteryTracker", curriculum.MasteryTracker)
+    assert summary["outcome"] == "speed_limit" and summary["generations"] == 6
+    return as_before_version_3_15(tmp_path / "run")
+
+
+def test_a_run_ended_at_its_speed_limit_hardens_at_its_last_mastered_target(monkeypatch, tmp_path):
+    calls = []
+    earlier = ended_at_its_speed_limit(monkeypatch, tmp_path, calls)
+    reports = []
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=reports.append)
+    assert [r["generation"] for r in reports] == [6, 7, 8] and [r["event"] for r in reports] == [None, None, "hardened"]
+    assert all(r["factor"] == config.TARGET_FACTOR and not r["speed_push"] and r["boost"] == 0 for r in reports)
+    assert summary["outcome"] == "hardened" and summary["generations"] == 9 and len(calls) == 2
+    hardening = summary["hardening"]
+    assert (hardening["factor"], hardening["from_generation"], hardening["generation"]) == (config.TARGET_FACTOR, 6, 8)
+    assert json.loads((tmp_path / "run" / evolution.EARLIER_SUMMARY_NAME).read_text()) == earlier
+    log = config.RUN_LOG_PATH.read_text()
+    assert "GA run 0: hardening at the target 0.0% shorter, from generation 6" in log
+    assert "GA run 0: hardened at generation 8" in log
+
+
+def test_a_run_interrupted_while_hardening_resumes_hardening(monkeypatch, tmp_path):
+    """Review focus 1 and 2: cut before the first hardening checkpoint, the run still hardens; meanwhile it has no
+    summary.json, so the fleet does not count it finished."""
+    ended_at_its_speed_limit(monkeypatch, tmp_path, [])
+    with pytest.raises(Interrupt):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                      on_generation=interrupt_at(6))
+    assert not (tmp_path / "run" / "summary.json").exists()
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions")
+    assert summary["outcome"] == "hardened" and summary["hardening"]["from_generation"] == 6
+
+
+def test_an_end_request_ends_hardening_and_the_final_pick_follows(monkeypatch, tmp_path):
+    calls = []
+    ended_at_its_speed_limit(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluate(0.85))      # below the 90% rule
+
+    def end_after(report):
+        if report["generation"] == 7:
+            config.END_FILE.write_text("2026-10-27T07:00:00")
+
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=end_after)
+    assert summary["outcome"] == "time_limit" and summary["generations"] == 8 and len(calls) == 2
+    assert summary["hardening"] == {"factor": config.TARGET_FACTOR, "from_generation": 6}
+    assert "GA run 0: ended by request at generation 8" in config.RUN_LOG_PATH.read_text()
+
+
+def test_a_run_resumed_into_hardening_under_an_end_request_ends_at_once(monkeypatch, tmp_path):
+    """Review focus 5."""
+    calls = []
+    ended_at_its_speed_limit(monkeypatch, tmp_path, calls)
+    config.END_FILE.write_text("2026-10-27T07:00:00")
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=lambda report: pytest.fail("trained again"))
+    assert summary["outcome"] == "time_limit" and summary["generations"] == 6 and len(calls) == 2
+    assert summary["hardening"] == {"factor": config.TARGET_FACTOR, "from_generation": 6}
+
+
+def test_a_run_ended_before_its_goal_continues_its_levels_and_ends_hardened_at_the_goal(monkeypatch, tmp_path):
+    monkeypatch.setattr(population, "select_final", picks_the_first_candidate([]))
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluate(0.5))
+
+    def end_after(report):                                    # version 3.14's timed end, found on Hard
+        if report["generation"] == 1:
+            config.END_FILE.write_text("2026-10-26T07:00:00")
+
+    evolution.run(ga.GA(pop_size=20), 3, tmp_path / "run", champion_dir=tmp_path / "champions",
+                  start_level=config.MAX_LEVEL - 1, on_generation=end_after)
+    as_before_version_3_15(tmp_path / "run")
+    config.END_FILE.unlink()                                  # fleet.py start removes it
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluate(1.0))
+    reports = []
+    summary = evolution.run(ga.GA(pop_size=20), 3, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            on_generation=reports.append)
+    assert [r["event"] for r in reports] == [None, None, "level_up", None, None, "hardened"]
+    assert summary["outcome"] == "hardened" and summary["goal_reached"] and summary["tightenings"] == []
+    assert [e["level"] for e in summary["levels"]] == [config.MAX_LEVEL - 1, config.MAX_LEVEL]
+    assert summary["hardening"]["factor"] == config.TARGET_FACTOR and summary["hardening"]["from_generation"] == 2
+    assert "GA run 3: hardening from generation 2, on Hard" in config.RUN_LOG_PATH.read_text()
+
+
+def test_the_end_of_the_speed_push_starts_hardening(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "SPEED_PATIENCE", 3)
+    monkeypatch.setattr(population, "evaluate_population", masters_only_the_first_target)
+    monkeypatch.setattr(population, "select_final", picks_the_first_candidate([]))
+    reports = []
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions",
+                            start_level=config.MAX_LEVEL, on_generation=reports.append)
+    assert [r["event"] for r in reports] == [None, None, "goal", None, None, "end_speed", None, None, "hardened"]
+    assert [r["speed_push"] for r in reports] == [False] * 3 + [True] * 3 + [False] * 3
+    assert summary["outcome"] == "hardened" and summary["hardening"]["from_generation"] == 6
+    assert ("GA run 0: speed push ended at generation 5, hardening at the target 0.0% shorter"
+            in config.RUN_LOG_PATH.read_text())
+    assert progress.read_status()["stage"] == "hardening"
+
+
+def test_a_run_ended_under_version_3_15_is_not_hardened_again(evaluation, monkeypatch, tmp_path):
+    evaluation(0.5)
+    monkeypatch.setattr(population, "select_final", picks_the_first_candidate([]))
+    config.END_FILE.write_text("2026-10-27T07:00:00")
+    first = evolution.run(ga.GA(pop_size=20), 1, tmp_path / "run", champion_dir=tmp_path / "champions")
+    config.END_FILE.unlink()
+    again = evolution.run(ga.GA(pop_size=20), 1, tmp_path / "run", champion_dir=tmp_path / "champions",
+                          on_generation=lambda report: pytest.fail("trained again"))
+    assert first["hardening"] is None and again == json.loads(json.dumps(first))
