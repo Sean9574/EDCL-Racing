@@ -1698,7 +1698,8 @@ def net(window, monkeypatch):
 
 
 def sent(window):
-    return [m for m in window.net_queue.items if m is not None]
+    """The networks sent to the window (values messages are counted by values_sent)."""
+    return [m for m in window.net_queue.items if m is not None and "graph" in m]
 
 
 def test_the_network_button_opens_and_closes_one_window_process(net):
@@ -1799,6 +1800,122 @@ def test_a_reopened_window_gets_the_current_network(net):
     net.toggle_network_window()
     net.update(1 / 60)
     assert len(sent(net)) == 1
+
+
+# ----- live values in the network window (version 3.15) -----
+class Clock:
+    """Stands in for time.monotonic in the viewer."""
+    now = 1000.0
+
+    @classmethod
+    def monotonic(cls):
+        return cls.now
+
+
+@pytest.fixture
+def live(net, monkeypatch):
+    """The network window with a fake clock; records every values message as (driver, inputs, where, every car's
+    inputs at that moment)."""
+    Clock.now = 1000.0
+    monkeypatch.setattr(viewer.time, "monotonic", Clock.monotonic)
+    calls, real = [], viewer.netwindow.values_message
+
+    def record(driver, obs, where):
+        replay = net.race if net.mode == "race" else net.playback
+        calls.append((driver, np.array(obs), where, replay.inputs.copy()))
+        return real(driver, obs, where)
+
+    monkeypatch.setattr(viewer.netwindow, "values_message", record)
+    net.values_calls = calls
+    return net
+
+
+def values_sent(window):
+    return [m for m in window.net_queue.items if m is not None and "values" in m]
+
+
+def drive_until_values(window, limit=300):
+    """Update the viewer until the window has been sent node values once more."""
+    count = len(values_sent(window))
+    for _ in range(limit):
+        window.update(1 / 60)
+        if len(values_sent(window)) > count:
+            return
+    raise AssertionError("no node values were sent")
+
+
+def test_a_racing_car_sends_its_node_values_about_ten_times_a_second(live, tmp_path):
+    three_car_race(live, tmp_path)
+    live.toggle_network_window()
+    live.update(1 / 60)
+    assert len(sent(live)) == 1 and values_sent(live) == []          # the network; the race has not started
+    live.start_race()
+    drive_until_values(live)
+    driver, obs, where, inputs = live.values_calls[-1]
+    assert driver is live.driver("es", 0) and where == live.race_name().split(" · pole")[0]
+    assert np.array_equal(obs, inputs[0]) and obs.any()
+    assert values_sent(live)[-1]["values"] == viewer.netwindow.netfig.node_values(driver, obs)
+    for _ in range(5):
+        live.update(1 / 60)
+    assert len(values_sent(live)) == 1                               # within 0.1 s: no more
+    Clock.now += viewer.NET_FRAME_INTERVAL
+    live.update(1 / 60)
+    assert len(values_sent(live)) == 2
+
+
+def test_the_values_follow_the_selected_car(live, tmp_path):
+    three_car_race(live, tmp_path)
+    live.toggle_network_window()
+    live.start_race()
+    drive_until_values(live)
+    live.cycle_network_car()                                         # ga run 0, the second car
+    live.update(1 / 60)
+    driver, obs, _, inputs = live.values_calls[-1]
+    assert driver is live.driver("ga", 0) and np.array_equal(obs, inputs[1])
+    assert sent(live)[-1]["title"].startswith("GA (seeded) · ")       # its network went first
+    assert live.net_queue.items[-2] is sent(live)[-1]
+
+
+def test_no_values_are_sent_while_the_race_stands_still_or_after_the_car_is_done(live, tmp_path):
+    three_car_race(live, tmp_path)
+    live.toggle_network_window()
+    live.start_race()
+    drive_until_values(live)
+    live.racing = False                                              # paused: the last step is shown once
+    Clock.now += viewer.NET_FRAME_INTERVAL
+    live.update(1 / 60)
+    count = len(values_sent(live))
+    for _ in range(3):
+        Clock.now += viewer.NET_FRAME_INTERVAL
+        live.update(1 / 60)
+    assert len(values_sent(live)) == count
+    live.racing = True
+    live.race.cars.done[0] = True                                    # the shown car has finished
+    for _ in range(3):
+        Clock.now += viewer.NET_FRAME_INTERVAL
+        live.update(1 / 60)
+    assert len(values_sent(live)) == count
+
+
+def test_training_sends_the_values_of_the_best_car_as_it_replays(live):
+    report = ga_report(0)
+    live.toggle_network_window()
+    live.receive(report)
+    drive_until_values(live)
+    best = int(np.argmax(report["fitness"]))
+    driver, obs, where, inputs = live.values_calls[-1]
+    assert driver.n_params == report["population"].driver(best).n_params
+    assert np.array_equal(obs, inputs[list(live.indices).index(best)])
+    assert where == config.DIFFICULTIES[report["level"]]
+
+
+def test_a_closed_window_gets_no_values(live, tmp_path):
+    three_car_race(live, tmp_path)
+    live.start_race()
+    for _ in range(30):
+        Clock.now += viewer.NET_FRAME_INTERVAL
+        live.update(1 / 60)
+    assert live.values_calls == [] and live.net_queue is None and live.race.inputs is not None
 
 
 def three_car_race(window, tmp_path):

@@ -1,10 +1,11 @@
 import pickle
 import queue
 
+import numpy as np
 import pygame
 import pytest
 
-from racing import netfig, netwindow
+from racing import config, netfig, netwindow
 from test_netfig import dense_driver, neat_driver
 
 
@@ -90,3 +91,60 @@ def test_the_window_process_ends_when_the_viewer_is_gone(monkeypatch):
     monkeypatch.setattr(netwindow.os, "getppid", lambda: 1)
     netwindow.watch_parent(77, lambda: ended.append(True), interval=0)
     assert ended == [True]
+
+
+# ----- live values (version 3.15 viewer) -----
+
+def frame(driver, seed=0, where="Silverstone"):
+    return netwindow.values_message(driver, np.random.default_rng(seed).uniform(-1.0, 1.0, config.N_INPUTS), where)
+
+
+@pytest.fixture
+def drawn(monkeypatch):
+    """What the window draws: (values, where, title) per redraw."""
+    calls = []
+
+    def render(graph, values, title, where, size):
+        calls.append((values, where, title))
+        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
+
+    monkeypatch.setattr(netwindow.netfig, "render_live", render)
+    return calls
+
+
+@pytest.mark.parametrize("make", [dense_driver, neat_driver])
+def test_a_values_message_is_picklable_and_holds_every_nodes_value(make):
+    driver = make()
+    message = frame(driver)
+    assert message["where"] == "Silverstone" and pickle.loads(pickle.dumps(message)) == message
+    assert [len(v) for v in message["values"]] == [len(c) for c in netfig.network_graph(driver)["columns"]]
+
+
+def test_live_values_redraw_the_network(dummy_video, drawn, monkeypatch):
+    monkeypatch.setattr(netwindow, "FRAME_INTERVAL", 0.0)
+    driver = dense_driver()
+    first, last = frame(driver, 1), frame(driver, 2, "Sepang")
+    netwindow.window_main(ScriptedQueue([netwindow.network_message(driver, "t"), "empty", first, last, "empty", None]))
+    assert [(where, title) for _, where, title in drawn] == [("", "t"), ("Sepang", "t")]
+    assert drawn[0][0] is None and drawn[1][0] == last["values"]           # only the latest values are drawn
+
+
+def test_frames_are_drawn_at_most_once_per_frame_interval(dummy_video, drawn, monkeypatch):
+    monkeypatch.setattr(netwindow, "FRAME_INTERVAL", 3600.0)
+    driver = dense_driver()
+    netwindow.window_main(ScriptedQueue([netwindow.network_message(driver, "t"), "empty", frame(driver, 1), "empty",
+                                         frame(driver, 2), "empty", None]))
+    assert len(drawn) == 1                                    # the network at once, no frame within the interval
+
+
+def test_a_new_network_is_drawn_at_once_and_without_the_old_values(dummy_video, drawn, monkeypatch):
+    monkeypatch.setattr(netwindow, "FRAME_INTERVAL", 3600.0)
+    old, new = dense_driver(), neat_driver()
+    netwindow.window_main(ScriptedQueue([netwindow.network_message(old, "a"), frame(old), "empty",
+                                         netwindow.network_message(new, "b"), "empty", None]))
+    assert [(values is None, title) for values, _, title in drawn] == [(False, "a"), (True, "b")]
+
+
+def test_values_before_any_network_draw_nothing(dummy_video, drawn):
+    netwindow.window_main(ScriptedQueue([frame(dense_driver()), "empty", None]))
+    assert drawn == []

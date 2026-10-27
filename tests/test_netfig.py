@@ -102,3 +102,83 @@ def test_the_network_figure_fits_45_labels(tmp_path):
     from PIL import Image                                   # matplotlib's dependency
     height = Image.open(path).size[1]
     assert height >= 6.0 * 200 * 0.95                      # 6 inches per row at 200 dpi
+
+
+# ----- the live network window (viewer, version 3.15) -----
+
+def shaped_driver(hidden):
+    """A dense network with hidden layers `hidden`: () is a GA network without hidden layers."""
+    rng = np.random.default_rng(len(hidden) + 5)
+    return nets.from_flat(rng.normal(size=nets.n_params(hidden)), hidden)
+
+
+def car_inputs(seed=4):
+    return np.random.default_rng(seed).uniform(-1.0, 1.5, size=config.N_INPUTS)
+
+
+@pytest.mark.parametrize("make", [dense_driver, neat_driver, lambda: shaped_driver(()),
+                                  lambda: shaped_driver((8, 6))])
+def test_node_values_end_in_the_action_the_car_takes(make):
+    driver, obs = make(), car_inputs()
+    graph, values = netfig.network_graph(driver), netfig.node_values(driver, obs)
+    assert [len(v) for v in values] == [len(c) for c in graph["columns"]]
+    assert np.allclose(values[0], obs[:len(values[0])])
+    assert int(np.argmax(values[-1])) == int(driver.act(obs[None, :])[0])
+
+
+def test_dense_hidden_values_are_the_relu_activations():
+    driver, obs = dense_driver(), car_inputs()
+    (w1, b1), _ = driver.layers
+    assert np.allclose(netfig.node_values(driver, obs)[1], np.maximum(obs @ w1 + b1, 0.0))
+
+
+def test_neat_values_follow_the_genome():
+    obs = car_inputs()
+    values = netfig.node_values(neat_driver(), obs)
+    hidden = np.tanh(1.0 * obs[0])
+    assert np.isclose(values[1][0], hidden) and np.isclose(values[2][0], -2.0 * hidden)
+    assert np.isclose(values[2][1], 0.5 * obs[1]) and values[2][2] == 0.0          # the disabled connection is off
+
+
+def test_live_edges_carry_the_strongest_signals():
+    driver, obs = dense_driver(), car_inputs()
+    graph, values = netfig.network_graph(driver), netfig.node_values(driver, obs)
+    chosen = int(np.argmax(values[-1]))
+    edges = netfig.live_edges(graph, values)
+    last = len(graph["columns"]) - 1
+    into_actions = [e for e in edges if e[2] == last]
+    inner = [e for e in edges if e[2] != last]
+    assert 0 < len(into_actions) <= netfig.ACTION_EDGES and all(e[3] == chosen for e in into_actions)
+    assert 0 < len(inner) <= netfig.INNER_EDGES and all(values[e[2]][e[3]] != 0.0 for e in inner)
+    signal = lambda e: abs(values[e[0]][e[1]] * e[4])
+    weakest = min(signal(e) for e in inner)
+    left_out = [e for e in graph["edges"] if e[2] != last and e not in inner and values[e[2]][e[3]] != 0.0]
+    assert all(signal(e) <= weakest for e in left_out)
+
+
+def test_a_network_without_hidden_layers_shows_its_strongest_inputs_into_the_choice():
+    driver, obs = shaped_driver(()), car_inputs()
+    graph, values = netfig.network_graph(driver), netfig.node_values(driver, obs)
+    edges = netfig.live_edges(graph, values)
+    assert edges and all((e[0], e[2], e[3]) == (0, 1, int(np.argmax(values[-1]))) for e in edges)
+
+
+def test_inputs_read_in_real_units():
+    obs = np.zeros(config.N_INPUTS)
+    obs[[4, 9, 10, 11, 12, 13, 16, 17]] = [0.45, 0.93, 0.43, 0.69, -0.32, -0.01, -0.82, -0.01]
+    text = lambda i: netfig.input_text(i, obs)
+    assert text(4) == "68 m" and text(9) == f"{0.93 * config.SPEED_SCALE * 3.6:.0f} km/h"
+    assert text(10) == "43% right" and text(11) == "13.8 m"
+    assert text(12) == "2.2 m left" and text(13) == "2° left"
+    assert text(16) == "left r 61 m" and text(17) == "straight"
+
+
+@pytest.mark.parametrize("make", [dense_driver, neat_driver, lambda: shaped_driver(()),
+                                  lambda: shaped_driver((8, 6))])
+@pytest.mark.parametrize("size", [(900, 640), (360, 260)])
+def test_the_live_view_renders_at_the_window_size(make, size):
+    driver = make()
+    graph = netfig.network_graph(driver)
+    for values in (netfig.node_values(driver, car_inputs()), None):           # None: before the car drives
+        image = netfig.render_live(graph, values, "GA · run 0 · 855 parameters", "Silverstone", size)
+        assert image.shape == (size[1], size[0], 3) and image.dtype == np.uint8 and image.std() > 0

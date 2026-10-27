@@ -1,6 +1,7 @@
-"""Network window (viewer feature): a separate pygame window that shows one car's neural network as the diagram of
-racing/netfig.py. The viewer sends a message only when the shown network changes; the window redraws only when it
-receives one or is resized, so racing in the viewer stays smooth. It ends when the viewer ends."""
+"""Network window (viewer feature): a separate pygame window that shows one car's neural network live, as
+netfig.render_live draws it. The viewer sends the network when the shown network changes and then, while the car
+drives, the value of every node about ten times a second; the window draws a new network or size at once and new
+values at most once per FRAME_INTERVAL, so racing in the viewer stays smooth. It ends when the viewer ends."""
 import os
 import queue
 import threading
@@ -13,12 +14,20 @@ from racing import config, netfig
 
 START_SIZE = (900, 640)
 BACKGROUND = (255, 255, 255)
-IDLE_FPS = 20
+IDLE_FPS = 30
+FRAME_INTERVAL = 0.1        # s: new values are drawn at most this often
 
 
 def network_message(driver, title):
-    """What the viewer sends: the diagram's title and graph (lists and floats, so it pickles cheaply)."""
+    """What the viewer sends when the shown network changes: the diagram's title and graph (lists and floats, so it
+    pickles cheaply)."""
     return {"title": title, "graph": netfig.network_graph(driver)}
+
+
+def values_message(driver, obs, where):
+    """What the viewer sends while the car drives: the value of every node for the car's inputs `obs`, and where it
+    drives (a circuit's name, or the level)."""
+    return {"values": netfig.node_values(driver, obs), "where": where}
 
 
 def draw_image(screen, image):
@@ -36,14 +45,15 @@ def window_main(messages, parent=None, on_draw=None):
     screen = pygame.display.set_mode(size, pygame.RESIZABLE)
     font = pygame.font.Font(str(config.FONT_PATH), 16)                  # shipped: the same widths on every machine
     clock = pygame.time.Clock()
-    message, dirty, running = None, True, True
+    message, frame, running = None, None, True
+    urgent, fresh, drawn_at = True, False, float("-inf")    # urgent: a new network or size; fresh: new values
     try:
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.VIDEORESIZE:
-                    size, dirty = (max(int(event.w), 1), max(int(event.h), 1)), True
+                    size, urgent = (max(int(event.w), 1), max(int(event.h), 1)), True
             while running:
                 try:
                     item = messages.get_nowait()
@@ -51,20 +61,24 @@ def window_main(messages, parent=None, on_draw=None):
                     break
                 if item is None:
                     running = False
-                else:
-                    message, dirty = item, True
-            if dirty and running:
+                elif "graph" in item:
+                    message, frame, urgent = item, None, True
+                elif message is not None:                # values of the shown network
+                    frame, fresh = item, True
+            due = fresh and time.monotonic() - drawn_at >= FRAME_INTERVAL
+            if running and (urgent or due):
                 screen = pygame.display.get_surface() or screen
                 screen.fill(BACKGROUND)
                 if message is None:
                     text = font.render("Waiting for a network…", True, (90, 90, 90))
                     screen.blit(text, text.get_rect(center=(size[0] // 2, size[1] // 2)))
                 else:
-                    draw_image(screen, netfig.render_graph(message["graph"], message["title"], size))
+                    draw_image(screen, netfig.render_live(message["graph"], frame and frame["values"],
+                                                          message["title"], frame["where"] if frame else "", size))
                     if on_draw is not None:
                         on_draw(size)
                 pygame.display.flip()
-                dirty = False
+                urgent, fresh, drawn_at = False, False, time.monotonic()
             clock.tick(IDLE_FPS)
     finally:
         pygame.quit()

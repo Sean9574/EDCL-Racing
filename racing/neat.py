@@ -346,6 +346,7 @@ class NeatNet:
         on = genome.enabled
         conns = list(zip(genome.src[on].tolist(), genome.dst[on].tolist(), genome.weight[on].tolist()))
         self.width = N_IN + len(ids)
+        self.column = column                            # node id -> its column of node_values
         self.output_columns = np.array([column[o] for o in OUTPUT_IDS])
         self.levels = []
         for d in range(1, max(depth[node] for node in ids) + 1):
@@ -363,14 +364,19 @@ class NeatNet:
     def n_params(self):
         return self.genome.n_params
 
-    def outputs(self, obs):
+    def node_values(self, obs):
+        """Every node's value for the inputs `obs` (one row per car): the inputs, each hidden node's activation and
+        each output's score, in the columns self.column gives."""
         obs = np.asarray(obs, dtype=float)
         values = np.zeros((len(obs), self.width))
         values[:, :N_IN] = obs
         for columns, matrix, bias, hidden in self.levels:
             total = values @ matrix + bias
             values[:, columns] = np.where(hidden, np.tanh(total), total)
-        return values[:, self.output_columns]
+        return values
+
+    def outputs(self, obs):
+        return self.node_values(obs)[:, self.output_columns]
 
     def act(self, obs):
         return np.argmax(self.outputs(obs), axis=1)

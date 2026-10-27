@@ -185,6 +185,7 @@ class Playback:
         self.cars = sim.start_cars(track, n, laps, setup)
         self.time_limit = sim.time_limit_for(track, laps) if time_limit is None else time_limit
         self.elapsed = 0.0              # s of race time simulated
+        self.inputs = None              # every car's network inputs at the last step (the network window shows them)
 
     @property
     def over(self):
@@ -194,7 +195,8 @@ class Playback:
         for _ in range(steps):
             if self.over:
                 return
-            steer, throttle = class_to_controls(self.policy(sim.sense(self.track, self.cars), self.cars))
+            self.inputs = sim.sense(self.track, self.cars)
+            steer, throttle = class_to_controls(self.policy(self.inputs, self.cars))
             sim.step(self.track, self.cars, steer, throttle, self.time_limit, grip_scale=self.grip_scale)
             self.elapsed += config.DT
 
@@ -310,6 +312,7 @@ def pole_gap(flying_lap, pole):
 
 
 MPH_PER_MPS = 3600 / 1609.344   # miles per hour in one m/s
+NET_FRAME_INTERVAL = 0.1     # s: the network window gets the shown car's node values at most this often
 
 
 def race_leader(cars):
@@ -670,6 +673,10 @@ class App:
         self.net_queue = None
         self.net_choice = 0                 # index into the race lineup
         self.net_sent = None                # identity of the network the window shows
+        self.net_driver = None              # its driver, for the live node values
+        self.net_member = None              # in training: the shown network's index in the report
+        self.net_values_at = float("-inf")  # time.monotonic() of the last node values sent
+        self.net_values_step = None         # the replay's elapsed time they were sent at
         # race view
         self.champions_dir = config.CHAMPIONS_DIR
         self.race_index = 0                 # into race_tracks(): the test circuits or the display seeds
@@ -992,6 +999,7 @@ class App:
             self.net_queue.cancel_join_thread()
             self.net_queue.close()
         self.net_process, self.net_queue, self.net_sent = None, None, None
+        self.net_driver, self.net_member, self.net_values_at, self.net_values_step = None, None, float("-inf"), None
 
     def selected_car(self):
         """The race car whose network the window shows: the first car if the choice is outside the race; None for
@@ -1024,8 +1032,10 @@ class App:
             if identity == self.net_sent:
                 return identity, None, None            # unchanged: build nothing
             if "population" in report:
-                driver, unit = report["population"].driver(int(np.argmax(report["fitness"]))), "generation"
+                self.net_member = int(np.argmax(report["fitness"]))
+                driver, unit = report["population"].driver(self.net_member), "generation"
             else:
+                self.net_member = len(report["nets"]) - 1
                 driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
             title = (f"{config.LABELS[approach]} · run {seed} · {unit} {generation} · "
                      f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
@@ -1046,7 +1056,7 @@ class App:
                                   f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
 
     def poll_network_window(self):
-        """Forget a window the user closed; send the shown network when it changed."""
+        """Forget a window the user closed; send the shown network when it changed, then its live node values."""
         if self.net_process is None:
             return
         if not self.net_process.is_alive():
@@ -1056,7 +1066,40 @@ class App:
         if shown is not None and shown[0] != self.net_sent:
             identity, driver, title = shown
             self.net_queue.put(netwindow.network_message(driver, title))
-            self.net_sent = identity
+            self.net_sent, self.net_driver = identity, driver
+            self.net_values_at, self.net_values_step = float("-inf"), None
+        self.send_network_values()
+
+    def network_inputs(self):
+        """(replay, row, where) of the shown car while it can drive: the selected race car, or in training the shown
+        network's car if the replay of its generation drives it; None otherwise."""
+        if self.net_driver is None or self.net_sent is None:
+            return None
+        if self.net_sent[0] == "race":
+            car, cars = tuple(self.net_sent[1:]), self.race_cars()
+            if self.race is None or car not in cars:
+                return None
+            return self.race, cars.index(car), self.race_name().split(" · pole")[0]
+        members = [] if self.playback is None else [int(i) for i in self.indices]
+        if self.playback_generation != self.net_sent[3] or self.net_member not in members:
+            return None
+        level = config.DIFFICULTIES.get(self.playback_report["level"], "")
+        return self.playback, members.index(self.net_member), self.playback.track.name or level
+
+    def send_network_values(self):
+        """Send the shown car's node values (netwindow.values_message) at most every NET_FRAME_INTERVAL s, and only
+        when it has driven since the last; never for a car that is done."""
+        found = self.network_inputs()
+        if found is None:
+            return
+        playback, row, where = found
+        if playback.inputs is None or playback.cars.done[row] or playback.elapsed == self.net_values_step:
+            return
+        now = time.monotonic()
+        if now - self.net_values_at < NET_FRAME_INTERVAL:
+            return
+        self.net_queue.put(netwindow.values_message(self.net_driver, playback.inputs[row], where))
+        self.net_values_at, self.net_values_step = now, playback.elapsed
 
     # ----- settings (changeable only while no training runs) -----
     def select_approach(self, approach):
