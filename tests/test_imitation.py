@@ -84,13 +84,15 @@ def test_load_dataset_refuses_a_dataset_collected_with_other_settings(tmp_path, 
 
 
 def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
+    """Run 0, the seeded run, so the check is the same every time: runs 1-3 start from the operating system's
+    randomness (spec §3.3), and one start in about three left run 2 below 0.2 after five epochs."""
     seen = []
     summary = imitation.train_baseline(toy_data, out_dir=tmp_path / "run",
                                        on_epoch=lambda epoch, model, acc: seen.append((epoch, acc)), epochs=5,
-                                       seed=2)
+                                       seed=0)
     stage = tmp_path / "run" / "imitation.keras"
     assert stage.exists() and summary["stage_path"] == str(stage)
-    assert len(seen) == summary["epochs"] and summary["val_accuracy"] > 0.2 and summary["seed"] == 2
+    assert len(seen) == summary["epochs"] and summary["val_accuracy"] > 0.2 and summary["seed"] == 0
     assert summary["learning_rate"] == config.LEARNING_RATE
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["params"] == nets.n_params()
     assert checkpoint.completed(tmp_path / "run")["val_accuracy"] == summary["val_accuracy"]
