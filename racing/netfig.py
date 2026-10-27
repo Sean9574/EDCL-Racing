@@ -245,12 +245,37 @@ def _mix(a, b, t):
     return tuple(a + (b - a) * float(np.clip(t, 0.0, 1.0)))
 
 
-def _bezier(x1, y1, x2, y2, points=24):
-    """An S-shaped curve from (x1, y1) to (x2, y2), leaving and arriving horizontally."""
-    t = np.linspace(0.0, 1.0, points)[:, None]
-    dx = 0.45 * (x2 - x1)
-    p = np.array([[x1, y1], [x1 + dx, y1], [x2 - dx, y2], [x2, y2]])
-    return ((1 - t) ** 3 * p[0] + 3 * (1 - t) ** 2 * t * p[1] + 3 * (1 - t) * t ** 2 * p[2] + t ** 3 * p[3])
+def _curves(starts, ends, points=24):
+    """S-shaped curves from each start (x, y) to its end, leaving and arriving horizontally, all at once: an array of
+    shape (curves, points, 2)."""
+    starts, ends = np.asarray(starts, dtype=float), np.asarray(ends, dtype=float)
+    t = np.linspace(0.0, 1.0, points)[None, :, None]
+    dx = 0.45 * (ends[:, 0] - starts[:, 0])
+    p1 = np.stack([starts[:, 0] + dx, starts[:, 1]], axis=1)[:, None, :]
+    p2 = np.stack([ends[:, 0] - dx, ends[:, 1]], axis=1)[:, None, :]
+    return ((1 - t) ** 3 * starts[:, None, :] + 3 * (1 - t) ** 2 * t * p1 + 3 * (1 - t) * t ** 2 * p2
+            + t ** 3 * ends[:, None, :])
+
+
+def _neurons(n):
+    return f"{n} neuron" if n == 1 else f"{n} neurons"
+
+
+def hidden_headings(columns):
+    """(title, subtitle) over each hidden column of the live view: 'layer k' and its number of neurons."""
+    return [(f"layer {k}", _neurons(len(column))) for k, column in enumerate(columns[1:-1], start=1)]
+
+
+def shape_text(columns):
+    """The network's shape in words, e.g. '18 inputs · 2 hidden layers of 64 and 32 neurons · 45 actions'."""
+    sizes = [len(column) for column in columns[1:-1]]
+    if not sizes:
+        hidden = "no hidden layer"
+    elif len(sizes) == 1:
+        hidden = f"1 hidden layer of {_neurons(sizes[0])}"
+    else:
+        hidden = f"{len(sizes)} hidden layers of {', '.join(map(str, sizes[:-1]))} and {sizes[-1]} neurons"
+    return f"{len(columns[0])} inputs · {hidden} · {len(columns[-1])} actions"
 
 
 def _live_layout(graph, size):
@@ -318,42 +343,30 @@ def render_live(graph, values, title, where, size, full=True):
                    linewidths=linewidth * s, zorder=3)
 
     chosen = None if values is None else int(np.argmax(values[-1]))
-    hidden = [len(c) for c in columns[1:-1]]
-    layers = " · ".join(f"{n} hidden" for n in hidden) if hidden else "no hidden layer"
-    shape = f"{len(columns[0])} inputs · {layers} · {len(columns[-1])} actions"
     write(24 * s, 28 * s, title, 15, INK, weight="bold")
-    write(24 * s, 50 * s, shape, 11, MUTED)
+    write(24 * s, 50 * s, shape_text(columns), 11, MUTED)
     if values is None:
         write(width - 24 * s, 28 * s, "waiting for the car to drive", 13, MUTED, "right")
     else:
         write(width - 24 * s, 28 * s, output_labels()[chosen], 15, INK, "right", "bold")
         speed = input_text(config.N_RAYS, values[0]) if len(values[0]) > config.N_RAYS else ""
         write(width - 24 * s, 50 * s, " · ".join(part for part in (where, speed) if part), 11, MUTED, "right")
-    # connections
+    # connections: every one faintly in the full view, the strongest signals bold on top
+    import matplotlib.colors as mcolors
+    positive, negative = np.array(mcolors.to_rgb(LIVE_POSITIVE)), np.array(mcolors.to_rgb(LIVE_NEGATIVE))
     faint, edges = drawn_edges(graph, values, full)
-    if faint:
-        strength = np.array([abs(w if values is None else values[a][i] * w) for a, i, _, _, w in faint])
-        sign = np.array([w if values is None else values[a][i] * w for a, i, _, _, w in faint]) >= 0
-        top = max(float(strength.max()), 1e-12)
-        curves, colors, widths = [], [], []
-        for (a, i, b, j, _), t, positive in zip(faint, strength / top, sign):
-            (x1, y1), (x2, y2) = xy[a][i], xy[b][j]
-            curves.append(_bezier(x1 + 8 * s, y1, x2 - 8 * s, y2, points=12))
-            colors.append((*_mix(PALE, LIVE_POSITIVE if positive else LIVE_NEGATIVE, 1.0), 0.05 + 0.22 * t))
-            widths.append((0.35 + 0.9 * t) * s * pt)
-        ax.add_collection(LineCollection(curves, colors=colors, linewidths=widths, capstyle="round", zorder=1))
-    if values is not None:
-        if edges:
-            signals = np.array([values[a][i] * w for a, i, _, _, w in edges])
-            strongest = max(float(np.abs(signals).max()), 1e-12)
-            curves, colors, widths = [], [], []
-            for (a, i, b, j, _), signal in zip(edges, signals):
-                t = abs(signal) / strongest
-                (x1, y1), (x2, y2) = xy[a][i], xy[b][j]
-                curves.append(_bezier(x1 + 8 * s, y1, x2 - (12 if b == last else 10) * s, y2))
-                colors.append((*_mix(PALE, LIVE_POSITIVE if signal >= 0 else LIVE_NEGATIVE, 1.0), 0.15 + 0.65 * t))
-                widths.append((0.5 + 3.6 * t) * s * pt)
-            ax.add_collection(LineCollection(curves, colors=colors, linewidths=widths, capstyle="round", zorder=2))
+    for chosen_edges, points, end_gap, alpha, width_px, zorder in ((faint, 8, (8, 8), (0.05, 0.22), (0.35, 0.9), 1),
+                                                                  (edges, 24, (10, 12), (0.15, 0.65), (0.5, 3.6), 2)):
+        if not chosen_edges:
+            continue
+        signal = np.array([w if values is None else values[a][i] * w for a, i, _, _, w in chosen_edges])
+        t = np.abs(signal) / max(float(np.abs(signal).max()), 1e-12)
+        starts = np.array([(xy[a][i][0] + 8 * s, xy[a][i][1]) for a, i, _, _, _ in chosen_edges])
+        ends = np.array([(xy[b][j][0] - end_gap[b == last] * s, xy[b][j][1]) for _, _, b, j, _ in chosen_edges])
+        colors = np.column_stack([np.where((signal >= 0)[:, None], positive, negative), alpha[0] + alpha[1] * t])
+        ax.add_collection(LineCollection(_curves(starts, ends, points), colors=colors,
+                                         linewidths=(width_px[0] + width_px[1] * t) * s * pt, capstyle="round",
+                                         zorder=zorder))
     # inputs
     for name, start, stop in INPUT_GROUPS:
         if start < len(columns[0]):
@@ -381,16 +394,18 @@ def render_live(graph, values, title, where, size, full=True):
         rims = [RIM if v == 0 else DEEP if v > 0 else LIVE_NEGATIVE for v in level]
         nodes(points, [radius] * len(points), faces, rims, 1.1)
         x = points[0][0]
-        write(x, 82 * s, f"{len(points)} hidden", 11, MUTED, "center", "bold")
+        heading, neurons = hidden_headings(columns)[c - 1]
+        write(x, 70 * s, heading, 11, MUTED, "center", "bold")
+        write(x, 84 * s, neurons, 10, MUTED, "center")
         if values is not None:
             off = sum(v == 0 for v in level)              # a ReLU unit that is off; tanh units are never exactly 0
-            write(x, 96 * s, f"{len(level) - off} of {len(level)} firing" if off else
+            write(x, 97 * s, f"{len(level) - off} of {len(level)} firing" if off else
                   f"{sum(v > 0 for v in level)} + · {sum(v < 0 for v in level)} −", 10, FAINT, "center")
     # actions
     out = xy[last]
     n_throttle = len(config.THROTTLE_LEVELS)
-    write(out[0][0], 82 * s, f"{len(out)} actions", 11, MUTED, "center", "bold")
-    write(out[0][0], 96 * s, "gas at top", 10, FAINT, "center")
+    write(out[0][0], 70 * s, f"{len(out)} actions", 11, MUTED, "center", "bold")
+    write(out[0][0], 84 * s, "gas at top", 10, FAINT, "center")
     for col in range(len(out) // n_throttle):
         ys = [out[col * n_throttle + t][1] for t in range(n_throttle)]
         write(out[0][0] + 14 * s, (min(ys) + max(ys)) / 2, STEER_SHORT[col] if col < len(STEER_SHORT) else "", 9.5,

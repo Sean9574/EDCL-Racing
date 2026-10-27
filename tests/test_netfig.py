@@ -203,3 +203,22 @@ def test_both_views_render_at_the_window_size(full):
         for values in (netfig.node_values(driver, car_inputs()), None):
             image = netfig.render_live(graph, values, "t", "Silverstone", (640, 480), full=full)
             assert image.shape == (480, 640, 3) and image.std() > 0
+
+
+def test_the_headings_name_layers_and_neurons():
+    columns = lambda *hidden: [netfig.input_labels()] + [[""] * n for n in hidden] + [netfig.output_labels()]
+    assert netfig.shape_text(columns()) == "18 inputs · no hidden layer · 45 actions"
+    assert netfig.shape_text(columns(16)) == "18 inputs · 1 hidden layer of 16 neurons · 45 actions"
+    assert netfig.shape_text(columns(64, 32)) == "18 inputs · 2 hidden layers of 64 and 32 neurons · 45 actions"
+    assert netfig.shape_text(columns(9, 1, 2)) == "18 inputs · 3 hidden layers of 9, 1 and 2 neurons · 45 actions"
+    assert netfig.hidden_headings(columns(64, 1)) == [("layer 1", "64 neurons"), ("layer 2", "1 neuron")]
+    assert netfig.hidden_headings(columns()) == []
+
+
+def test_curves_are_built_together_and_join_their_ends():
+    starts, ends = np.array([[0.0, 0.0], [5.0, 40.0]]), np.array([[100.0, 30.0], [80.0, 10.0]])
+    curves = netfig._curves(starts, ends, points=9)
+    assert curves.shape == (2, 9, 2)
+    assert np.allclose(curves[:, 0], starts) and np.allclose(curves[:, -1], ends)
+    assert np.all(np.diff(curves[:, :, 0], axis=1) > 0)                       # always forward, left to right
+    assert np.allclose(curves[0, 4], [50.0, 15.0])                            # the middle is halfway
