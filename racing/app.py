@@ -678,6 +678,8 @@ class App:
         self.net_member = None              # in training: the shown network's index in the report
         self.net_values_at = float("-inf")  # time.monotonic() of the last node values sent
         self.net_values_step = None         # the replay's elapsed time they were sent at
+        self.net_history = []               # the best network of every generation seen of the run (the timeline)
+        self.net_history_sent = 0           # how many of them the open window has
         # race view
         self.champions_dir = config.CHAMPIONS_DIR
         self.race_index = 0                 # into race_tracks(): the test circuits or the display seeds
@@ -1001,6 +1003,7 @@ class App:
             self.net_queue.close()
         self.net_process, self.net_queue, self.net_sent = None, None, None
         self.net_driver, self.net_member, self.net_values_at, self.net_values_step = None, None, float("-inf"), None
+        self.net_history_sent = 0
 
     def selected_car(self):
         """The race car whose network the window shows: the first car if the choice is outside the race; None for
@@ -1021,26 +1024,40 @@ class App:
             return "Network of: –"
         return f"Network of: {car_name(car[0], car[1], is_app(car), self.archived())} ▸"
 
+    def record_generation(self):
+        """Keep the best network of the newest report's generation for the window's timeline (collected while the
+        viewer watches, whether or not the window is open); a report of another run, or of an earlier generation (a
+        new run), starts the timeline again."""
+        report = self.latest
+        if report is None:
+            return
+        approach, generation = report["approach"], int(report["generation"])
+        seed = report.get("seed", self.run_seed)
+        run = (self.source, approach, seed)
+        last = self.net_history[-1] if self.net_history else None
+        if last is not None and last["run"] == run and last["generation"] == generation:
+            return
+        if last is not None and (last["run"] != run or generation < last["generation"]):
+            self.net_history, self.net_history_sent = [], 0
+        if "population" in report:
+            member = int(np.argmax(report["fitness"]))
+            driver, unit = report["population"].driver(member), "generation"
+        else:
+            member = len(report["nets"]) - 1
+            driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
+        level = int(report["level"])
+        share = "min_share" in report
+        self.net_history.append({
+            "generation": generation, "member": member, "driver": driver,
+            "title": (f"{config.LABELS[approach]} · run {seed} · {unit} {generation} · "
+                      f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}"),
+            "curve": float(report["min_share"] if share else report["best"]), "kind": "share" if share else "accuracy",
+            "event": report.get("event"), "level": level,
+            "map": (int(report["seeds"][0]), level, self.map_width(level)), "grip": self.grip_scale,
+            "where": config.DIFFICULTIES.get(level, ""), "run": run})
+
     def shown_network(self):
-        """(identity, driver, title) of the network the window should show now, or None."""
-        if self.mode == "train":
-            report = self.latest
-            if report is None:
-                return None
-            approach, generation = report["approach"], report["generation"]
-            seed = report.get("seed", self.run_seed)
-            identity = ("train", approach, seed, generation)
-            if identity == self.net_sent:
-                return identity, None, None            # unchanged: build nothing
-            if "population" in report:
-                self.net_member = int(np.argmax(report["fitness"]))
-                driver, unit = report["population"].driver(self.net_member), "generation"
-            else:
-                self.net_member = len(report["nets"]) - 1
-                driver, unit = report["nets"][-1], "trial" if approach.startswith("kt") else "epoch"
-            title = (f"{config.LABELS[approach]} · run {seed} · {unit} {generation} · "
-                     f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
-            return identity, driver, title
+        """(identity, driver, title) of the race car whose network the window should show now, or None."""
         car = self.selected_car()
         if car is None:
             return None
@@ -1057,19 +1074,39 @@ class App:
                                   f"{driver.n_params:,} parameters{netwindow.netfig.setup_text(driver)}")
 
     def poll_network_window(self):
-        """Forget a window the user closed; send the shown network when it changed, then its live node values."""
+        """Forget a window the user closed; send what it shows when that changed (a race car's network, or the
+        training timeline's new generations), then the shown car's live node values."""
         if self.net_process is None:
             return
         if not self.net_process.is_alive():
             self.reset_network_window()
             return
-        shown = self.shown_network()
-        if shown is not None and shown[0] != self.net_sent:
-            identity, driver, title = shown
-            self.net_queue.put(netwindow.network_message(driver, title))
-            self.net_sent, self.net_driver = identity, driver
-            self.net_values_at, self.net_values_step = float("-inf"), None
+        if self.mode == "train":
+            self.send_generations()
+        else:
+            shown = self.shown_network()
+            if shown is not None and shown[0] != self.net_sent:
+                identity, driver, title = shown
+                self.net_queue.put(netwindow.network_message(driver, title))
+                self.net_sent, self.net_driver = identity, driver
+                self.net_values_at, self.net_values_step = float("-inf"), None
         self.send_network_values()
+
+    def send_generations(self):
+        """Send the window the timeline's generations it does not have yet (back from a race, the newest again, which
+        brings its timeline back); the newest is the one whose live values follow."""
+        if not self.net_history:
+            return
+        if self.net_sent is not None and self.net_sent[0] == "race":
+            self.net_history_sent = min(self.net_history_sent, len(self.net_history) - 1)
+        for entry in self.net_history[self.net_history_sent:]:
+            self.net_queue.put(netwindow.generation_message(entry))
+        self.net_history_sent = len(self.net_history)
+        newest = self.net_history[-1]
+        identity = ("train", newest["run"][1], newest["run"][2], newest["generation"])
+        if identity != self.net_sent:
+            self.net_sent, self.net_driver, self.net_member = identity, newest["driver"], newest["member"]
+            self.net_values_at, self.net_values_step = float("-inf"), None
 
     def network_inputs(self):
         """(replay, row, where) of the shown car while it can drive: the selected race car, or in training the shown
@@ -1512,6 +1549,7 @@ class App:
 
     def update(self, dt):
         self.poll_reports()
+        self.record_generation()
         self.poll_network_window()
         if self.mode == "train" and self.source == "notebook":
             if not self.replay_paused and (self.playback is None or self.playback.over):

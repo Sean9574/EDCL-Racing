@@ -1928,6 +1928,77 @@ def test_a_closed_window_gets_no_values(live, tmp_path):
     assert live.values_calls == [] and live.net_queue is None and live.race.inputs is not None
 
 
+# ----- the training timeline of best networks (version 3.15) -----
+def generations_sent(window):
+    return [m for m in window.net_queue.items if m is not None and "generation" in m]
+
+
+def test_training_sends_each_generations_best_network_to_the_timeline(net):
+    net.toggle_network_window()
+    first = ga_report(0, event="level_up", level=2)
+    net.receive(first)
+    net.update(1 / 60)
+    net.receive(ga_report(1))
+    net.update(1 / 60)
+    messages = generations_sent(net)
+    assert [m["generation"] for m in messages] == [0, 1]
+    best = int(np.argmax(first["fitness"]))
+    m = messages[0]
+    assert m["graph"] == viewer.netwindow.netfig.network_graph(first["population"].driver(best))
+    assert m["driver"].n_params == first["population"].driver(best).n_params
+    assert (m["curve"], m["kind"], m["event"], m["level"]) == (first["min_share"], "share", "level_up", 2)
+    assert m["map"] == (0, 2, net.map_width(2)) and m["grip"] == net.grip_scale
+    assert m["run"] == (net.source, "ga", 0) and m["title"].startswith("GA · run 0 · generation 0 · ")
+
+
+def test_the_timeline_is_collected_while_the_window_is_closed_and_sent_when_it_opens(net):
+    for generation in range(3):
+        net.receive(ga_report(generation))
+        net.update(1 / 60)
+    net.toggle_network_window()
+    net.update(1 / 60)
+    net.update(1 / 60)
+    assert [m["generation"] for m in generations_sent(net)] == [0, 1, 2]
+
+
+def test_a_new_run_starts_a_new_timeline_in_the_viewer(net):
+    for generation in range(3):
+        net.receive(ga_report(generation))
+        net.update(1 / 60)
+    net.receive(ga_report(0, approach="es"))
+    net.update(1 / 60)
+    assert [e["run"][1] for e in net.net_history] == ["es"]
+    net.toggle_network_window()
+    net.update(1 / 60)
+    assert [(m["run"][1], m["generation"]) for m in generations_sent(net)] == [("es", 0)]
+
+
+def test_imitation_training_draws_its_validation_accuracy(net):
+    net.approach = "baseline"
+    members = [nets.from_flat(row) for row in nets.init_population(np.random.default_rng(1), 3)]
+    net.toggle_network_window()
+    net.receive({"approach": "baseline", "generation": 2, "level": 1, "seeds": [0], "nets": members,
+                 "fitness": np.array([0.1, 0.2, 0.3]), "best": 0.3, "mean": 0.2, "worst": 0.1, "leveled_up": False})
+    net.update(1 / 60)
+    (m,) = generations_sent(net)
+    assert (m["kind"], m["curve"]) == ("accuracy", 0.3) and m["driver"] is members[-1]
+
+
+def test_a_race_shows_its_car_and_training_comes_back_with_its_timeline(net, tmp_path):
+    net.toggle_network_window()
+    net.receive(ga_report(0))
+    net.update(1 / 60)
+    save_race_champions(tmp_path)
+    net.champions_dir = tmp_path
+    net.set_mode("race")
+    net.update(1 / 60)
+    assert "generation" not in net.net_queue.items[-1] and "graph" in net.net_queue.items[-1]
+    before = len(generations_sent(net))
+    net.set_mode("train")
+    net.update(1 / 60)
+    assert len(generations_sent(net)) == before + 1 and generations_sent(net)[-1]["generation"] == 0
+
+
 def three_car_race(window, tmp_path):
     save_race_champions(tmp_path, approaches=(("es", 0), ("ga", 0), ("neat", 0)))
     window.champions_dir = tmp_path
