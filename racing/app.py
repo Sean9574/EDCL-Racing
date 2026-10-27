@@ -185,7 +185,8 @@ class Playback:
         self.cars = sim.start_cars(track, n, laps, setup)
         self.time_limit = sim.time_limit_for(track, laps) if time_limit is None else time_limit
         self.elapsed = 0.0              # s of race time simulated
-        self.inputs = None              # every car's network inputs at the last step (the network window shows them)
+        self.inputs = sim.sense(track, self.cars)   # every car's inputs at the last step, on the start line until the
+                                                    # first (the network window shows them)
 
     @property
     def over(self):

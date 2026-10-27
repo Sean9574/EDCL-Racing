@@ -1863,6 +1863,16 @@ def test_a_racing_car_sends_its_node_values_about_ten_times_a_second(live, tmp_p
     assert len(values_sent(live)) == 2
 
 
+def test_the_network_shows_the_start_line_before_the_race_starts(live, tmp_path):
+    three_car_race(live, tmp_path)
+    live.toggle_network_window()
+    for _ in range(3):                                               # the race is set up, the cars on the line
+        live.update(1 / 60)
+    assert not live.racing and live.race.elapsed == 0.0 and len(values_sent(live)) == 1
+    driver, obs, _, inputs = live.values_calls[-1]
+    assert driver is live.driver("es", 0) and np.array_equal(obs, inputs[0]) and obs.any()
+
+
 def test_the_values_follow_the_selected_car(live, tmp_path):
     three_car_race(live, tmp_path)
     live.toggle_network_window()
