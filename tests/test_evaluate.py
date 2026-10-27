@@ -287,19 +287,34 @@ def test_results_table_without_drivers_shows_no_setup(tmp_path):
     assert table.loc["GA", "Sensor length (m)"] == "–" and table.loc["GA", "Steering sensitivity"] == "–"
 
 
-def test_head_to_head_compares_the_maps_every_controller_finished():
+def test_head_to_head_compares_each_methods_best_run_on_the_maps_they_all_finished():
+    """Spec §11.3 (version 3.16): ES run 1, which finished nothing, no longer leaves the table empty."""
     nan = np.nan
     per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("ga", 1, 1000, True, True, False, 54.0),
-                            ("es", 0, 1000, True, True, False, 51.0), ("ga", 0, 1001, True, True, False, 60.0),
-                            ("ga", 1, 1001, True, True, False, 58.0), ("es", 0, 1001, True, True, False, 62.0),
+                            ("es", 0, 1000, True, True, False, 51.0), ("es", 1, 1000, False, False, True, nan),
+                            ("ga", 0, 1001, True, True, False, 60.0), ("ga", 1, 1001, True, True, False, 58.0),
+                            ("es", 0, 1001, True, True, False, 62.0), ("es", 1, 1001, False, False, True, nan),
                             ("ga", 0, 1002, True, True, False, 55.0), ("ga", 1, 1002, True, True, False, 55.0),
-                            ("es", 0, 1002, False, False, True, nan)])
-    table = evaluate.head_to_head_table(per_track).set_index("Method")
-    column = "Mean lap time on the 2 shared maps (s)"
-    assert table.loc["GA", column] == "55.00 · 56.00 · – · – (55.50 ± 0.71)"
-    assert table.loc["ES", column] == "56.50 · – · – · – (56.50)"
-    assert table.loc["GA", "Runs"] == 2 and table.loc["ES", "Runs"] == 1
+                            ("es", 0, 1002, False, False, True, nan), ("es", 1, 1002, False, False, True, nan)])
+    table = evaluate.head_to_head_table(per_track, {"ga": 1, "es": 0}).set_index("Method")
+    column = "Mean lap time on the 2 shared maps (s)"                   # map 1002: ES's best run did not finish
+    assert list(table.index) == ["ES", "GA"]                          # config.APPROACHES order
+    assert (table.loc["GA", "Best run"], table.loc["GA", column]) == (1, "56.00")
+    assert (table.loc["ES", "Best run"], table.loc["ES", column]) == (0, "56.50")
     assert table.loc["GA", "Fastest on (maps)"] == 1 and table.loc["ES", "Fastest on (maps)"] == 1
+
+
+def test_head_to_head_without_shared_maps():
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("es", 0, 1000, False, False, True, np.nan)])
+    table = evaluate.head_to_head_table(per_track, {"ga": 0, "es": 0})
+    column = "Mean lap time on the 0 shared maps (s)"
+    assert list(table[column]) == ["–", "–"] and list(table["Fastest on (maps)"]) == [0, 0]
+
+
+def test_head_to_head_leaves_out_a_method_without_a_best_run():
+    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("es", 0, 1000, True, True, False, 51.0)])
+    table = evaluate.head_to_head_table(per_track, {"ga": 0})
+    assert list(table["Method"]) == ["GA"] and table.loc[0, "Mean lap time on the 1 shared maps (s)"] == "50.00"
 
 
 def test_a_hardened_run_ends_hardened_in_the_training_cost_table():
@@ -307,13 +322,6 @@ def test_a_hardened_run_ends_hardened_in_the_training_cost_table():
     assert evaluate.end_cell({"outcome": "hardened", "generations": 2140}) == "hardened · gen 2,140"
     ended = {"outcome": "time_limit", "generations": 2140, "hardening": {"factor": 1.25, "from_generation": 1795}}
     assert evaluate.end_cell(ended) == "ended by time · gen 2,140"
-
-
-def test_head_to_head_without_shared_maps():
-    per_track = drive_rows([("ga", 0, 1000, True, True, False, 50.0), ("es", 0, 1000, False, False, True, np.nan)])
-    table = evaluate.head_to_head_table(per_track)
-    column = "Mean lap time on the 0 shared maps (s)"
-    assert list(table[column]) == ["–", "–"] and list(table["Fastest on (maps)"]) == [0, 0]
 
 
 def test_training_cost_table(tmp_path):

@@ -446,29 +446,32 @@ def pole_figure(per_track, path):
     return path
 
 
-def head_to_head_table(per_track):
-    """Spec §11.3 table 2: mean lap time on the test maps that every final controller finished, per run and their
-    mean, and on how many of those maps each method had the lowest lap time (its mean over runs)."""
-    if per_track.empty:
+def head_to_head_table(per_track, best):
+    """Spec §11.3 table 3 (version 3.16): each method's best run (`best`, {approach: run seed}, §11.1) on the test
+    maps that every one of these runs finished: its mean lap time there, and on how many of those maps it had the
+    lowest lap time. Up to version 3.15 every final controller had to finish a map, so one run that finished none
+    left no map to compare. A method without a best run is left out."""
+    chosen = [per_track[(per_track["approach"] == approach) & (per_track["run_seed"] == seed)]
+              for approach, seed in best.items()]
+    chosen = pd.concat([c for c in chosen if not c.empty]) if any(not c.empty for c in chosen) else per_track[:0]
+    if chosen.empty:
         return pd.DataFrame()
-    finished_all = per_track.groupby("track")["finished"].all()
+    finished_all = chosen.groupby("track")["finished"].all()
     shared = sorted(finished_all[finished_all.astype(bool)].index)
     column = f"Mean lap time on the {len(shared)} shared maps (s)"
-    on_shared = per_track[per_track["track"].isin(shared)]
+    on_shared = chosen[chosen["track"].isin(shared)]
     fastest = {}
     if shared:
-        means = on_shared.groupby(["track", "approach"])["lap_time"].mean().unstack()
-        for approach in means.idxmin(axis=1):
+        times = on_shared.groupby(["track", "approach"])["lap_time"].mean().unstack()
+        for approach in times.idxmin(axis=1):
             fastest[approach] = fastest.get(approach, 0) + 1
     rows = []
     for approach in config.APPROACHES:
-        sub = per_track[per_track["approach"] == approach]
-        if sub.empty:
+        if approach not in best or chosen[chosen["approach"] == approach].empty:
             continue
-        mine = on_shared[on_shared["approach"] == approach]
-        laps = mine.groupby("run_seed", as_index=False)["lap_time"].mean()
-        rows.append({"Method": config.LABELS[approach], "Runs": int(sub["run_seed"].nunique()),
-                     column: runs_cell(per_run(laps, "lap_time", sub["run_seed"]), 2),
+        laps = on_shared[on_shared["approach"] == approach]["lap_time"]
+        rows.append({"Method": config.LABELS[approach], "Best run": int(best[approach]),
+                     column: f"{laps.mean():.2f}" if len(laps) else "–",
                      "Fastest on (maps)": fastest.get(approach, 0)})
     return pd.DataFrame(rows)
 
@@ -922,7 +925,7 @@ def main(champions_dir=None, runs_dir=None, data_path=None, out_dir=None, test_s
     metrics = metrics_per_seed(models, data, runs_dir, latency_calls, drivers)   # timed after all parallel work
     tables = {"results": results_table(per_track, runs_dir, drivers, best),
               "pole_laps": pole_laps_table(per_track),
-              "head_to_head": head_to_head_table(per_track),
+              "head_to_head": head_to_head_table(per_track, best),
               "training_cost": training_cost_table(runs_dir), "stages": stages_table(stages),
               "comparison": comparison_table(metrics), "search_cost": search_cost_table(runs_dir),
               "driving_selected": selected, "dataset": dataset_table(data_path),
