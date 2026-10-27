@@ -104,7 +104,7 @@ def drawn(monkeypatch):
     """What the window draws: (values, where, title) per redraw."""
     calls = []
 
-    def render(graph, values, title, where, size):
+    def render(graph, values, title, where, size, full=True):
         calls.append((values, where, title))
         return np.zeros((size[1], size[0], 3), dtype=np.uint8)
 
@@ -245,11 +245,11 @@ class ClickingQueue(ScriptedQueue):
 
 @pytest.fixture
 def frames(monkeypatch):
-    """Every diagram the window draws: (title, values, size)."""
+    """Every diagram the window draws: (title, values, size, full)."""
     calls = []
 
-    def render(graph, values, title, where, size):
-        calls.append((title, values, size))
+    def render(graph, values, title, where, size, full=True):
+        calls.append((title, values, size, full))
         return np.zeros((size[1], size[0], 3), dtype=np.uint8)
 
     monkeypatch.setattr(netwindow.netfig, "render_live", render)
@@ -261,7 +261,7 @@ def test_training_leaves_room_for_the_timeline_and_a_race_does_not(dummy_video, 
     width, height = netwindow.START_SIZE
     netwindow.window_main(ClickingQueue([*generations(2), "empty", netwindow.network_message(dense_driver(), "race"),
                                          "empty", None]))
-    sizes = {title: size for title, _, size in frames}
+    sizes = {title: size for title, _, size, _ in frames}
     assert sizes["GA · run 0 · generation 1"] == (width, height - netwindow.STRIP)
     assert sizes["race"] == (width, height)
 
@@ -270,7 +270,7 @@ def test_stepping_back_shows_the_earlier_network_driving_on_its_own(dummy_video,
     driver = dense_driver()
     script = [netwindow.generation_message(entry(g, driver)) for g in range(3)]
     netwindow.window_main(ClickingQueue([*script, "empty", click("back"), "empty", "empty", "empty", None]))
-    shown = [(title, values) for title, values, _ in frames if title.endswith("generation 1")]
+    shown = [(title, values) for title, values, _, _ in frames if title.endswith("generation 1")]
     assert shown and shown[-1][1] is not None                # the window drove generation 1's car itself
 
 
@@ -279,9 +279,9 @@ def test_viewer_values_are_drawn_only_for_the_newest_generation(dummy_video, fra
     live = netwindow.values_message(driver, np.full(config.N_INPUTS, 0.3), "Easy")
     script = [netwindow.generation_message(entry(g, driver)) for g in range(3)]
     netwindow.window_main(ClickingQueue([*script, live, "empty", click("back"), live, "empty", None]))
-    newest = [values for title, values, _ in frames if title.endswith("generation 2")]
+    newest = [values for title, values, _, _ in frames if title.endswith("generation 2")]
     assert live["values"] in newest
-    earlier = [values for title, values, _ in frames if title.endswith("generation 1")]
+    earlier = [values for title, values, _, _ in frames if title.endswith("generation 1")]
     assert earlier and all(values != live["values"] for values in earlier)
 
 
@@ -289,5 +289,28 @@ def test_clicking_the_timeline_picks_a_generation_and_live_returns(dummy_video, 
     layout = netwindow.strip_layout(netwindow.START_SIZE)["timeline"]
     first = ("click", (layout.left + 1, layout.centery))
     netwindow.window_main(ClickingQueue([*generations(5), "empty", first, "empty", click("live"), "empty", None]))
-    titles = [title for title, _, _ in frames]
+    titles = [title for title, _, _, _ in frames]
     assert "GA · run 0 · generation 0" in titles and titles[-1] == "GA · run 0 · generation 4"
+
+
+def test_the_view_button_switches_between_the_full_and_the_simplified_view(dummy_video, frames):
+    race = netwindow.network_message(dense_driver(), "race")
+    button = ("click", netwindow.view_button(netwindow.START_SIZE, training=False).center)
+    key = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_v)
+
+    class Keys(ClickingQueue):
+        def get_nowait(self):
+            if self.script and self.script[0] == "v":
+                self.script.pop(0)
+                pygame.event.post(key)
+                raise queue.Empty
+            return super().get_nowait()
+
+    netwindow.window_main(Keys([race, "empty", button, "empty", "v", "empty", None]))
+    assert [full for _, _, _, full in frames] == [True, False, True]       # full by default
+
+
+def test_the_view_button_sits_above_the_timeline_in_training():
+    size = netwindow.START_SIZE
+    training, race = netwindow.view_button(size, training=True), netwindow.view_button(size, training=False)
+    assert training.bottom <= size[1] - netwindow.STRIP and race.bottom <= size[1] and race.top > training.top

@@ -182,3 +182,24 @@ def test_the_live_view_renders_at_the_window_size(make, size):
     for values in (netfig.node_values(driver, car_inputs()), None):           # None: before the car drives
         image = netfig.render_live(graph, values, "GA · run 0 · 855 parameters", "Silverstone", size)
         assert image.shape == (size[1], size[0], 3) and image.dtype == np.uint8 and image.std() > 0
+
+
+def test_the_full_view_draws_every_connection_faintly_and_the_strongest_signals_on_top():
+    for make in (dense_driver, neat_driver, lambda: shaped_driver(()), lambda: shaped_driver((8, 6))):
+        driver = make()
+        graph, values = netfig.network_graph(driver), netfig.node_values(driver, car_inputs())
+        faint, bold = netfig.drawn_edges(graph, values, full=True)
+        assert faint == graph["edges"] and bold == netfig.live_edges(graph, values)
+        assert netfig.drawn_edges(graph, values, full=False) == ([], bold)
+        assert netfig.drawn_edges(graph, None, full=True) == (graph["edges"], [])       # before the car drives
+        assert netfig.drawn_edges(graph, None, full=False) == ([], [])
+
+
+@pytest.mark.parametrize("full", [True, False])
+def test_both_views_render_at_the_window_size(full):
+    for make in (dense_driver, neat_driver, lambda: shaped_driver(()), lambda: shaped_driver((64, 32))):
+        driver = make()
+        graph = netfig.network_graph(driver)
+        for values in (netfig.node_values(driver, car_inputs()), None):
+            image = netfig.render_live(graph, values, "t", "Silverstone", (640, 480), full=full)
+            assert image.shape == (480, 640, 3) and image.std() > 0

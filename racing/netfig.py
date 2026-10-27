@@ -211,6 +211,13 @@ def live_edges(graph, values):
             + sorted(into, key=signal, reverse=True)[:ACTION_EDGES])
 
 
+def drawn_edges(graph, values, full=True):
+    """(faint, bold) connections of the live view: in the full view every connection, faintly; in both views the
+    strongest signals at this moment, bold (live_edges; none before the car drives)."""
+    bold = [] if values is None else live_edges(graph, values)
+    return (list(graph["edges"]) if full else []), bold
+
+
 def input_text(index, obs):
     """Input `index` of a car's inputs `obs` in the units a driver thinks in (spec §5.2): metres, km/h, the share of
     the half road from its centre, the distance and angle from the racing line, the line's corner radius ahead."""
@@ -279,12 +286,13 @@ def _live_layout(graph, size):
     return xy + [out]
 
 
-def render_live(graph, values, title, where, size):
+def render_live(graph, values, title, where, size, full=True):
     """The network window's picture (viewer): the network's inputs with their live values in real units, its hidden
     nodes shaded by their activation (blue positive, orange negative), its 45 actions in nine steering groups shaded
-    by score, and the connections that carry the strongest signals at this moment as curves (live_edges); the chosen
-    action enlarged and named. With values None (before the car drives) the network alone. An RGB uint8 array of
-    shape (height, width, 3)."""
+    by score, and the connections that carry the strongest signals at this moment as bold curves (live_edges); the
+    chosen action enlarged and named. The full view also draws every other connection faintly, tinted by the signal
+    it carries (by its weight before the car drives); the simplified view (full False) leaves them out. With values
+    None (before the car drives) the network alone. An RGB uint8 array of shape (height, width, 3)."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.collections import LineCollection
     from matplotlib.figure import Figure
@@ -322,8 +330,19 @@ def render_live(graph, values, title, where, size):
         speed = input_text(config.N_RAYS, values[0]) if len(values[0]) > config.N_RAYS else ""
         write(width - 24 * s, 50 * s, " · ".join(part for part in (where, speed) if part), 11, MUTED, "right")
     # connections
+    faint, edges = drawn_edges(graph, values, full)
+    if faint:
+        strength = np.array([abs(w if values is None else values[a][i] * w) for a, i, _, _, w in faint])
+        sign = np.array([w if values is None else values[a][i] * w for a, i, _, _, w in faint]) >= 0
+        top = max(float(strength.max()), 1e-12)
+        curves, colors, widths = [], [], []
+        for (a, i, b, j, _), t, positive in zip(faint, strength / top, sign):
+            (x1, y1), (x2, y2) = xy[a][i], xy[b][j]
+            curves.append(_bezier(x1 + 8 * s, y1, x2 - 8 * s, y2, points=12))
+            colors.append((*_mix(PALE, LIVE_POSITIVE if positive else LIVE_NEGATIVE, 1.0), 0.05 + 0.22 * t))
+            widths.append((0.35 + 0.9 * t) * s * pt)
+        ax.add_collection(LineCollection(curves, colors=colors, linewidths=widths, capstyle="round", zorder=1))
     if values is not None:
-        edges = live_edges(graph, values)
         if edges:
             signals = np.array([values[a][i] * w for a, i, _, _, w in edges])
             strongest = max(float(np.abs(signals).max()), 1e-12)
@@ -366,12 +385,12 @@ def render_live(graph, values, title, where, size):
         if values is not None:
             off = sum(v == 0 for v in level)              # a ReLU unit that is off; tanh units are never exactly 0
             write(x, 96 * s, f"{len(level) - off} of {len(level)} firing" if off else
-                  f"{sum(v > 0 for v in level)} positive · {sum(v < 0 for v in level)} negative", 10, FAINT, "center")
+                  f"{sum(v > 0 for v in level)} + · {sum(v < 0 for v in level)} −", 10, FAINT, "center")
     # actions
     out = xy[last]
     n_throttle = len(config.THROTTLE_LEVELS)
     write(out[0][0], 82 * s, f"{len(out)} actions", 11, MUTED, "center", "bold")
-    write(out[0][0], 96 * s, "gas at the top of each group", 10, FAINT, "center")
+    write(out[0][0], 96 * s, "gas at top", 10, FAINT, "center")
     for col in range(len(out) // n_throttle):
         ys = [out[col * n_throttle + t][1] for t in range(n_throttle)]
         write(out[0][0] + 14 * s, (min(ys) + max(ys)) / 2, STEER_SHORT[col] if col < len(STEER_SHORT) else "", 9.5,

@@ -153,6 +153,24 @@ def strip_layout(size):
     return rects
 
 
+def view_button(size, training):
+    """The Full | Simple switch at the bottom left of the diagram (above the timeline in training)."""
+    bottom = size[1] - STRIP if training else size[1]
+    return pygame.Rect(24, bottom - 34, 132, 26)
+
+
+def draw_view_button(screen, rect, full, font):
+    """The switch, with the view on screen highlighted."""
+    pygame.draw.rect(screen, BACKGROUND, rect, border_radius=13)
+    pygame.draw.rect(screen, RIM, rect, 1, border_radius=13)
+    for k, (name, on) in enumerate((("Full", full), ("Simple", not full))):
+        half = pygame.Rect(rect.left + k * rect.width // 2, rect.top, rect.width // 2, rect.height)
+        if on:
+            pygame.draw.rect(screen, DEEP, half, border_radius=13)
+        image = font.render(name, True, BACKGROUND if on else INK)
+        screen.blit(image, image.get_rect(center=half.center))
+
+
 def index_at(x, rect, n):
     """The timeline entry under x."""
     if n <= 1:
@@ -228,7 +246,7 @@ def window_main(messages, parent=None, on_draw=None):
     fonts = (pygame.font.Font(str(config.FONT_PATH), 13), pygame.font.Font(str(config.FONT_PATH), 12))
     clock = pygame.time.Clock()
     race, frame, timeline, mode, running = None, None, Timeline(), None, True
-    drive, drive_key, dragging = None, None, False
+    drive, drive_key, dragging, full = None, None, False, True       # full: every connection; else the simplified view
     urgent, fresh, drawn_at = True, False, float("-inf")    # urgent: something new to show; fresh: new values
 
     def control(name, now):
@@ -249,6 +267,11 @@ def window_main(messages, parent=None, on_draw=None):
                     running = False
                 elif event.type == pygame.VIDEORESIZE:
                     size, urgent = (max(int(event.w), 1), max(int(event.h), 1)), True
+                elif (mode is not None and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                      and view_button(size, mode == "train").collidepoint(event.pos)):
+                    full, urgent = not full, True
+                elif mode is not None and event.type == pygame.KEYDOWN and event.key == pygame.K_v:
+                    full, urgent = not full, True
                 elif mode == "train" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     rects = strip_layout(size)
                     if rects["timeline"].inflate(0, 16).collidepoint(event.pos):
@@ -295,7 +318,7 @@ def window_main(messages, parent=None, on_draw=None):
                     screen.blit(text, text.get_rect(center=(size[0] // 2, size[1] // 2)))
                 elif mode == "race":
                     draw_image(screen, netfig.render_live(race["graph"], frame and frame["values"], race["title"],
-                                                          frame["where"] if frame else "", size))
+                                                          frame["where"] if frame else "", size, full=full))
                 else:
                     shown, newest = timeline.shown(), timeline.entries[-1]
                     if past:
@@ -308,8 +331,11 @@ def window_main(messages, parent=None, on_draw=None):
                         values = frame and frame["values"]
                         where = frame["where"] if frame else newest["where"]
                     diagram = (size[0], max(size[1] - STRIP, 120))
-                    draw_image(screen, netfig.render_live(shown["graph"], values, shown["title"], where, diagram))
+                    draw_image(screen, netfig.render_live(shown["graph"], values, shown["title"], where, diagram,
+                                                          full=full))
                     draw_strip(screen, timeline, size, fonts)
+                if mode is not None:
+                    draw_view_button(screen, view_button(size, mode == "train"), full, fonts[0])
                 if mode is not None and on_draw is not None:
                     on_draw(size)
                 pygame.display.flip()
