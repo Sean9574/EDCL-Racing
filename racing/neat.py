@@ -548,7 +548,8 @@ class SpeciesSet:
         return species
 
 
-RESTART_EVENTS = ("level_up", "goal", "tightened")    # engine events after which species records restart
+RESTART_EVENTS = ("level_up", "goal", "tightened", "end_speed")   # events after which species records restart:
+                                                                 # a new level or target (end_speed: hardening's)
 
 
 class NEAT:

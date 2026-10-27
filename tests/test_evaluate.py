@@ -768,3 +768,9 @@ def test_the_pole_figure_fits_slow_bars_and_their_gap_labels(tmp_path, monkeypat
             assert bar.get_x() + bar.get_width() < ax.get_xlim()[1]
         for text in ax.texts:
             assert text.get_window_extent().x1 <= ax.bbox.x1
+
+
+def test_the_training_figure_marks_a_hardened_run():
+    """Version 3.15: the generation a run is hardened is marked like a level-up or a target cut."""
+    assert evaluate.EVENT_STYLES["hardened"] not in (evaluate.EVENT_STYLES["level_up"],
+                                                    evaluate.EVENT_STYLES["tightened"])

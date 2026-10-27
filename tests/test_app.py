@@ -3068,3 +3068,11 @@ def test_a_controller_of_another_action_set_is_refused(window, tmp_path):
     window.start_race()
     window.update(1 / 60)
     assert ("baseline", 0) not in window.race_cars() and ("ga", 0) in window.race_cars()
+
+
+def test_the_training_plot_marks_hardening(window, tmp_path):
+    window.receive(ga_report(0, event="hardened"))
+    assert window.history[-1][3] is True
+    log = tmp_path / "log.csv"
+    log.write_text("generation,min_share,event\n0,0.5,\n1,0.95,hardened\n")
+    assert [row[3] for row in viewer.log_history(log)] == [False, True]

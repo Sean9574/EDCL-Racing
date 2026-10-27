@@ -313,6 +313,7 @@ def pole_gap(flying_lap, pole):
 
 
 MPH_PER_MPS = 3600 / 1609.344   # miles per hour in one m/s
+MARKED_EVENTS = ("level_up", "goal", "tightened", "hardened")   # marked on the training plot (spec §10.2)
 NET_FRAME_INTERVAL = 0.1     # s: the network window gets the shown car's node values at most this often
 
 
@@ -575,7 +576,7 @@ def log_history(log):
         with open(log, newline="") as f:
             for row in csv.DictReader(f):
                 history.append((int(row["generation"]), float(row["min_share"]), float("nan"),
-                                row.get("event") in ("level_up", "goal", "tightened")))
+                                row.get("event") in MARKED_EVENTS))
     except (OSError, ValueError, KeyError, TypeError):
         return []
     return history
@@ -970,7 +971,7 @@ class App:
             if self.mode == "race":
                 self.acknowledge()
         if "min_share" in report:
-            marked = report.get("event") in ("level_up", "goal", "tightened")
+            marked = report.get("event") in MARKED_EVENTS
             self.history.append((report["generation"], float(report["min_share"]), float("nan"), marked))
         else:
             self.history.append((report["generation"], report["best"], report["mean"], report["leveled_up"]))

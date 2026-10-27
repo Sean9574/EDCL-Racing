@@ -791,3 +791,37 @@ def test_a_run_ended_under_version_3_15_is_not_hardened_again(evaluation, monkey
     again = evolution.run(ga.GA(pop_size=20), 1, tmp_path / "run", champion_dir=tmp_path / "champions",
                           on_generation=lambda report: pytest.fail("trained again"))
     assert first["hardening"] is None and again == json.loads(json.dumps(first))
+
+
+def test_an_unreadable_checkpoint_leaves_the_earlier_summary_where_it_was(monkeypatch, tmp_path):
+    """Review of version 3.15: the summary is set aside only once the checkpoint has been read."""
+    ended_at_its_speed_limit(monkeypatch, tmp_path, [])
+    (tmp_path / "run" / checkpoint.CHECKPOINT_NAME).write_bytes(b"cut short")
+    with pytest.raises(Exception):
+        evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions")
+    assert (tmp_path / "run" / "summary.json").exists()
+    assert not (tmp_path / "run" / evolution.EARLIER_SUMMARY_NAME).exists()
+
+
+def test_a_run_ended_at_its_speed_limit_without_its_summary_still_hardens(monkeypatch, tmp_path):
+    ended_at_its_speed_limit(monkeypatch, tmp_path, [])
+    (tmp_path / "run" / "summary.json").unlink()                        # e.g. lost in a copy
+    summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "run", champion_dir=tmp_path / "champions")
+    assert summary["outcome"] == "hardened" and summary["hardening"]["from_generation"] == 6
+
+
+def test_a_run_hardened_at_its_goal_logs_the_mastery_goal(monkeypatch, tmp_path):
+    monkeypatch.setattr(population, "select_final", picks_the_first_candidate([]))
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluate(0.5))
+
+    def end_after(report):
+        if report["generation"] == 1:
+            config.END_FILE.write_text("2026-10-26T07:00:00")
+
+    evolution.run(ga.GA(pop_size=20), 3, tmp_path / "run", champion_dir=tmp_path / "champions",
+                  start_level=config.MAX_LEVEL, on_generation=end_after)
+    as_before_version_3_15(tmp_path / "run")
+    config.END_FILE.unlink()
+    monkeypatch.setattr(population, "evaluate_population", fake_evaluate(1.0))
+    evolution.run(ga.GA(pop_size=20), 3, tmp_path / "run", champion_dir=tmp_path / "champions")
+    assert "GA run 3: mastery goal reached at generation 4, hardened" in config.RUN_LOG_PATH.read_text()

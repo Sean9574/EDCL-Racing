@@ -511,7 +511,7 @@ def records_after(event):
     return after, [(s.best_fitness, s.stale) for s in method.species.species]
 
 
-@pytest.mark.parametrize("event", ["level_up", "goal", "tightened"])
+@pytest.mark.parametrize("event", ["level_up", "goal", "tightened", "end_speed"])
 def test_stagnation_restarts_with_each_level_and_target(event):
     """Maps change every generation, so a species' best fitness is a record of noisy scores, and after a level-up,
     the goal or a tightened target the old records are out of reach (spec §9.9)."""

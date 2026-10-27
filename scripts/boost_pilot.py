@@ -14,7 +14,8 @@ Run both variants side by side, in two terminals:
     python scripts/boost_pilot.py boost
     python scripts/boost_pilot.py plain
 Options: --source PATH (the checkpoint to continue; default the archived ES seed 0 of revision 3.2), --out DIR,
---max-generations N (generations to run after the source's last; default: until the push ends).
+--max-generations N (generations to run after the source's last; default: until the run ends, which from version
+3.15 is after hardening, not when the push ends).
 The source's settings record is not checked: it was made by earlier code. The pilot's own checkpoint carries the
 current settings, and evolution.run resumes it.
 """

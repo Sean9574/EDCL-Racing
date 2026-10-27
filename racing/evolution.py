@@ -154,7 +154,7 @@ def label(method, seed):
     return f"{config.LABELS.get(method.approach, method.approach)} run {seed}"
 
 
-def milestone_text(event, method, seed, generation, level, tracker):
+def milestone_text(event, method, seed, generation, level, tracker, goal_before=True):
     name = label(method, seed)
     if event == "level_up":
         return (f"{name}: {config.DIFFICULTIES[level]} mastered at generation {generation}, "
@@ -167,6 +167,8 @@ def milestone_text(event, method, seed, generation, level, tracker):
         return (f"{name}: speed push ended at generation {generation}, hardening at the target "
                 f"{100 * tracker.target_reduction:.1f}% shorter")
     if event == "hardened":
+        if not goal_before:                                     # hardening before the goal ends at the goal
+            return f"{name}: mastery goal reached at generation {generation}, hardened"
         return f"{name}: hardened at generation {generation}"
     return f"{name}: stopped at generation {generation}, {config.DIFFICULTIES[level]} not mastered"
 
@@ -198,20 +200,19 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         max_generations=None, rng_seed=None):
     """Train `method` with run seed `seed` until it is hardened after its speed push, the safety stop or an end
     request (spec §9.4), or after `max_generations` (viewer, pilots, tests). A run of the experiment that ended before
-    version 3.15 hardens when its checkpoint is beside its summary; that summary is kept as EARLIER_SUMMARY_NAME. An end request (config.END_FILE, version 3.13) ends a run of
-    the experiment before its next generation, once it has trained at least one; it then picks its final controller
-    as at any other end. A completed run in `out_dir` with the current settings is
+    version 3.15 hardens when its checkpoint is beside its summary (or its checkpoint ended at the speed limit); that
+    summary is kept as EARLIER_SUMMARY_NAME once the checkpoint has been read. An end request (config.END_FILE,
+    version 3.13) ends a run of the experiment before its next generation, once it has trained at least one; it then
+    picks its final controller as at any other end. A completed run in `out_dir` with the current settings is
     returned at once; an interrupted one resumes from its checkpoint. With champion_dir None no final controller is
     selected or saved and nothing is written to the status file or the run log: only the experiment's runs report
     progress. Returns the summary."""
     out_dir = Path(out_dir)
     reporting = champion_dir is not None
     done = checkpoint.completed(out_dir, SUMMARY_NAME, approach=method.approach)
-    if done is not None:
-        if not (reporting and checkpoint.ended_before_hardening(done)
-                and (out_dir / checkpoint.CHECKPOINT_NAME).exists()):
-            return done
-        os.replace(out_dir / SUMMARY_NAME, out_dir / EARLIER_SUMMARY_NAME)   # kept beside the run, which hardens
+    if done is not None and not (reporting and checkpoint.ended_before_hardening(done)
+                                 and (out_dir / checkpoint.CHECKPOINT_NAME).exists()):
+        return done
     lower_priority()                                   # Keras jobs beside it come first (spec §3.3)
     population.fresh_workers(n_jobs)                   # every run builds its own tracks (spec §9.1)
     began = time.time()
@@ -246,8 +247,11 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
         if reporting:
             progress.milestone(f"{label(method, seed)}: resumed at generation {generation}")
         hardening = state.get("hardening")
-        if reporting and "hardening" not in state and (out_dir / EARLIER_SUMMARY_NAME).exists():
-            tracker.harden()                                   # a run ended before version 3.15 (spec §9.4)
+        ended = done is not None or (out_dir / EARLIER_SUMMARY_NAME).exists() or tracker.outcome == "speed_limit"
+        if reporting and "hardening" not in state and ended:   # a run ended before version 3.15 (spec §9.4)
+            if (out_dir / SUMMARY_NAME).exists():
+                os.replace(out_dir / SUMMARY_NAME, out_dir / EARLIER_SUMMARY_NAME)   # kept beside the run
+            tracker.harden()
             hardening = {"factor": float(tracker.factor), "from_generation": generation}
             progress.milestone(hardening_text(method, seed, generation, tracker))
 
@@ -293,7 +297,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
             hardening.update(generation=generation, evals=evals, elapsed=now)
         if reporting:
             if event is not None:
-                progress.milestone(milestone_text(event, method, seed, generation, level, tracker))
+                progress.milestone(milestone_text(event, method, seed, generation, level, tracker, goal_before))
             progress.write_status({"approach": method.approach, "seed": seed,
                                    "stage": ("hardening" if tracker.hardening
                                              else "speed push" if tracker.goal_reached else "evolution"),

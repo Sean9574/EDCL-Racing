@@ -21,11 +21,11 @@ generations in a row, on each level from Easy to Extra hard, however long that t
 In the speed push that follows, the target time is shortened by 2% at a time whenever half of the population beats it
 three generations in a row, until 1,000 generations pass without that. The run then hardens (version 3.15): at its
 last mastered target, which no longer tightens, it trains until 90% of the population finishes every map within it,
-three generations in a row, and its final controller must finish all 20 validation maps. Every method is trained four times: run 0 is
-seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ every time; results are
-reported for each run and their mean. Every evolved car also evolves its own setup next to its network: the length of
-its distance sensors (30–1,000 m, 150 m at the start) and its steering sensitivity (⅓–3), judged only by success and lap
-time.
+three generations in a row, and its final controller must finish all 20 validation maps. Every method is trained
+four times: run 0 is seeded (seed 0) and replays exactly, runs 1 to 3 set no seed, so their random choices differ
+every time; results are reported for each run and their mean. Every evolved car also evolves its own setup next to
+its network: the length of its distance sensors (30–1,000 m, 150 m at the start) and its steering sensitivity (⅓–3),
+judged only by success and lap time.
 
 Every car chooses one of 45 actions: nine steering levels in steps of 0.25 (full lock left to full lock right) and five
 throttle levels (full and half brake, coast, half and full gas), so a network has 45 outputs (spec §6).

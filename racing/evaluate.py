@@ -22,7 +22,7 @@ STAGES = (("imitation", "After imitation"), ("dagger", "After DAgger"), ("speed 
 LEVEL_NAMES = {**{level: f"{name} cleared" for level, name in config.DIFFICULTIES.items() if level < config.MAX_LEVEL},
                config.MAX_LEVEL: "Mastery goal"}
 SEED_STYLES = ("-", "--", ":", "-.")                       # one per run, runs 0-3 (spec §11.4)
-EVENT_STYLES = {"level_up": "-", "goal": "-", "tightened": ":"}
+EVENT_STYLES = {"level_up": "-", "goal": "-", "tightened": ":", "hardened": "-."}
 
 
 def _drive_track(drivers, track_seed, level, factor):
