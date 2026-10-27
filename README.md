@@ -41,7 +41,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.15, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.16, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -406,6 +406,12 @@ holds every run, the evaluation runs again:
 python scripts/run_notebooks.py --from 08
 ```
 
+**Version 3.16** brings the specification up to date with the viewer (the leader's speed in mph, the pole-lap car and
+the live network window with its training timeline) and repairs the head-to-head table: it now compares each
+method's best run on the test circuits they all finished, because one run that finished none (ES run 0 of version
+3.14) left the old table without lap times. Nothing trains again; the table gets its lap times at the next
+evaluation.
+
 **Version 3.15** adds hardening and a stricter final pick. In the version 3.14 results the final controllers finished
 109 of 128 test races, and only 1 of the 32 finished all 20 validation maps. After its speed push a run now hardens at
 its last mastered target until 90% of the population finishes every map within it, three generations in a row (the
@@ -544,9 +550,14 @@ On Windows 11 the window opens through WSLg.
 - **Full screen:** the Full screen button or F11 fills the display; Windowed, F11 or Esc returns to a window, which
   can also be resized by dragging its border. The map and panel follow the window's size.
 - **Network window:** the Network window button opens a separate window (movable to another monitor, resizable, closed
-  with the viewer) that draws a car's neural network. In the training view it shows the best car of the latest
-  generation (the latest epoch or trial for imitation) and redraws with every report, so NEAT's growth is visible; in
-  the race view the Network of button cycles through the cars in the race.
+  with the viewer) that shows a car's neural network live, about ten times a second: the inputs in real units (m,
+  km/h, corner radius), every hidden layer as a column ("layer 1 · 16 neurons"), units shaded by activation (blue
+  positive, orange negative), the 45 actions in nine steering groups with the chosen one named, and the strongest
+  signals as curves. Full (the default) also draws every other connection faintly; Simple leaves them out (button or
+  V). In the race view the Network of button cycles through the cars, shown on the start line before the start. In
+  the training view a timeline under the diagram collects the best network of every generation seen while the viewer
+  is open: Play (Space) steps through them, ◀ ▶ (arrow keys) or a click on the timeline picks one, whose best car then
+  drives the current map in the window, and Live (L) returns to the newest.
 - **Difficulty:** Easy (gentle loops), Medium (circuits), Hard (circuits with a main straight into a hairpin,
   sometimes a chicane or esses), Extra hard (the 19 real training circuits, in both directions, with their real
   widths; the test circuits are the four held-out ones). Generated maps run clockwise or counter-clockwise and the
