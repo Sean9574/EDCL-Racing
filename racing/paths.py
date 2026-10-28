@@ -1,4 +1,4 @@
-"""Where each run, stage and final controller is stored (spec §3.3, §8.6, §9.1)."""
+"""Where each run, stage and final controller is stored (spec §3.2, §8.6, §9.1)."""
 import shutil
 from pathlib import Path
 
@@ -12,7 +12,7 @@ def run_dir(approach, seed, runs_dir=None):
 
 def run_seeds(approach, runs_dir=None):
     """The run seeds k of the folders <runs>/<approach>/seed<k> that exist, in order. An archive of an earlier
-    revision may hold runs other than config.RUN_SEEDS (spec §3.3)."""
+    revision may hold runs other than config.RUN_SEEDS (spec §3.2)."""
     folder = Path(config.RUNS_DIR if runs_dir is None else runs_dir) / approach
     if not folder.is_dir():
         return []
@@ -41,7 +41,7 @@ def speed_dir(approach, seed, runs_dir=None):
 
 def final_record(approach, seed, runs_dir=None):
     """The record a run writes when it is complete: an evolutionary run's summary, an imitation method's speed-push
-    summary (spec §3.3)."""
+    summary (spec §3.2)."""
     if approach in config.EVOLUTION_APPROACHES:
         return run_dir(approach, seed, runs_dir) / "summary.json"
     return speed_dir(approach, seed, runs_dir) / "summary.json"

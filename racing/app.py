@@ -72,7 +72,7 @@ def needs_outline(color, background=WHITE):
 
 UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (spec §10.6)
 UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
-SEEDED_RUN = config.SEEDED_RUN               # run 0 is the seeded run (spec §3.3)
+SEEDED_RUN = config.SEEDED_RUN               # run 0 is the seeded run (spec §3.2)
 RACE_RUNS = ("best", "all", "seeded", "unseeded")       # the race control's choices, in cycling order (spec §10.3)
 
 
@@ -496,7 +496,7 @@ def trainer_main(approach, size, seed, level, reports, running, app_runs_dir=Non
     if approach == "baseline":                         # resume=False: always train live, never skip (spec §10.6)
         imitation.train_baseline(data, out_dir=out_dir, seed=seed, resume=False, report=False,
                                  on_epoch=lambda epoch, model, acc: add(epoch, model, acc))
-    else:                       # the search of the unseeded run takes a number from the operating system (spec §3.3)
+    else:                       # the search of the unseeded run takes a number from the operating system (spec §3.2)
         imitation.run_tuner(approach, data, out_dir=out_dir, on_trial=add,
                             seed=seed if runs.seeded(seed) else secrets.randbits(31), export_models=False,
                             resume=False, report=False)

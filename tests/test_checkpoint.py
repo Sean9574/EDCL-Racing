@@ -124,7 +124,7 @@ def test_checkpoints_are_plain_pickles(tmp_path):
 
 def test_write_json_syncs_the_temporary_file_before_replacing(tmp_path, monkeypatch):
     """A record is on disk before it replaces the old one, so a reboot cannot leave it empty, and so is everything
-    written before it, such as the final controller the record vouches for (spec §3.3)."""
+    written before it, such as the final controller the record vouches for (spec §3.2)."""
     calls, real_sync, real_fsync, real_replace = [], checkpoint.os.sync, checkpoint.os.fsync, checkpoint.os.replace
     monkeypatch.setattr(checkpoint.os, "sync", lambda: calls.append("sync") or real_sync())
     monkeypatch.setattr(checkpoint.os, "fsync", lambda fd: calls.append("fsync") or real_fsync(fd))
@@ -257,7 +257,7 @@ def test_another_methods_settings_do_not_hide_a_shared_difference():
 
 
 def test_the_final_picks_setting_is_recorded_but_never_compared():
-    """Spec §3.3 (version 3.15): FINAL_MIN_SUCCESSES acts only at the final pick."""
+    """Spec §3.2 (version 3.15): FINAL_MIN_SUCCESSES acts only at the final pick."""
     assert checkpoint.END_SETTINGS_KEYS == ("FINAL_MIN_SUCCESSES",)
     for approach in (None, "ga", "neat", "baseline"):
         recorded = checkpoint.settings_record(approach)

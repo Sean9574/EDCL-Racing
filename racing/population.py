@@ -75,7 +75,7 @@ def _time_trial(population, seed, level, factor):
 
 def evaluate_population(population, seeds, level, factor, n_jobs=1, backend="loky"):
     """Time trials of every car on every map (spec §9.2). Dense and NEAT populations run on the compiled simulator
-    when it is available, in one call with config.thread_count() threads (spec §3.3, §5.7); otherwise the per-map
+    when it is available, in one call with config.thread_count() threads (spec §3.2, §5.7); otherwise the per-map
     tasks run on numpy in n_jobs worker processes. The per-map results are combined in map order, so the result
     depends on neither."""
     n = len(population)

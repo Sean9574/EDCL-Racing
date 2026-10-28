@@ -1,4 +1,4 @@
-"""Runs 0 to 3 (spec §3.3): run 0 starts every random generator from its seed and replays exactly; runs 1 to 3 set no
+"""Runs 0 to 3 (spec §3.2): run 0 starts every random generator from its seed and replays exactly; runs 1 to 3 set no
 seed anywhere, so their random choices come from the operating system's randomness and two unseeded runs differ. A stopped
 run 1 to 3 still resumes on its own path, because its checkpoints hold the generators' state."""
 import secrets

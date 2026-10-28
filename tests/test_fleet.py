@@ -141,10 +141,10 @@ def test_the_plan_names_each_machines_runs(fake):
     ('[machines.a]\nruns = ["nb:01"]\n[machines.b]\nhost = "x"\nruns = ["search:kt_random"]\n',
      "machine b: search:kt_random runs only on the machine fleet.py runs on"),
     ('[machines.a]\nruns = []\n[machines.b]\nhost = "x"\nruns = ["nb:01"]\n',
-     r"machine b: nb:01 .*\(the dataset is not collected from a server, spec §3.3\)"),
+     r"machine b: nb:01 .*\(the dataset is not collected from a server, spec §3.2\)"),
     ('[machines.a]\nruns = []\n[machines.b]\nhost = "x"\nruns = ["baseline:0"]\n',
      r"machine b: baseline:0 runs only on the machine fleet.py runs on \(its Keras training may round differently "
-     r"on another processor, spec §3.3\)"),
+     r"on another processor, spec §3.2\)"),
     ('[machines.a]\nruns = ["ga:4"]\n', "seed must be one of"),
     ('[machines.a]\nhost = "x"\nruns = ["ga:1"]\n', "exactly one machine"),
     ('[machines.a]\nruns = []\n[machines.b]\nruns = []\n', "exactly one machine"),
@@ -599,7 +599,7 @@ def ended_under_version_3_14(results, approach, seed, outcome="speed_limit"):
 
 
 def test_a_run_that_resumes_into_hardening_is_not_collected(fake):
-    """Spec §3.3 (version 3.15): a summary written before version 3.15 next to its checkpoint belongs to a run that
+    """Spec §3.2 (version 3.15): a summary written before version 3.15 next to its checkpoint belongs to a run that
     resumes into hardening, so a collect does not take it for a finished run."""
     fake.ready_server()
     record = ended_under_version_3_14(fake.server_project() / "results", "ga", 0, outcome="time_limit")

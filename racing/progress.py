@@ -1,4 +1,4 @@
-"""Progress of a long experiment (spec §3.3): the running run writes its state to a status file and its
+"""Progress of a long experiment (spec §3.2): the running run writes its state to a status file and its
 milestones to the run log; the runner, or a monitor in another terminal, shows the new milestones and a one-line
 status.
 
@@ -167,7 +167,7 @@ def stale_note(status, now=None):
 
 
 class Monitor:
-    """Shows the run log's new lines and the status line (spec §3.3). In a terminal the status line is
+    """Shows the run log's new lines and the status line (spec §3.2). In a terminal the status line is
     updated in place; otherwise, as under nohup, it is printed as a whole line at most once per `period` seconds. A
     status that has not been updated for config.STATUS_STALE_AFTER seconds says so. With `status_dir`, the folder
     of runs trained side by side, it shows one status line per run instead."""

@@ -1230,7 +1230,7 @@ def test_trainer_main_passes_seed_level_and_seeded_start(monkeypatch, tmp_path):
 
 
 def test_the_viewers_search_of_run_0_is_seeded_and_of_run_1_is_not(monkeypatch, tmp_path):
-    """spec §3.3, §10.2: the viewer's own Keras Tuner search of run 0 is seeded with 0; run 1's takes a number from
+    """spec §3.2, §10.2: the viewer's own Keras Tuner search of run 0 is seeded with 0; run 1's takes a number from
     the operating system each time, so it never replays."""
     from racing import imitation
     fake_imitation(monkeypatch, tmp_path)

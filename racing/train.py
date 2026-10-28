@@ -5,7 +5,7 @@ makes exactly the call of its notebook's loop (tests/test_train.py checks this),
 notebook would train; the notebook then finds it complete and only reports it. A run of an imitation method first
 trains its own imitation network, notebook 02's call for its seed, then refines and pushes it, notebook 03's call; an
 evolutionary method's run is the run of notebooks 04 to 07. A Keras Tuner search is notebook 02's search call:
-python -m racing.train search kt_random (spec §3.3).
+python -m racing.train search kt_random (spec §3.2).
 """
 import argparse
 import sys
@@ -21,7 +21,7 @@ def train(approach, seed):
     """Train run `seed` of `approach` as its notebooks do; returns the run's summary. A run of an imitation method
     first trains its own imitation network (notebook 02's call for its seed: the baseline's training, or the retraining
     of its search's chosen architecture), then refines it by DAgger and pushes it (notebook 03's call); a step finished
-    before returns its record instead of training again (spec §3.3)."""
+    before returns its record instead of training again (spec §3.2)."""
     if approach in config.IMITATION_APPROACHES:
         from racing import dagger, imitation
         data = imitation.load_dataset()
@@ -46,7 +46,7 @@ def train(approach, seed):
 
 
 def search(approach):
-    """The Keras Tuner search of `approach`, notebook 02's call (spec §3.3); returns its summary. A finished search
+    """The Keras Tuner search of `approach`, notebook 02's call (spec §3.2); returns its summary. A finished search
     returns its record instead of searching again."""
     if approach not in config.TUNER_APPROACHES:
         raise ValueError(f"no search for {approach!r}; choose one of {', '.join(config.TUNER_APPROACHES)}")

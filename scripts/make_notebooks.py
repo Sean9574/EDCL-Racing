@@ -4,7 +4,7 @@ Run with:  python scripts/make_notebooks.py
 
 Before the notebooks are first rewritten, the existing experiment notebooks, which hold the outputs of the revision
 2.0 run, are copied to results/archive/revision2-notebooks/. Every run function skips completed runs and continues
-interrupted ones (spec §3.3), so re-executing a notebook continues where it stopped.
+interrupted ones (spec §3.2), so re-executing a notebook continues where it stopped.
 """
 import json
 import shutil
@@ -95,7 +95,7 @@ NOTEBOOKS = {
         ("code", "from IPython.display import display\n\nfrom racing import config, evaluate\n\n"
                  "results = evaluate.main(n_jobs=config.N_JOBS)\n"
                  f"for name in {EVALUATION_TABLES!r}:\n    print(name)\n    display(results[name])"),
-        ("code", "import json\n\n# run conditions recorded by scripts/run_notebooks.py (spec §3.3)\n"
+        ("code", "import json\n\n# run conditions recorded by scripts/run_notebooks.py (spec §3.2)\n"
                  "if config.RUN_INFO_PATH.exists():\n"
                  "    print(json.dumps(json.loads(config.RUN_INFO_PATH.read_text()), indent=1))"),
         ("code", "from IPython.display import Image\n\nfor path in results['figures']:\n"

@@ -138,13 +138,13 @@ def load_plan(path=PLAN):
             if entry.get("host") is not None:
                 if run.is_notebook:
                     raise PlanError(f"machine {name}: {run.label} runs only on the machine fleet.py runs on "
-                                    "(the dataset is not collected from a server, spec §3.3)")
+                                    "(the dataset is not collected from a server, spec §3.2)")
                 if run.is_search:
                     raise PlanError(f"machine {name}: {run.label} runs only on the machine fleet.py runs on (its "
-                                    "search folder is not collected from a server, spec §3.3)")
+                                    "search folder is not collected from a server, spec §3.2)")
                 if run.approach in config.IMITATION_APPROACHES:
                     raise PlanError(f"machine {name}: {run.label} runs only on the machine fleet.py runs on (its "
-                                    "Keras training may round differently on another processor, spec §3.3)")
+                                    "Keras training may round differently on another processor, spec §3.2)")
             owner[run] = name
         machines.append(Machine(name=name, runs=runs, at_once=positive(entry, "at_once", 1, name),
                                 workers=positive(entry, "workers", 6, name), host=entry.get("host"),
@@ -555,7 +555,7 @@ def wait_for_environment(machine, out=sys.stdout):
 
 def external_inputs(machine):
     """(local file, path relative to the project) of every input the machine's jobs need that none of its own jobs
-    make (spec §3.3): a server must be given them before its jobs can start."""
+    make (spec §3.2): a server must be given them before its jobs can start."""
     results = PROJECT / "results"
     made = {path for job in machine.runs for path in jobs.makes(job, results)}
     found = []
@@ -945,7 +945,7 @@ def collect(machines, out=sys.stdout, results=None):
 
 def finished(record):
     """Whether the run whose final record is `record` has finished: the record exists and is not a summary written
-    before version 3.15 next to the run's checkpoint, whose run resumes into hardening (spec §3.3, §9.4). An
+    before version 3.15 next to the run's checkpoint, whose run resumes into hardening (spec §3.2, §9.4). An
     unreadable record next to its checkpoint is a run that finishes again (checkpoint.completed)."""
     if not record.exists():
         return False
@@ -966,7 +966,7 @@ def unfinished(results=None):
 
 def finish(machines, out=sys.stdout):
     """Collect, then, once all 32 runs are here, run notebooks 02 to 08 (they find the networks, searches and runs
-    complete and report them, spec §3.3) and the evaluation in this machine's fleet session."""
+    complete and report them, spec §3.2) and the evaluation in this machine's fleet session."""
     if collect(machines, out):
         raise FleetError("some runs could not be collected; see above")
     missing = unfinished()
@@ -991,7 +991,7 @@ def archive_script(machine, name, runs=None):
 
 def archive(machines, name, out=sys.stdout, runs=None):
     """Move every machine's earlier results to results/archive/NAME/ (run_notebooks.py --archive), so the next start
-    begins afresh everywhere; with `runs`, only those runs (spec §3.3)."""
+    begins afresh everywhere; with `runs`, only those runs (spec §3.2)."""
     problems = 0
     for machine in machines:
         code, answer, err = run_shell(machine, archive_script(machine, name, runs))

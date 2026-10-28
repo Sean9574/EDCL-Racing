@@ -4,7 +4,7 @@ from racing import config
 
 def keras_cpu():
     """Return the keras module after hiding GPUs from TensorFlow and setting its threads (config.KERAS_THREADS and
-    config.KERAS_INTER_THREADS, spec §3.3). Safe to call repeatedly."""
+    config.KERAS_INTER_THREADS, spec §3.2). Safe to call repeatedly."""
     import tensorflow as tf
     try:
         tf.config.set_visible_devices([], "GPU")

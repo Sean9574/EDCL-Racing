@@ -139,8 +139,8 @@ DISPLAY_SEEDS = range(1000, 1020)             # the race view's generated maps (
 DATASET_SEED_RANGE = (1_000_000, 2_000_000)   # the imitation dataset's maps are drawn once from this range
 DATASET_TRACKS = {1: 1, 2: 20, 3: 20}         # generated dataset maps per level; the real layouts join (spec §7.3)
 TRAIN_SEED_START = 2_000_000                  # evolutionary and DAgger maps are drawn from here on (spec §4.6)
-SEEDED_RUN = 0               # run 0 uses seed 0 and replays exactly; every other run sets no seed (spec §3.3)
-RUN_SEEDS = (0, 1, 2, 3)  # run 0 uses seed 0, runs 1-3 set no seed (spec §3.3, §11)
+SEEDED_RUN = 0               # run 0 uses seed 0 and replays exactly; every other run sets no seed (spec §3.2)
+RUN_SEEDS = (0, 1, 2, 3)  # run 0 uses seed 0, runs 1-3 set no seed (spec §3.2, §11)
 SEARCH_SEED = 0              # each Keras Tuner search runs once (spec §8.2)
 
 # --- Time trial, survival and levels (spec §9.2-9.4) ---
@@ -207,7 +207,7 @@ NEAT_STAGNATION = 20         # generations without improvement after which a spe
 
 # --- Parallelism ---
 def worker_count(environ=os.environ):
-    """Worker processes (spec §3.3): those of the numpy simulator, DAgger's driving, dataset collection and the final
+    """Worker processes (spec §3.2): those of the numpy simulator, DAgger's driving, dataset collection and the final
     evaluation. EC_RACING_JOBS, or 6 when it is not set. Each holds its own built maps, so their number is fixed."""
     value = environ.get("EC_RACING_JOBS", "").strip()
     if not value:
@@ -221,7 +221,7 @@ N_JOBS = worker_count()      # results do not depend on it (spec §9.10); record
 
 
 def thread_setting(environ=os.environ):
-    """EC_RACING_THREADS (spec §3.3): a fixed number of threads for the compiled simulator, or None when it is not set,
+    """EC_RACING_THREADS (spec §3.2): a fixed number of threads for the compiled simulator, or None when it is not set,
     for one thread per logical processor available to the process."""
     value = environ.get("EC_RACING_THREADS", "").strip()
     if not value:
@@ -235,7 +235,7 @@ THREADS = thread_setting()   # results do not depend on it (spec §9.10); record
 
 
 def thread_count():
-    """Threads of one call of the compiled simulator (spec §3.3, §5.7): THREADS when it is set, otherwise the logical
+    """Threads of one call of the compiled simulator (spec §3.2, §5.7): THREADS when it is set, otherwise the logical
     processors available to this process now, so runs that share a machine share its processors through the operating
     system, and a run alone uses them all."""
     return THREADS if THREADS is not None else len(os.sched_getaffinity(0))
@@ -257,7 +257,7 @@ def simulator_choice(environ=os.environ):
 
 SIMULATOR = simulator_choice()   # results do not depend on it (spec §5.7); recorded in results/run_info.json
 
-# A Keras job and the compiled runs beside it share the processors (spec §3.3). Measured on the development machine, one
+# A Keras job and the compiled runs beside it share the processors (spec §3.2). Measured on the development machine, one
 # training epoch of the baseline: alone 0.186 s with one TensorFlow thread per processor, 0.144 s with 4; beside three
 # compiled runs of 20 threads 1.13 s, and 0.48 s with 4 threads and the runs at the lowest priority.
 KERAS_THREADS = 4            # TensorFlow intra-op threads of every Keras job
@@ -293,7 +293,7 @@ APPROACHES = ("baseline", "kt_random", "kt_hyperband", "kt_bayesian", "es", "ga"
 TUNER_APPROACHES = ("kt_random", "kt_hyperband", "kt_bayesian")
 EVOLUTION_APPROACHES = ("ga", "es", "es_seeded", "neat")
 IMITATION_APPROACHES = ("baseline", *TUNER_APPROACHES)
-RUN_ORDER = tuple((a, s) for a in (*IMITATION_APPROACHES, *EVOLUTION_APPROACHES) for s in RUN_SEEDS)  # spec §3.3
+RUN_ORDER = tuple((a, s) for a in (*IMITATION_APPROACHES, *EVOLUTION_APPROACHES) for s in RUN_SEEDS)  # spec §3.2
 LABELS = {"baseline": "Baseline", "kt_random": "KT Random", "kt_hyperband": "KT Hyperband",
           "kt_bayesian": "KT Bayesian", "es": "ES", "ga": "GA", "es_seeded": "Seeded ES", "neat": "NEAT"}
 COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E9",
@@ -345,7 +345,7 @@ END_FILE = RESULTS_DIR / "end_runs"   # an end request (spec §9.4, version 3.13
                              # experiment ends before its next generation with its final pick; fleet.py end writes it
                              # on every machine and fleet.py start removes it
 STATUS_PATH = Path(os.environ.get("EC_RACING_STATUS") or RESULTS_DIR / "status.json")   # a job trained side by side
-                             # gets its own status file, also inside a notebook's kernel (spec §3.3)
+                             # gets its own status file, also inside a notebook's kernel (spec §3.2)
 STATUS_DIR = RESULTS_DIR / "status"          # one status file per run when runs train side by side (fleet)
 TRAIN_LOGS_DIR = RESULTS_DIR / "train_logs"  # what each run trained side by side prints itself
 STATUS_STALE_AFTER = 600.0   # s; the monitor marks an older status as not updated, as a stopped run leaves it

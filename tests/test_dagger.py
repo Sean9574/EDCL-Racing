@@ -218,7 +218,7 @@ def test_a_round_limit_ends_the_refinement_with_the_best_network(monkeypatch, to
 
 
 def test_run_0_refines_alike_twice_and_run_1_draws_its_own_maps_and_keras_seeds(monkeypatch, toy_data, tmp_path):
-    """spec §3.3, §12.1: two refinements of run 0 drive the same maps and seed Keras for round 1 with 0 * 1000 + 1;
+    """spec §3.2, §12.1: two refinements of run 0 drive the same maps and seed Keras for round 1 with 0 * 1000 + 1;
     two refinements of run 1 drive other maps and seed Keras with other numbers, since DAgger's generator and its
     training in every round start without a seed."""
     monkeypatch.setattr(config, "DAGGER_EPOCHS", 1)

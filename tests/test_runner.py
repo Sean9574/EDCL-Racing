@@ -515,7 +515,7 @@ def test_a_kernels_own_messages_stay_out_of_the_terminal(runner, tmp_path, capfd
     assert "native message from the kernel" in (tmp_path / "kernel_log.txt").read_text()
 
 
-# ----- jobs side by side (--runs, spec §3.3) -----
+# ----- jobs side by side (--runs, spec §3.2) -----
 
 def fake_jobs(tmp_path, seconds=0.3, fail=()):
     """A job_command stand-in: each job writes its start and end times and, for a run, a status; it makes the

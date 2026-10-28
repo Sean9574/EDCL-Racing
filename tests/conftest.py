@@ -86,7 +86,7 @@ def private_circuit_grids(tmp_path_factory):
 @pytest.fixture(autouse=True)
 def private_progress_files(tmp_path_factory, monkeypatch):
     """The status file, the run log and the end request of every test live in a temporary folder, never in results/
-    (spec §3.3, §9.4)."""
+    (spec §3.2, §9.4)."""
     from racing import config
     folder = tmp_path_factory.mktemp("progress")
     monkeypatch.setattr(config, "STATUS_PATH", folder / "status.json")
@@ -115,7 +115,7 @@ def numpy_simulator(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def normal_priority(monkeypatch):
-    """An evolution phase lowers its process's priority (spec §3.3); tests keep theirs, so the rest of the suite runs as
+    """An evolution phase lowers its process's priority (spec §3.2); tests keep theirs, so the rest of the suite runs as
     usual. tests/test_evolution.py checks the real function in a fresh process."""
     from racing import evolution
     monkeypatch.setattr(evolution, "lower_priority", lambda nice=None: None)

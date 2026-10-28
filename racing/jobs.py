@@ -1,4 +1,4 @@
-"""Jobs of the side-by-side runner (spec §3.3): the experiment's training runs, its Keras Tuner searches and its
+"""Jobs of the side-by-side runner (spec §3.2): the experiment's training runs, its Keras Tuner searches and its
 notebook 01. A job waits for the records of the steps that make its inputs, so every job can be listed at once and
 starts as soon as it can."""
 from dataclasses import dataclass
@@ -69,7 +69,7 @@ def _dataset(results):
 
 
 def needs(job, results_dir=None):
-    """The files that must exist before `job` starts (spec §3.3): the record of the step that makes its input first,
+    """The files that must exist before `job` starts (spec §3.2): the record of the step that makes its input first,
     then the data files that step writes before its record, so a server can be given them all. A search and a
     baseline run need the dataset; a run of a searched method also its search, whose chosen architecture it retrains;
     a seeded ES run its refined baseline."""

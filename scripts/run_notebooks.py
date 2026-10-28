@@ -1,4 +1,4 @@
-"""Runs the experiment notebooks in order and saves their outputs into the notebook files (spec §3.3).
+"""Runs the experiment notebooks in order and saves their outputs into the notebook files (spec §3.2).
 
 Run with:        python scripts/run_notebooks.py               (continues where an earlier run stopped)
 Start over:      python scripts/run_notebooks.py --fresh       (removes the earlier results first)
@@ -43,7 +43,7 @@ from racing import checkpoint, config, fastsim, jobs, paths, progress  # noqa: E
 
 NOTEBOOK_DIR = PROJECT / "notebooks"
 KERNEL = "ec-racing"
-KERNEL_ENV = {"CUDA_VISIBLE_DEVICES": "-1",      # CPU only (spec §3.3): TensorFlow does not look for a GPU,
+KERNEL_ENV = {"CUDA_VISIBLE_DEVICES": "-1",      # CPU only (spec §3.2): TensorFlow does not look for a GPU,
               "TF_CPP_MIN_LOG_LEVEL": "3"}      # and its C++ log stays out of the progress display
 KERNEL_LOG = "kernel_log.txt"                         # next to the run log: what the notebook kernels print themselves
 FRESH_REMOVE = ("runs", "champions", "tables", "figures", "dataset.npz", "dataset_info.json", "status.json",
@@ -64,7 +64,7 @@ def now():
 
 
 def log(message, path):
-    """A milestone of the run, appended to the run log; the progress monitor prints it (spec §3.3)."""
+    """A milestone of the run, appended to the run log; the progress monitor prints it (spec §3.2)."""
     progress.milestone(message, path)
 
 
@@ -230,7 +230,7 @@ def finishes_from_checkpoint(path):
 
 
 def check_results(runs_dir):
-    """(settings problems, unreadable files) of the run records and checkpoints under runs_dir (spec §3.3),
+    """(settings problems, unreadable files) of the run records and checkpoints under runs_dir (spec §3.2),
     so the run stops here rather than inside a notebook. A record whose settings differ, or that has none (such as
     one of revision 2.0, which checkpoint.completed refuses), is a settings problem, one message each. A file that
     cannot be read, such as one cut short by a reboot, is listed by its path; a record whose run finishes again from
@@ -395,7 +395,7 @@ def stop_processes(processes, grace=STOP_GRACE):
 
 def archive_results(results_dir, name):
     """--archive NAME: move what --fresh would delete to results/archive/NAME/, so the next start begins afresh
-    (spec §3.3). Pilots, viewer runs and earlier archives stay. Refuses an existing archive."""
+    (spec §3.2). Pilots, viewer runs and earlier archives stay. Refuses an existing archive."""
     target = Path(results_dir) / "archive" / name
     if target.exists():
         raise FileExistsError(f"{target} already exists; choose another archive name")
@@ -409,7 +409,7 @@ def archive_results(results_dir, name):
 
 def archive_runs(results_dir, name, job_list):
     """--archive NAME --runs ...: move the named runs to results/archive/NAME/ under the same paths: each run's folder,
-    final controller files, status file and output log (spec §3.3). Every other result stays. Refuses an existing
+    final controller files, status file and output log (spec §3.2). Every other result stays. Refuses an existing
     archive when there is something to move; when none of the runs is here, nothing happens. Returns (the archive
     folder, the paths moved there)."""
     results_dir = Path(results_dir)
@@ -459,7 +459,7 @@ def run_side_by_side(job_list, at_once, log_path=config.RUN_LOG_PATH, info_path=
                      status_dir=config.STATUS_DIR, logs_dir=config.TRAIN_LOGS_DIR, monitor=True, out=None,
                      command=job_command, results_dir=None):
     """Run the jobs `job_list` (racing/jobs.py) side by side, at most `at_once` at a time, each in its own process
-    with its own status file and output log, while the monitor shows one line per job (spec §3.3). A job
+    with its own status file and output log, while the monitor shows one line per job (spec §3.2). A job
     starts, in the order of the list, as soon as a slot is free and its inputs exist; a waiting job holds no slot. A
     job that fails is reported, and so are the jobs left waiting for what it would have made; the others go on. A
     finished run is never trained again; an interrupted one continues from its checkpoint. Returns 0, 1 if a job

@@ -208,7 +208,7 @@ def test_a_resumed_run_matches_an_uninterrupted_one(evaluation, tmp_path):
     with pytest.raises(Interrupt):
         evolution.run(ga.GA(pop_size=20), 0, tmp_path / "split", champion_dir=None, max_generations=5,
                       on_generation=interrupt_at(3))
-    # generation 3 was logged, but the run stopped before its checkpoint (spec §3.3)
+    # generation 3 was logged, but the run stopped before its checkpoint (spec §3.2)
     assert list(pd.read_csv(tmp_path / "split" / "log.csv")["generation"]) == [0, 1, 2, 3]
     summary = evolution.run(ga.GA(pop_size=20), 0, tmp_path / "split", champion_dir=None, max_generations=5)
     whole, split = comparable(tmp_path / "whole" / "log.csv"), comparable(tmp_path / "split" / "log.csv")
@@ -504,7 +504,7 @@ waiting.set()
 
 def test_an_evolution_phase_lowers_the_priority_of_every_thread_and_never_raises_it():
     """Linux keeps a priority per thread; every thread of the process is lowered, and later ones inherit it
-    (spec §3.3). Run in a fresh process, so the test process keeps its priority."""
+    (spec §3.2). Run in a fresh process, so the test process keeps its priority."""
     env = {**os.environ, "PYTHONPATH": str(config.PROJECT_DIR)}
     out = subprocess.run([sys.executable, "-c", LOWER_IN_A_FRESH_PROCESS], capture_output=True, text=True, check=True,
                          env=env, cwd=config.PROJECT_DIR).stdout.split()

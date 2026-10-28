@@ -112,7 +112,7 @@ source, the compiler flags and the processor, so a `git pull` that changes `fast
 the library loads, it is checked against numpy on this machine (math functions and network outputs). Without g++, or
 if the check finds a difference, a run prints one warning and uses the numpy simulator, with the same results.
 `EC_RACING_SIM=numpy` forces numpy. The compiled simulator uses every logical processor available to the run;
-runs side by side share them through the operating system at no cost (specification §3.3). `EC_RACING_THREADS=8`
+runs side by side share them through the operating system at no cost (specification §3.2). `EC_RACING_THREADS=8`
 fixes the number, to keep processors free for other work.
 
 6. **Keep Windows awake and without restarts.** WSL pauses while Windows sleeps. Set Settings → System → Power →
@@ -260,7 +260,7 @@ through each run's map building and Keras phases, and several machines can share
 independent: run 0's results depend only on its seed and the settings, so where it trains changes only its training
 time, while runs 1 to 3 also depend on chance. Keras jobs come first: they train with 4 TensorFlow threads, and an
 evolution phase runs at the lowest priority (nice 19), using whatever processors the searches and DAgger refinements
-leave (specification §3.3).
+leave (specification §3.2).
 
 **Side by side on one machine:**
 `python scripts/run_notebooks.py --runs nb:01,search:kt_random,baseline:0,ga:1 --at-once 8` runs these jobs: runs of

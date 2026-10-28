@@ -85,7 +85,7 @@ def test_load_dataset_refuses_a_dataset_collected_with_other_settings(tmp_path, 
 
 def test_train_baseline_learns_reports_and_saves_its_stage(toy_data, tmp_path):
     """Run 0, the seeded run, so the check is the same every time: runs 1-3 start from the operating system's
-    randomness (spec §3.3), and one start in about three left run 2 below 0.2 after five epochs."""
+    randomness (spec §3.2), and one start in about three left run 2 below 0.2 after five epochs."""
     seen = []
     summary = imitation.train_baseline(toy_data, out_dir=tmp_path / "run",
                                        on_epoch=lambda epoch, model, acc: seen.append((epoch, acc)), epochs=5,
@@ -340,7 +340,7 @@ def _steps(out, search, *steps):
 @pytest.mark.slow
 def test_a_search_and_a_retraining_in_fresh_processes_equal_notebook_order(tmp_path):
     """Every step sets its random seed when it starts, so a network trained in a job of its own equals the network
-    notebook 02 trains in order, after other networks, in one process (spec §3.3, §12.1)."""
+    notebook 02 trains in order, after other networks, in one process (spec §3.2, §12.1)."""
     from racing.backend import keras_cpu
     _steps(tmp_path / "order", tmp_path / "order" / "search", "baseline", "search", "retrain")
     _steps(tmp_path / "jobs", tmp_path / "jobs" / "search", "search")
@@ -356,7 +356,7 @@ def test_a_search_and_a_retraining_in_fresh_processes_equal_notebook_order(tmp_p
 
 
 def test_every_keras_job_trains_with_the_configured_tensorflow_threads():
-    """A tiny network trains fastest on few threads, and few threads stall least beside compiled runs (spec §3.3)."""
+    """A tiny network trains fastest on few threads, and few threads stall least beside compiled runs (spec §3.2)."""
     code = ("from racing.backend import keras_cpu; keras_cpu(); import tensorflow as tf; "
             "print(tf.config.threading.get_intra_op_parallelism_threads(), "
             "tf.config.threading.get_inter_op_parallelism_threads())")

@@ -144,7 +144,7 @@ def collect_dataset(path=None, splits=None, n_jobs=1, backend="loky", resume=Tru
     across worker processes; each has its own random number generator, so the rows do not depend on n_jobs.
     Returns the arrays and a summary per split (tracks, rows, respawns after crashes) and records the collection
     time, the maps and the settings in <stem>_info.json next to the dataset. With resume, a complete dataset of the
-    same maps recorded with the current settings is loaded instead of collected again (spec §3.3)."""
+    same maps recorded with the current settings is loaded instead of collected again (spec §3.2)."""
     path = Path(config.DATASET_PATH if path is None else path)
     splits = default_splits() if splits is None else splits
     items = {name: [[int(seed), int(level)] for seed, level in entries] for name, entries in splits.items()}

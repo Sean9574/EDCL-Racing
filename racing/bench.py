@@ -6,7 +6,7 @@ Run with:  python -m racing.bench              (both)
            python -m racing.bench generation   (generation time only)
            python -m racing.bench keras        (Keras only; needs results/dataset.npz)
 Run on an otherwise idle machine.
-Training uses every available processor for the compiled simulator (spec §3.3); the worker count is chosen here for
+Training uses every available processor for the compiled simulator (spec §3.2); the worker count is chosen here for
 numpy.
 """
 import os
@@ -19,7 +19,7 @@ from racing import checkpoint, config, expert, fastsim, nets, population, sim
 from racing.tracks import get_track
 
 SEEDS = (0, 1, 2)            # three real training layouts at Extra hard, the level training spends longest on
-JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (spec §3.3)
+JOB_COUNTS = (1, 4, 6, 8, 12, 16, 20, 24)      # up to a 24-thread desktop (spec §3.2)
 KERAS_STEPS = (1, 4, 16, 64)
 BACKEND = "loky"
 EXPERT_WORKLOAD = "expert cars (no trained population found; lighter than training)"
@@ -173,7 +173,7 @@ def generation_main():
     if compiled:
         print(f"Fastest: {best} {unit}. Training uses every logical processor available to it "
               f"({len(os.sched_getaffinity(0))} here) unless EC_RACING_THREADS sets a number; runs side by side share "
-              f"them (spec §3.3).")
+              f"them (spec §3.2).")
     else:
         print(f"Fastest: {best} {unit} (current setting {config.N_JOBS}). Select it with:")
         print(f"  export EC_RACING_JOBS={best}")

@@ -18,9 +18,12 @@ h3 { font-size: 11.5pt; margin: 14pt 0 4pt; }
 p, li { orphans: 3; widows: 3; }
 code { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.8pt; background: #f2f4f7; padding: 0 2px; }
 pre { background: #f6f7f9; border: 1px solid #e1e5ea; padding: 8pt; font-size: 8.3pt; line-height: 1.3;
-      overflow-wrap: anywhere; white-space: pre-wrap; page-break-inside: avoid; }
+      overflow-wrap: anywhere; white-space: pre-wrap; }
 pre code { background: none; padding: 0; }
-table { border-collapse: collapse; margin: 6pt 0 10pt; font-size: 9pt; page-break-inside: avoid; }
+table { border-collapse: collapse; margin: 6pt 0 10pt; font-size: 9pt; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
 th, td { border: 1px solid #c9ced8; padding: 3pt 6pt; vertical-align: top; text-align: left; }
 th { background: #eef1f5; }
 em { color: #3c4556; }

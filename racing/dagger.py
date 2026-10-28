@@ -70,7 +70,7 @@ def check(driver, seeds, factor=config.TARGET_FACTOR, level=config.MAX_LEVEL, n_
 
 
 def _rng_seed(approach, seed):
-    """Every method and run draws its own maps; an unseeded run's generator ignores this (spec §3.3)."""
+    """Every method and run draws its own maps; an unseeded run's generator ignores this (spec §3.2)."""
     return [seed, config.IMITATION_APPROACHES.index(approach), config.DAGGER_SALT]
 
 
@@ -115,7 +115,7 @@ def _load_rows(path, count):
 
 def _save_rows(path, x, y):
     """Save the correction rows through a temporary file that is synced to disk before it replaces the old rows, so
-    the rows the next checkpoint records survive a reboot (spec §3.3)."""
+    the rows the next checkpoint records survive a reboot (spec §3.2)."""
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(temporary, "wb") as f:
         np.savez(f, X=x, y=y)
@@ -235,7 +235,7 @@ def speed_push(approach, seed, runs_dir=None, champion_dir=config.CHAMPIONS_DIR,
 
 
 def run(approach, seed, data, runs_dir=None, champion_dir=config.CHAMPIONS_DIR, n_jobs=1):
-    """Refinement, then speed push: one counted run of spec §3.3."""
+    """Refinement, then speed push: one counted run of spec §3.2."""
     refined = refine(approach, seed, data, runs_dir=runs_dir, n_jobs=n_jobs)
     pushed = speed_push(approach, seed, runs_dir=runs_dir, champion_dir=champion_dir, n_jobs=n_jobs)
     return {"approach": approach, "seed": seed, "dagger": refined, "speed": pushed}

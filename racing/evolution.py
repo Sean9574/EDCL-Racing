@@ -1,4 +1,4 @@
-"""Shared run loop of every evolutionary method (spec §3.3, §9.1-9.5). A method object holds the population
+"""Shared run loop of every evolutionary method (spec §3.2, §9.1-9.5). A method object holds the population
 and makes the children (racing/ga.py, racing/es.py, racing/neat.py); this loop drives fresh maps as time trials,
 applies the survival rule, follows the mastery levels and the speed push, logs every generation, saves a checkpoint
 after each one, reports progress and selects the final controller."""
@@ -121,7 +121,7 @@ def append_log(path, report, fields=LOG_FIELDS):
     with open(path, "a", newline="") as f:
         csv.writer(f).writerow(row)
         f.flush()
-        os.fsync(f.fileno())           # on disk before the generation's checkpoint, which covers it (spec §3.3)
+        os.fsync(f.fileno())           # on disk before the generation's checkpoint, which covers it (spec §3.2)
 
 
 def complete_row(row, header, generation):
@@ -133,7 +133,7 @@ def complete_row(row, header, generation):
 def truncate_log(path, generation, fields=LOG_FIELDS):
     """Keep the header and the whole rows of the generations before `generation`. A row written after the last
     checkpoint belongs to a generation that runs again when the run resumes, and a damaged row is dropped
-    (spec §3.3). A missing log is started with the columns `fields`."""
+    (spec §3.2). A missing log is started with the columns `fields`."""
     path = Path(path)
     if not path.exists():
         start_log(path, fields)
@@ -183,7 +183,7 @@ def hardening_text(method, seed, generation, tracker):
 
 
 def lower_priority(nice=config.EVOLUTION_NICE):
-    """Lower the priority of every thread of this process to `nice` (spec §3.3); Linux keeps one per thread, and
+    """Lower the priority of every thread of this process to `nice` (spec §3.2); Linux keeps one per thread, and
     numpy's math library starts its threads at import. The compiled simulator's threads and the worker processes
     started afterwards inherit it, so an evolution phase leaves the processors to the Keras jobs that share the machine
     and uses whatever they leave. Raising a priority needs privileges, so it is only ever lowered."""
@@ -213,7 +213,7 @@ def run(method, seed, out_dir, champion_dir=config.CHAMPIONS_DIR, n_jobs=1, on_g
     if done is not None and not (reporting and checkpoint.ended_before_hardening(done)
                                  and (out_dir / checkpoint.CHECKPOINT_NAME).exists()):
         return done
-    lower_priority()                                   # Keras jobs beside it come first (spec §3.3)
+    lower_priority()                                   # Keras jobs beside it come first (spec §3.2)
     population.fresh_workers(n_jobs)                   # every run builds its own tracks (spec §9.1)
     began = time.time()
     out_dir.mkdir(parents=True, exist_ok=True)

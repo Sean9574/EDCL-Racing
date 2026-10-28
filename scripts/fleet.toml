@@ -1,10 +1,10 @@
-# Which machine runs which jobs, for scripts/fleet.py (spec §3.3). A job is a run, approach:seed, or one of
+# Which machine runs which jobs, for scripts/fleet.py (spec §3.2). A job is a run, approach:seed, or one of
 # notebook nb:01 (dataset) and the Keras Tuner searches search:kt_random, search:kt_hyperband and search:kt_bayesian;
 # each belongs to one machine. A job starts as soon as a slot is free and its inputs exist, in the order listed, so
 # the longest runs come first.
 # The machine without a host is the one fleet.py runs on (the desktop); servers are reached from it with `ssh`.
 #   at_once: jobs run side by side. Compiled runs share the processors through their threads and Keras jobs come
-#   first (spec §3.3), so at_once only protects memory. Peaks measured on the desktop on 19 October 2026: a GA or NEAT
+#   first (spec §3.2), so at_once only protects memory. Peaks measured on the desktop on 19 October 2026: a GA or NEAT
 #   run 0.3 GB, a Keras Tuner search 1.0 GB, an imitation run with DAgger's 6 workers 2.0 GB. Every job of a machine
 #   fits at once: the desktop's 24 at most about 38 GB of 54 (16 imitation runs x 2.0 GB), the server's 12 about 4 GB
 #   of 245.
@@ -27,7 +27,7 @@
 #   GA runs 0/1 32/28, NEAT 30/37, ES 12/9: 148 in all for two runs, so 296 for four;
 #   speed pushes about 137 (KT Hyperband's larger network about 25 each), seeded ES 21, DAgger's driving about 36,
 #   for two runs, 194 with the dataset and the searches; twice that for four.
-# Four runs per method (spec §3.3) double the work. The server takes every GA, ES and NEAT run (296 / 0.85, about
+# Four runs per method (spec §3.2) double the work. The server takes every GA, ES and NEAT run (296 / 0.85, about
 # 5.8 h); the desktop the dataset, the searches, the imitation runs and the seeded ES (about 388, about 6.5 h). A server
 # may run only GA, ES, NEAT and seeded ES runs.
 # The speed-push patience going from 300 to 600 generations (spec §9.4) adds at least 300 generations to every run: in

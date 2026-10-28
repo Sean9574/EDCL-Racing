@@ -1,4 +1,4 @@
-"""Checkpoints of long runs and the record of the settings a run was made with (spec §3.3). A run saves its
+"""Checkpoints of long runs and the record of the settings a run was made with (spec §3.2). A run saves its
 state after every generation or round and continues from it after an interruption; a run made with other settings
 is never resumed and its results are never reused."""
 import json
@@ -45,7 +45,7 @@ SETTINGS_KEYS = (
     "HYPERBAND_ITERATIONS", "SIZE_RULE_TOLERANCE", "STEPS_PER_EXECUTION", "JIT_COMPILE",
 )
 
-# Settings that affect only one method's results (spec §3.3): recorded and checked only in that method's runs, so the
+# Settings that affect only one method's results (spec §3.2): recorded and checked only in that method's runs, so the
 # runs of the other methods made before such a setting existed stay valid. NEAT's settings were shared until version
 # 3.11: a record made before version 3.12 still lists them, and check_settings ignores them in another method's run.
 METHOD_SETTINGS_KEYS = {
@@ -57,7 +57,7 @@ METHOD_SETTINGS_KEYS = {
 }
 
 
-# Settings used only when a run picks its final controller (spec §3.3, §9.5, version 3.15): recorded with every run but
+# Settings used only when a run picks its final controller (spec §3.2, §9.5, version 3.15): recorded with every run but
 # never compared, so a stricter final pick refuses no checkpoint and redoes no stored result.
 END_SETTINGS_KEYS = ("FINAL_MIN_SUCCESSES",)
 
@@ -109,7 +109,7 @@ def processor():
 def machine_record():
     """The machine a run finished on: runs of one experiment may be trained on several machines (scripts/fleet.py),
     so each run's summary says where, with which thread setting of the compiled simulator and how many worker
-    processes (n_jobs), and which simulator ran its time trials (spec §3.3, §5.7)."""
+    processes (n_jobs), and which simulator ran its time trials (spec §3.2, §5.7)."""
     return {"host": platform.node() or "unknown", "processor": processor(), "logical_processors": os.cpu_count(),
             "threads": config.thread_label(), "n_jobs": config.N_JOBS, "simulator": fastsim.description()}
 
@@ -149,7 +149,7 @@ def save(path, state):
 
 def write_json(path, data):
     """Write `data` as JSON through a temporary file in the same folder that is synced to disk before it replaces
-    `path`, so neither an interruption nor a reboot leaves a partial or empty record (spec §3.3). Everything
+    `path`, so neither an interruption nor a reboot leaves a partial or empty record (spec §3.2). Everything
     written before the record, such as the final controller or stage file it vouches for, reaches the disk first."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +192,7 @@ def read_record(path):
 def ended_before_hardening(summary):
     """Whether `summary` records a run of the experiment that ended under version 3.14 or earlier, at its speed limit
     or by an end request: it has no hardening record. With its checkpoint beside it, such a run is not finished; it
-    resumes into hardening (spec §3.3, §9.4, version 3.15)."""
+    resumes into hardening (spec §3.2, §9.4, version 3.15)."""
     return "hardening" not in summary and summary.get("outcome") in ("speed_limit", "time_limit")
 
 
