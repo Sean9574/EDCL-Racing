@@ -318,7 +318,7 @@ def test_head_to_head_leaves_out_a_method_without_a_best_run():
 
 
 def test_a_hardened_run_ends_hardened_in_the_training_cost_table():
-    """Spec §11.3, Table 3 (version 3.15)."""
+    """Spec §11.3, the training-cost table (version 3.15)."""
     assert evaluate.end_cell({"outcome": "hardened", "generations": 2140}) == "hardened · gen 2,140"
     ended = {"outcome": "time_limit", "generations": 2140, "hardening": {"factor": 1.25, "from_generation": 1795}}
     assert evaluate.end_cell(ended) == "ended by time · gen 2,140"

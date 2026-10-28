@@ -1,7 +1,7 @@
 """The car's quasi-steady-state physics on a fixed path (spec §4.8): at every point the highest speed with
 v²|κ| ≤ share × a(v), at most the top speed, then the speed changes that the grip left after cornering,
 √((share a(v))² − (v²κ)²), allows forwards (acceleration) and backwards (braking). Smooth, continuous control is
-assumed, so a lap is a bound the simulator's controllers approach. Used for the ideal laps of Table 0, the check of
+assumed, so a lap is a bound the simulator's controllers approach. Used for the ideal laps of Table 3, the check of
 the racing line and, from version 3.10, the expert's target speeds (spec §7.1)."""
 import numpy as np
 from scipy.interpolate import CubicSpline

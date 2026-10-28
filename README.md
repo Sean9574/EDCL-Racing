@@ -419,7 +419,7 @@ rule of the levels; no stall boost, no 1,000-generation limit), and the final co
 finishes all 20 validation maps (`FINAL_MIN_SUCCESSES` 20, 18 to version 3.14). The setting is recorded but no longer
 compared, so every checkpoint stays valid: a run that ended under version 3.14 resumes into hardening, keeping its old
 summary as `summary_before_hardening.json`; a run still on a level continues its levels, and mastering Extra hard ends
-its hardening. An end request ends hardening too. Table 3 shows "hardened · gen N". On the desktop, keep the version
+its hardening. An end request ends hardening too. The training-cost table shows "hardened · gen N". On the desktop, keep the version
 3.14 results first: move its copies of the server's runs, then copy the rest (the checkpoints stay in place):
 
 ```bash

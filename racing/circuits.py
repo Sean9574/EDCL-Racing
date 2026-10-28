@@ -49,7 +49,7 @@ class PoleLap:
     source: str
 
 
-POLE_LAPS = {                # spec §11.1, Table 5 (version 3.14): the fastest pole lap on the database's layout
+POLE_LAPS = {                # spec §11.1, Table 9: the fastest pole lap on the database's layout
     "Melbourne": PoleLap(80.486, "Lewis Hamilton", 2019, "Formula1.com qualifying report"),
     "Sakhir": PoleLap(87.264, "Lewis Hamilton", 2020, "Formula1.com qualifying results"),
     "Sepang": PoleLap(90.076, "Lewis Hamilton", 2017, "FIA pole position document"),
@@ -100,7 +100,7 @@ def rotation(points):
 
 
 def complexity(points, step=2.0):
-    """The complexity measures of Table 1e (spec §4.7) of a closed outline: its length in km, its corners (stretches
+    """The complexity measures of Table 2 (spec §4.7) of a closed outline: its length in km, its corners (stretches
     whose radius, smoothed over 20 m, stays below 300 m and that turn by more than 20°), corners per km and degrees
     of turning per km."""
     closed = np.vstack([points, points[:1]])

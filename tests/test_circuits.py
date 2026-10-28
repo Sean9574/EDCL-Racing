@@ -32,7 +32,7 @@ def test_training_holds_the_other_formula_1_circuits_and_the_complex_others():
 
 
 def test_the_others_in_training_are_at_least_as_complex_as_monza():
-    """Spec §4.7, Table 1e: at least 8 corners, 1.38 corners per km and 172° of turning per km, Monza's values."""
+    """Spec §4.7, Table 2: at least 8 corners, 1.38 corners per km and 172° of turning per km, Monza's values."""
     raw = {name: np.column_stack(circuits.read(name)[:2]) for name in ("Monza",) + config.OTHER_CIRCUITS}
     monza = circuits.complexity(raw["Monza"])
     assert monza["corners"] == 8 and round(monza["corners_per_km"], 2) == 1.38 and round(monza["turning_per_km"]) == 172
@@ -82,7 +82,7 @@ def test_layouts_are_every_training_circuit_both_ways():
 
 
 def test_the_pole_laps_of_the_test_circuits():
-    """Spec §11.1, Table 5 (version 3.14): the fastest pole lap on the database's layout of each circuit."""
+    """Spec §11.1, Table 9: the fastest pole lap on the database's layout of each circuit."""
     assert {c: (lap.seconds, lap.driver, lap.season) for c, lap in circuits.POLE_LAPS.items()} == {
         "Melbourne": (80.486, "Lewis Hamilton", 2019), "Sakhir": (87.264, "Lewis Hamilton", 2020),
         "Sepang": (90.076, "Lewis Hamilton", 2017), "Silverstone": (84.303, "Lewis Hamilton", 2020)}

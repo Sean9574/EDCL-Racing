@@ -78,7 +78,7 @@ F1_CIRCUITS = ("Austin", "Budapest", "Catalunya", "Hockenheim", "Melbourne", "Me
 OTHER_CIRCUITS = ("BrandsHatch", "IMS", "MoscowRaceway", "Norisring", "Nuerburgring", "Oschersleben", "Zandvoort")
 TEST_CIRCUITS = ("Melbourne", "Sakhir", "Sepang", "Silverstone")   # default_rng(0).choice(sorted F1, 4), sorted
 TRAINING_CIRCUITS = (tuple(c for c in F1_CIRCUITS if c not in TEST_CIRCUITS)
-                     + ("BrandsHatch", "MoscowRaceway", "Nuerburgring", "Oschersleben", "Zandvoort"))   # Table 1e
+                     + ("BrandsHatch", "MoscowRaceway", "Nuerburgring", "Oschersleben", "Zandvoort"))   # Table 2
 TEST_TRACKS = tuple(range(len(TEST_CIRCUITS)))   # get_track(k, TEST_LEVEL) is TEST_CIRCUITS[k]
 CIRCUIT_DATA = hashlib.sha256(b"".join(path.read_bytes() for path in sorted(
     (PROJECT_DIR / "data" / "racetracks" / "tracks").glob("*.csv")))).hexdigest()   # the vendored data's identity

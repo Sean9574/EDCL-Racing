@@ -69,7 +69,7 @@ def build_baseline():
 
 
 def build_hypermodel(hp):
-    """Search space of spec Table 2."""
+    """Search space of spec Table 5."""
     activation = hp.Choice("activation", ["relu", "tanh"])
     dropout = hp.Choice("dropout", [0.0, 0.1, 0.2])
     units = [hp.Choice(f"units_{i}", [4, 8, 16, 32, 64]) for i in range(hp.Int("layers", 1, 3))]
