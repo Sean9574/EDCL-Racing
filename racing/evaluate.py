@@ -105,7 +105,7 @@ def robustness_results(drivers, track_seeds, widths=config.ROBUSTNESS_WIDTHS, le
 
 
 def robustness_table(frame, widths=config.ROBUSTNESS_WIDTHS):
-    """Spec §11.3 table 7: per method and width, the maps finished (in total and per run) and succeeded, and the mean
+    """Spec §11.3 table 8: per method and width, the maps finished (in total and per run) and succeeded, and the mean
     lap time on finished maps; each width's first column names how many maps it covers."""
     rows = []
     for approach in config.APPROACHES:
@@ -509,7 +509,7 @@ def end_cell(summary):
 
 
 def training_cost_table(runs_dir):
-    """Spec §11.3 table 3, one row per method and run: when each level was cleared and the mastery goal
+    """Spec §11.3 table 4, one row per method and run: when each level was cleared and the mastery goal
     reached, how the run ended, evaluations, and the time of each training stage. Runs without any record are left
     out; missing records show '–' and goals never reached show 'not reached'. Stalls broken is the count for the
     run, '–' for a run without a log or a boost column."""
@@ -571,7 +571,7 @@ def stage_results(runs_dir, per_track, test_seeds=config.TEST_TRACKS, n_jobs=1):
 
 
 def stages_table(results):
-    """Spec §11.3 table 4: the imitation methods' test results after each stage, per run and their mean."""
+    """Spec §11.3 table 5: the imitation methods' test results after each stage, per run and their mean."""
     rows = []
     for approach in config.IMITATION_APPROACHES:
         for stage, name in STAGES:
@@ -589,7 +589,7 @@ def stages_table(results):
 
 
 def comparison_table(metrics):
-    """The course comparison (spec §11.3 table 5), measured as in spec §11.2: per run and their mean, except the
+    """The course comparison (spec §11.3 table 6), measured as in spec §11.2: per run and their mean, except the
     search time, which a Keras Tuner method spends once for all runs (spec §8.2)."""
     rows = []
     for approach in config.APPROACHES:
@@ -608,7 +608,7 @@ def comparison_table(metrics):
 
 
 def search_cost_table(runs_dir):
-    """Spec §11.3 table 6, search cost of each Keras Tuner method."""
+    """Spec §11.3 table 7, search cost of each Keras Tuner method."""
     rows = []
     for approach in config.TUNER_APPROACHES:
         summary = read_json(paths.search_dir(approach, runs_dir) / "summary.json")
@@ -808,7 +808,7 @@ def _setup_figure(plt, logs):
 
 
 def network_text(driver):
-    """A final controller's structure (spec §11.3, table 8): a dense network's layer sizes, such as 18 → 9 → 45;
+    """A final controller's structure (spec §11.3, table 9): a dense network's layer sizes, such as 18 → 9 → 45;
     a NEAT genome's hidden nodes and enabled connections."""
     from racing import neat
     if isinstance(driver, neat.NeatNet):
@@ -819,7 +819,7 @@ def network_text(driver):
 
 
 def evolved_networks_table(drivers):
-    """Spec §11.3, table 8: per GA and NEAT run, the final controller's structure and parameters (§11.2)."""
+    """Spec §11.3, table 9: per GA and NEAT run, the final controller's structure and parameters (§11.2)."""
     rows = [{"Method": config.LABELS[approach], "Run": seed, "Structure": network_text(drivers[(approach, seed)]),
              "Parameters": drivers[(approach, seed)].n_params}
             for approach in ("ga", "neat") for a, seed in sorted(drivers) if a == approach]

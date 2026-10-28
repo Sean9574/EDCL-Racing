@@ -408,8 +408,8 @@ python scripts/run_notebooks.py --from 08
 
 **Version 3.16** brings the specification up to date with the viewer (the leader's speed in mph, the pole-lap car and
 the live network window with its training timeline) and repairs the head-to-head table: it now compares each
-method's best run on the test circuits they all finished, because one run that finished none (ES run 0 of version
-3.14) left the old table without lap times. Nothing trains again; the table gets its lap times at the next
+method's best run on the test circuits they all finished, because runs that finished none (ES run 0 and Baseline
+run 3 of version 3.14) left the old table without lap times. Nothing trains again; the table gets its lap times at the next
 evaluation.
 
 **Version 3.15** adds hardening and a stricter final pick. In the version 3.14 results the final controllers finished
