@@ -65,6 +65,10 @@ def test_race_frame_sends_rays_of_every_live_car_and_training_only_the_focus(win
     live = [str(i) for i, done in enumerate(frame["done"]) if not done]
     assert frame["mode"] == "race" and sorted(frame["rays"]) == sorted(live) and len(live) == 3
     assert frame["action"] in nets_labels() and frame["ghost"] is not None and len(frame["ghost"]) == 3
+    window.race.cars.crashed[1] = True
+    flags = frame_state(window)
+    assert len(flags["crashed"]) == len(flags["done"]) == len(flags["x"])
+    assert flags["crashed"] == [0, 1, 0]
     window.command("follow", 2)
     assert frame_state(window)["focus"] == 2
     json.dumps(frame)

@@ -77,7 +77,7 @@ def frame_state(app):
     action = int(playback.actions[focus]) if len(cars.x) else -1
     frame.update(t=round(float(playback.elapsed), 2), x=_round(cars.x, 2), y=_round(cars.y, 2),
                  v=_round(cars.speed, 2), h=_round(cars.heading, 3), done=cars.done.astype(int).tolist(),
-                 crashed=np.flatnonzero(cars.crashed).tolist(), focus=focus, rays=_rays(app, playback, focus),
+                 crashed=cars.crashed.astype(int).tolist(), focus=focus, rays=_rays(app, playback, focus),
                  action=netfig.output_labels()[action] if action >= 0 else "")
     if app.mode == "race" and app.ghost is not None:
         g = app.ghost.state(playback.elapsed)
