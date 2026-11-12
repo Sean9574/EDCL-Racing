@@ -20,6 +20,9 @@
   const FOLLOW_GLIDE = 0.8;                  // s the camera takes to glide to a newly followed car
   const MINI_PAD = 40;                       // m around the track in the mini-map
   const MINI_MAX_HEIGHT = 240;               // px
+  const FIT_MARGIN = 20;                     // px between the track and the free area in the Whole map
+  const FIT_CENTRAL = 1.15;                  // the preference for the free area above the bottom-left card
+  const OVERLAYS = {top: "topbar", left: "panel", low: ["progress", "hint"]};     // the cards over the scene
 
   const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -122,6 +125,12 @@
     };
     new ResizeObserver(resize).observe(host);
     resize();
+    const moved = new ResizeObserver(() => { freeArea.dirty = true; });       // a card shown, hidden or resized
+    for (const id of [OVERLAYS.top, OVERLAYS.left, ...OVERLAYS.low]) {
+      const node = document.getElementById(id);
+      if (node) moved.observe(node);
+    }
+    moved.observe(host);
     setCamera(ECR.view.camera, true);
     api.ok = true;
     return true;
@@ -434,6 +443,47 @@
             h: from.h + angDiff(target.h, from.h) * k};
   }
 
+  /* The parts of the view the cards leave free, as candidate rectangles (px from the canvas's top left): below the
+     top bar and right of the left panel, either right of the bottom-left card as well (full height) or above it.
+     The area above the card keeps the track in the middle of the view, so it wins unless the track fits more than
+     FIT_CENTRAL times larger beside the card. Recomputed only after a card changes size or shows or hides. */
+  function freeArea() {
+    if (!freeArea.dirty && freeArea.list) return freeArea.list;
+    const W = host.clientWidth, H = host.clientHeight, base = host.getBoundingClientRect();
+    const box = id => {
+      const node = document.getElementById(id);
+      if (!node || node.hidden) return null;
+      const r = node.getBoundingClientRect();
+      return r.width && r.height ? {l: r.left - base.left, t: r.top - base.top, r: r.right - base.left,
+                                    b: r.bottom - base.top} : null;
+    };
+    const bar = box(OVERLAYS.top), panel = box(OVERLAYS.left), low = OVERLAYS.low.map(box).filter(Boolean);
+    const top = bar ? bar.b : 0, left = panel ? panel.r : 0;
+    const list = [{l: Math.max(left, ...low.map(r => r.r)), t: top, r: W, b: H, bias: 1}];
+    if (low.length) list.push({l: left, t: top, r: W, b: Math.min(...low.map(r => r.t)), bias: FIT_CENTRAL});
+    freeArea.list = list;
+    freeArea.dirty = false;
+    return list;
+  }
+  freeArea.dirty = true;
+
+  /* The Whole map camera: the track's bounding box as large as it fits in one of the free areas, centred there.
+     Returns the ground point under the view's centre (sim x, y) and the camera height. */
+  function fitMap(track) {
+    const {mnx, mxx, mny, mxy} = track.box, bw = Math.max(mxx - mnx, 1), bh = Math.max(mxy - mny, 1);
+    const W = Math.max(host.clientWidth, 1), H = Math.max(host.clientHeight, 1);
+    let best = {l: 0, t: 0, r: W, b: H}, scale = 0;           // px per m
+    let score = 0;
+    for (const a of freeArea()) {
+      const fit = Math.min((a.r - a.l - 2 * FIT_MARGIN) / bw, (a.b - a.t - 2 * FIT_MARGIN) / bh);
+      if (fit > 0 && fit * a.bias > score) { score = fit * a.bias; scale = fit; best = a; }
+    }
+    if (!(scale > 0)) { best = {l: 0, t: 0, r: W, b: H}; scale = Math.min(W / bw, H / bh) * 0.88; }
+    const m = orbit.zoom / scale;                              // m per px
+    const dx = (best.l + best.r) / 2 - W / 2, dy = (best.t + best.b) / 2 - H / 2;
+    return {x: track.cx - dx * m, y: track.cy + dy * m, h: m * H / (2 * Math.tan(cam.fov * Math.PI / 360))};
+  }
+
   // near and far planes: kilometres up in the Whole map, the depth buffer needs a far-off near plane
   function setDepthRange(near, far) {
     if (cam.near === near && cam.far === far) return;
@@ -448,11 +498,10 @@
     track.mapRoad.visible = isMap;
     track.grid.visible = !isMap;                 // 10 m cells shimmer from kilometres up
     if (isMap) {
-      const {mnx, mxx, mny, mxy} = track.box, tf = Math.tan(cam.fov * Math.PI / 360);
-      const h = 1.12 * orbit.zoom * Math.max((mxy - mny) / (2 * tf), (mxx - mnx) / (2 * tf * cam.aspect));
+      const view = fitMap(track), h = view.h;
       setDepthRange(Math.round(h * 0.5), Math.round(h * 2));
-      cam.position.set(track.cx, h, -track.cy + h * 0.02);
-      cam.lookAt(track.cx, 0, -track.cy);
+      cam.position.set(view.x, h, -view.y + h * 0.02);
+      cam.lookAt(view.x, 0, -view.y);
     } else {
       setDepthRange(0.1, 8000);
       const P = PRESETS[ECR.view.camera], k = 1 - Math.exp(-dt * 5);

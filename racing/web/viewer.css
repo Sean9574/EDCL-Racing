@@ -66,7 +66,7 @@ body {
   max-width: calc(100% - var(--panel-w) - 2 * var(--gutter) - 16px);
 }
 .seg button .ray-dot { background: var(--ray); }
-.sim:not([data-mode="race"]) .race-only { display: none; }
+.sim:not([data-mode="race"]) .race-only, .sim:not([data-mode="train"]) .train-only { display: none; }
 .seg { position: static; display: flex; padding: 3px; gap: 2px; }
 .seg button {
   font: inherit; font-size: 12px; line-height: 1.5;
@@ -111,7 +111,7 @@ body {
   transition: opacity .15s;
 }
 .chip:not(.on) i { opacity: .4; }
-.chip:focus-visible, .switch:focus-visible, .go button:focus-visible, .lead:focus-visible {
+.chip:focus-visible, .switch:focus-visible, .go button:focus-visible, .race-panel .lead:focus-visible {
   outline: 1px solid rgba(255, 255, 255, .5); outline-offset: 1px;
 }
 .chip .icon {
@@ -177,66 +177,125 @@ body {
   pointer-events: none;
 }
 
+/* ----- both panels: a name line (name left, a muted note right), readouts, an empty note ----- */
+.panel .cap { display: flex; justify-content: space-between; gap: 12px; margin: 3px 0 6px; color: var(--ink-2); }
+.panel .cap > span:last-child { color: var(--muted); white-space: nowrap; }
+.panel .cap .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel .row b { font-weight: 600; }
+.panel .empty { color: var(--muted); line-height: 1.5; margin: 2px 0 4px; }
+
 /* ----- the race view (Figure 1) ----- */
 .sim[data-mode="race"] { --panel-w: 360px; }
 
 /* the followed car */
-.speed { font-size: 30px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; }
-.speed small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 5px; letter-spacing: 0; }
-.cap { display: flex; justify-content: space-between; gap: 12px; margin: 3px 0 6px; color: var(--ink-2); }
-.cap > span:last-child { color: var(--muted); white-space: nowrap; }
-.cap .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.panel .row b { font-weight: 600; }
-.panel .empty { color: var(--muted); line-height: 1.5; margin: 2px 0 4px; }
+.race-panel .speed { font-size: 30px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; }
+.race-panel .speed small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 5px; letter-spacing: 0; }
 
 /* the leaderboard: one row per car, the columns of spec §10.3 */
-.board-head {
+.race-panel .board-head {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   color: var(--muted); font-size: 12px;
 }
-.lead {
+.race-panel .lead {
   font: inherit; font-size: 11.5px; line-height: 1.6;
   padding: 1px 8px; margin-right: -4px; border: 0; border-radius: 6px;
   background: var(--chip-on); color: #fff; cursor: pointer;
   transition: background-color .15s, color .15s;
 }
-.lead:hover:not(:disabled) { background: rgba(255, 255, 255, .22); }
-.lead:disabled { background: none; color: var(--faint); cursor: default; }
-.board { --lb-cols: 16px minmax(0, 1fr) 24px 32px 32px 38px 52px; font-size: 12px; }
-.board.nogap { --lb-cols: 16px minmax(0, 1fr) 24px 34px 34px 52px; }
-.board .lb {
+.race-panel .lead:hover:not(:disabled) { background: rgba(255, 255, 255, .22); }
+.race-panel .lead:disabled { background: none; color: var(--faint); cursor: default; }
+.race-panel .board { --lb-cols: 16px minmax(0, 1fr) 24px 32px 32px 38px 52px; font-size: 12px; }
+.race-panel .board.nogap { --lb-cols: 16px minmax(0, 1fr) 24px 34px 34px 52px; }
+.race-panel .board .lb {
   display: grid; grid-template-columns: var(--lb-cols); column-gap: 5px;
   padding: 0 6px; margin: 0 -6px; border-radius: 6px;
   white-space: nowrap; line-height: 1.75;
 }
-.board.nogap .gap { display: none; }
-.board .lb > span { overflow: hidden; text-overflow: ellipsis; }
-.board .lb .nm { display: flex; align-items: center; }
-.board .lb .nm .sw { flex: none; }
-.board .lb .nm .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.board .lb .nm .run { flex: none; margin-left: .3em; }
-.board .lb .nm .run:empty { display: none; }
-.board .lb .n { text-align: right; }
-.board .lb .p { color: var(--muted); }
-.board .lb .st { color: var(--muted); padding-left: 6px; }
-.board .lb .st[data-status="finished"] { color: var(--ink); }
-.board .lb .gap.ahead { color: #3fbf78; }
-.board .lb.th, .board .lb.th > span { color: var(--faint); font-size: 11px; line-height: 1.9; }
-.board .lb[role="button"] { cursor: pointer; transition: background-color .12s; }
-.board .lb[role="button"]:hover { background: var(--hover); }
-.board .lb.sel { background: rgba(255, 255, 255, .12); }
-.board .lb[role="button"]:focus-visible { outline: 1px solid rgba(255, 255, 255, .45); outline-offset: -1px; }
-.board .lb.out, .board .lb.out .p, .board .lb.out .st, .board .lb.out .gap { color: var(--faint); }
-.board .lb.pole .sw { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .5); }     /* the dark pole-lap car */
-.board .more { color: var(--muted); padding-left: 22px; line-height: 1.75; }
+.race-panel .board.nogap .gap { display: none; }
+.race-panel .board .lb > span { overflow: hidden; text-overflow: ellipsis; }
+.race-panel .board .lb .nm { display: flex; align-items: center; }
+.race-panel .board .lb .nm .sw { flex: none; }
+.race-panel .board .lb .nm .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.race-panel .board .lb .nm .run { flex: none; margin-left: .3em; }
+.race-panel .board .lb .nm .run:empty { display: none; }
+.race-panel .board .lb .n { text-align: right; }
+.race-panel .board .lb .p { color: var(--muted); }
+.race-panel .board .lb .st { color: var(--muted); padding-left: 6px; }
+.race-panel .board .lb .st[data-status="finished"] { color: var(--ink); }
+.race-panel .board .lb .gap.ahead { color: #3fbf78; }
+.race-panel .board .lb.th, .race-panel .board .lb.th > span { color: var(--faint); font-size: 11px; line-height: 1.9; }
+.race-panel .board .lb[role="button"] { cursor: pointer; transition: background-color .12s; }
+.race-panel .board .lb[role="button"]:hover { background: var(--hover); }
+.race-panel .board .lb.sel { background: rgba(255, 255, 255, .12); }
+.race-panel .board .lb[role="button"]:focus-visible { outline: 1px solid rgba(255, 255, 255, .45); outline-offset: -1px; }
+.race-panel .board .lb.out, .race-panel .board .lb.out .p, .race-panel .board .lb.out .st,
+.race-panel .board .lb.out .gap { color: var(--faint); }
+.race-panel .board .lb.pole .sw { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .5); }     /* the dark pole-lap car */
+.race-panel .board .more { color: var(--muted); padding-left: 22px; line-height: 1.75; }
 
 /* the Race setup drawer */
-.drawer .track { display: flex; align-items: center; gap: 8px; }
-.drawer .track .name { flex: 1; min-width: 0; line-height: 1.35; text-align: center; }
-.drawer .track .name b { display: block; font-weight: 600; color: #fff; }
-.drawer .track .name small { display: block; color: var(--muted); font-size: 11.5px; }
-.drawer .track .name small:empty { display: none; }
-.drawer .apps { display: grid; gap: 4px; }
-.drawer .app-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-2); }
+.race-setup .track { display: flex; align-items: center; gap: 8px; }
+.race-setup .track .name { flex: 1; min-width: 0; line-height: 1.35; text-align: center; }
+.race-setup .track .name b { display: block; font-weight: 600; color: #fff; }
+.race-setup .track .name small { display: block; color: var(--muted); font-size: 11.5px; }
+.race-setup .track .name small:empty { display: none; }
+.race-setup .apps { display: grid; gap: 4px; }
+.race-setup .app-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-2); }
 .race-setup.none > :not(.keep) { display: none; }
 .race-setup.none > .drow.keep { margin-top: 0; }
+
+/* ----- the training view (Figure 2) ----- */
+.sim[data-mode="train"] { --panel-w: 292px; }
+
+/* the generation, every statistic of spec §10.2, the best shown car */
+.train-panel .title { font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
+.train-panel .title .none { color: var(--faint); font-weight: 500; }
+.train-panel .row { align-items: baseline; }
+.train-panel .row > .k { white-space: nowrap; }
+.train-panel .row b { min-width: 0; text-align: right; line-height: 1.45; padding: 2px 0; }     /* a long map name wraps */
+.train-panel .row b .need { color: var(--muted); font-weight: 500; margin-left: .35em; }
+.train-panel .row b.done { color: var(--muted); font-weight: 500; }
+.train-panel .empty + .empty { margin-top: -2px; color: var(--faint); }
+.train-panel .empty:empty { display: none; }
+
+/* bottom left: the progress card */
+.progress .cap { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); margin-bottom: 4px; }
+.progress .cap > span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.progress .plot { display: block; width: 100%; height: 96px; overflow: visible; }
+.progress .foot { color: var(--faint); margin-top: 4px; line-height: 1.45; }
+.progress .foot span { display: block; }
+
+/* the Training setup drawer */
+.train-setup .stepper { display: flex; align-items: center; gap: 4px; }
+.train-setup .stepper .val {
+  min-width: 82px; text-align: center; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.train-setup .stepper.off .val { color: var(--faint); }
+.train-setup .shown-head { display: flex; justify-content: space-between; align-items: baseline; }
+.train-setup .shown-head b { font-weight: 500; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.train-setup .shown-head b small { color: var(--muted); font-size: 12px; }
+.train-setup .chips.show { margin-bottom: 2px; }
+
+/* the cars-shown slider: a thin track, a white fill to the knob (--fill), a 12 px knob */
+.range {
+  -webkit-appearance: none; appearance: none; display: block;
+  width: 100%; height: 18px; margin: 4px 0 0; padding: 0;
+  background: transparent; cursor: pointer;
+  --fill: 0%;
+}
+.range::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, rgba(255, 255, 255, .55) var(--fill), rgba(255, 255, 255, .12) var(--fill));
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  transition: box-shadow .15s;
+}
+.range::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .12); }
+.range::-moz-range-progress { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .55); }
+.range::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #fff; }
+.range:focus-visible { outline: none; }
+.range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, .22); }
+.range:hover::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, .12); }

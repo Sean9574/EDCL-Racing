@@ -222,19 +222,47 @@
   // ---------- the shared interface: top bar, setup drawer, keys (both views) ----------
   /* ECR.ui, for race.js and training.js:
        el(tag, className, text)        a new element
-       icon(name)                      a small inline SVG: "prev" | "next"
+       icon(name)                      a small inline SVG: "prev" | "next" | "minus" | "plus"
+       swatch(color)                   the small color square before a name
+       chip(text, {dot}), setChip(b, {on, enabled, dot})    a drawer chip (with a color dot) and its state
+       clock(t)                        seconds as m:ss.s ("1:00.0", never "0:60.0")
        sync(box, items, make, update)  keyed list: reuse box's children by item.key (focus and hover survive)
        command(name, arg)              ECR.send, a refusal logged to the console
        setDrawer(open), drawerOpen()   the setup drawer under the top bar; open adds `setup` to #sim (no mini-map)
-       onKey(fn)                       fn(event, key) → true when it used the key; never called while typing */
+       onKey(fn)                       fn(event, key) → true when it used the key; never called while typing
+       GRIPS                           [name, label] of each display grip (config.APP_GRIPS, app.GRIP_LABELS) */
   const ui = ECR.ui = {};
+  ui.GRIPS = [["Normal", "Normal"], ["Unlimited", "Unlimited (10×)"]];
   ui.el = (tag, className, text) => {
     const node = document.createElement(tag);
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
   };
-  const ICONS = {prev: "M6.5 1.5 3 5l3.5 3.5", next: "M3.5 1.5 7 5 3.5 8.5"};
+  ui.swatch = color => {
+    const sw = ui.el("i", "sw");
+    sw.style.background = color;
+    return sw;
+  };
+  ui.chip = (text, options = {}) => {
+    const b = ui.el("button", "chip");
+    b.type = "button";
+    if (options.dot) b.appendChild(ui.el("i"));
+    b.appendChild(document.createTextNode(text));
+    return b;
+  };
+  ui.setChip = (b, {on, enabled = true, dot}) => {
+    b.classList.toggle("on", !!on);
+    b.disabled = !enabled;
+    b.setAttribute("aria-pressed", String(!!on));
+    if (dot) b.firstChild.style.background = dot;
+  };
+  ui.clock = t => {
+    const tenths = Math.max(0, Math.round((Number(t) || 0) * 10));    // round first, then split minutes and seconds
+    const minutes = Math.floor(tenths / 600);
+    return `${minutes}:${((tenths - minutes * 600) / 10).toFixed(1).padStart(4, "0")}`;
+  };
+  const ICONS = {prev: "M6.5 1.5 3 5l3.5 3.5", next: "M3.5 1.5 7 5 3.5 8.5", minus: "M2 5h6", plus: "M2 5h6M5 2v6"};
   ui.icon = name => {
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg"), path = document.createElementNS(ns, "path");
@@ -283,9 +311,12 @@
     if (open) placeDrawer();
   };
 
+  // the training view sends rays for its focus car only, so its ray buttons are Rays / Off and "all cars" reads as on
+  const training = () => !!ECR.panel && ECR.panel.mode === "train";
+  const shownRays = () => (training() && ECR.view.rays === "all" ? "car" : ECR.view.rays);
   function syncView() {
     for (const b of buttonsOf("cameras", "camera")) b.classList.toggle("on", b.dataset.camera === ECR.view.camera);
-    for (const b of buttonsOf("rays", "rays")) b.classList.toggle("on", b.dataset.rays === ECR.view.rays);
+    for (const b of buttonsOf("rays", "rays")) b.classList.toggle("on", b.dataset.rays === shownRays());
   }
   ECR.onView(syncView);
   syncView();
@@ -294,7 +325,9 @@
     sim.dataset.mode = p.mode;
     for (const b of buttonsOf("modes", "mode")) b.classList.toggle("on", b.dataset.mode === p.mode);
     for (const b of buttonsOf("speeds", "speed")) b.classList.toggle("on", Number(b.dataset.speed) === p.speed);
+    for (const b of buttonsOf("shows", "show")) b.classList.toggle("on", b.dataset.show === p.show);
     setupBtn.textContent = p.mode === "race" ? "Race setup" : "Training setup";
+    syncView();
   });
 
   const cycle = (list, value) => list[(list.indexOf(value) + 1) % list.length];
@@ -302,6 +335,7 @@
     mode: b => { if (!b.classList.contains("on")) ui.command("mode", b.dataset.mode); },
     camera: b => ECR.scene.setCamera(b.dataset.camera),
     speed: b => ui.command("speed", Number(b.dataset.speed)),
+    show: b => { if (!b.classList.contains("on")) ui.command("show", b.dataset.show); },
     rays: b => ECR.scene.setRays(b.dataset.rays),
   };
   topbar.addEventListener("click", e => {
@@ -317,9 +351,10 @@
   // keys: C cycles the cameras, R the rays, Escape closes the drawer; the views add theirs with ui.onKey
   const keyHandlers = [];
   ui.onKey = fn => { keyHandlers.push(fn); };
-  const typing = e => {
+  const typing = e => {                     // a slider or a switch with focus is not typing
     const t = e.target;
-    return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    return !!t && (t.isContentEditable || /^(TEXTAREA|SELECT)$/.test(t.tagName) ||
+                   (t.tagName === "INPUT" && !/^(range|checkbox|radio|button)$/.test(t.type)));
   };
   let spaceTaken = false;
   document.addEventListener("keydown", e => {
@@ -328,7 +363,10 @@
     let used = false;
     if (e.repeat && (key === "c" || key === "r" || key === " ")) used = true;          // held keys act once
     else if (key === "c") { ECR.scene.setCamera(cycle(ECR.scene.CAMERAS, ECR.view.camera)); used = true; }
-    else if (key === "r") { ECR.scene.setRays(cycle(ECR.scene.RAY_MODES, ECR.view.rays)); used = true; }
+    else if (key === "r") {
+      ECR.scene.setRays(training() ? (shownRays() === "off" ? "car" : "off") : cycle(ECR.scene.RAY_MODES, ECR.view.rays));
+      used = true;
+    }
     else if (key === "Escape" && ui.drawerOpen()) { ui.setDrawer(false); used = true; }
     else {
       for (const fn of keyHandlers) {

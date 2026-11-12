@@ -4,12 +4,13 @@
 (function () {
   "use strict";
   const ECR = window.ECR, ui = ECR.ui, el = ui.el;
+  const {chip, setChip, swatch, clock} = ui;
 
   const MPH_PER_MPS = 2.23694;
   const RACE_LAPS = 3;                                     // config.RACE_LAPS
   const READOUT_MS = 100;                                  // the followed car's numbers change at most this often
   const RUNS = [["best", "Best runs"], ["all", "All runs"], ["seeded", "Seeded"], ["unseeded", "Unseeded"]];
-  const GRIPS = [["Normal", "Normal"], ["Unlimited", "Unlimited (10×)"]];      // config.APP_GRIPS, app.GRIP_LABELS
+  const GRIPS = ui.GRIPS;
   const GROUPS = [["final", "Reported"], ["app", "App cars"]];
   const HINT = "Click a leaderboard row to follow that car · drag to look around · scroll to zoom · " +
                "C camera · R rays · ← → track · Space start or stop";
@@ -22,29 +23,7 @@
 
   const dash = "–";
   const seconds = value => (value === null || value === undefined ? dash : value.toFixed(1));
-  const clock = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
   const child = (parent, tag, className, text) => parent.appendChild(el(tag, className, text));
-
-  function swatch(color) {
-    const sw = el("i", "sw");
-    sw.style.background = color;
-    return sw;
-  }
-
-  function chip(text, options = {}) {
-    const b = el("button", "chip");
-    b.type = "button";
-    if (options.dot) b.appendChild(el("i"));
-    b.appendChild(document.createTextNode(text));
-    return b;
-  }
-
-  function setChip(b, {on, enabled = true, dot}) {
-    b.classList.toggle("on", !!on);
-    b.disabled = !enabled;
-    b.setAttribute("aria-pressed", String(!!on));
-    if (dot) b.firstChild.style.background = dot;
-  }
 
   let active = false, focus = -1, lastReadout = 0;
 

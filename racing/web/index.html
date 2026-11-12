@@ -26,11 +26,16 @@
       <button type="button" data-speed="2">2×</button>
       <button type="button" data-speed="4">4×</button>
       <button type="button" data-speed="8">8×</button>
-      <button type="button" class="race-only" id="pauseBtn">Pause</button>
+      <button type="button" id="pauseBtn">Pause</button>
+    </div>
+    <div class="glass seg train-only" id="shows" role="group" aria-label="Cars shown">
+      <button type="button" data-show="all">All</button>
+      <button type="button" data-show="best">Best</button>
+      <button type="button" data-show="worst">Worst</button>
     </div>
     <div class="glass seg" id="rays" role="group" aria-label="Sensor rays">
-      <button type="button" data-rays="car"><i class="ray-dot"></i>Rays: this car</button>
-      <button type="button" data-rays="all">All cars</button>
+      <button type="button" data-rays="car"><i class="ray-dot"></i>Rays<span class="race-only">: this car</span></button>
+      <button type="button" data-rays="all" class="race-only">All cars</button>
       <button type="button" data-rays="off">Off</button>
     </div>
     <div class="glass seg">
@@ -49,5 +54,6 @@
 <script src="/static/js/cars.js"></script>
 <script src="/static/js/main.js"></script>
 <script src="/static/js/race.js"></script>
+<script src="/static/js/training.js"></script>
 </body>
 </html>
