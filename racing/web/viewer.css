@@ -76,6 +76,7 @@ body {
   transition: background-color .15s, color .15s;
 }
 .seg button.on { background: var(--on); color: #fff; }
+#playPauseBtn { min-width: 4.4em; }            /* Play and Pause keep one width */
 .seg button:hover:not(.on):not(:disabled) { color: #fff; }
 .seg button:disabled { color: var(--faint); cursor: default; }
 .seg button:focus-visible { outline: 1px solid rgba(255, 255, 255, .5); outline-offset: -1px; }

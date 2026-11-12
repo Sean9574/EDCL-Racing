@@ -1905,6 +1905,17 @@ def test_a_notebook_run_replays_its_latest_generation(window, tmp_path, monkeypa
     assert window.playback.cars.time > 0
 
 
+def test_the_viewer_opens_on_the_notebook_replay_when_one_exists(window, tmp_path):
+    window.runs_dir = tmp_path
+    window.open_on_replay()
+    assert window.source == "app" and window.status == "Press Play to start training."   # nothing saved: waits
+    save_replay(window, ga_report(5))
+    window.open_on_replay()
+    assert window.source == "notebook"
+    window.update(1 / 60)
+    assert window.latest["generation"] == 5 and window.playback is not None and not window.replay_paused
+
+
 def test_a_notebook_run_can_show_just_its_best_car(window, tmp_path):
     notebook_view(window, tmp_path)
     report = ga_report(3)

@@ -28,7 +28,7 @@
   const drawerEl = document.getElementById("drawer");
   const progressEl = document.getElementById("progress");
   const hintEl = document.getElementById("hint");
-  const pauseBtn = document.getElementById("pauseBtn");
+  const playPauseBtn = document.getElementById("playPauseBtn");
 
   const dash = "–";
   const count = n => Number(n).toLocaleString("en-US");
@@ -382,12 +382,12 @@
   range.addEventListener("pointerup", letGo);
   range.addEventListener("pointercancel", letGo);
 
-  // ---------- the top bar's Pause: holds the replay or the training; a speed lets it go on ----------
+  // ---------- the top bar's Play/Pause: starts or holds the training or the replay; a speed lets it go on ----------
   const canPause = p => p.source === "notebook" || p.stop.enabled;     // training here pauses once it runs
   const isPaused = p => canPause(p) && !p.play.active;
-  pauseBtn.addEventListener("click", () => {
+  playPauseBtn.addEventListener("click", () => {
     const p = ECR.panel;
-    if (p && p.mode === "train" && !pauseBtn.disabled) ui.command("play");
+    if (p && p.mode === "train") ui.command("play");
   });
   document.getElementById("speeds").addEventListener("click", e => {
     const b = e.target.closest("[data-speed]"), p = ECR.panel;
@@ -428,9 +428,8 @@
     activate(p.mode === "train");
     if (!active) return;
     const paused = isPaused(p);
-    pauseBtn.disabled = !canPause(p);
-    pauseBtn.classList.toggle("on", paused);
-    pauseBtn.setAttribute("aria-pressed", String(paused));
+    playPauseBtn.disabled = false;
+    playPauseBtn.textContent = p.play.label;
     if (paused) for (const b of document.querySelectorAll("#speeds [data-speed]")) b.classList.remove("on");
     renderPanel(p);
     renderSetup(p);

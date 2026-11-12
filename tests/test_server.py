@@ -198,6 +198,8 @@ def test_stop_does_not_wait_for_open_pages(server):
 def test_main_prints_the_banner_and_quits(window, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(config, "VIEWER_LOG_PATH", tmp_path / "logs" / "viewer.log")
     monkeypatch.setattr(viewer, "App", lambda **kwargs: window)
+    opened = []
+    monkeypatch.setattr(window, "open_on_replay", lambda: opened.append(True))
     result = []
     thread = threading.Thread(target=lambda: result.append(viewer.main(["--port", "0", "--no-browser"])), daemon=True)
     thread.start()
@@ -215,6 +217,7 @@ def test_main_prints_the_banner_and_quits(window, monkeypatch, tmp_path, capsys)
     assert conn.getresponse().status == 204
     thread.join(5.0)
     assert result == [0] and "command" in (tmp_path / "logs" / "viewer.log").read_text()
+    assert opened == [True]                                          # the page opens on the saved replay
 
 
 def test_browser_command_uses_windows_on_wsl():

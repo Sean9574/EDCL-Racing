@@ -719,6 +719,12 @@ class App:
         self.clear_view()
         self.status = "Looking for the notebook run." if self.source == "notebook" else "Press Play to start training."
 
+    def open_on_replay(self):
+        """At start, replay the selected notebook run (GA run 0 by default) when it has a replay file, so the page shows
+        cars driving as soon as it opens; without one, training here stays selected and waits for Play."""
+        if self.source == "app" and self.replay_file().exists():
+            self.toggle_source()
+
     def clear_view(self):
         """Forget the shown reports, so the next ones come only from the selected source, method and seed."""
         self.latest, self.history, self.playback, self.playback_report = None, [], None, None
@@ -1538,6 +1544,7 @@ def main(argv=None):
     log.setLevel(logging.INFO)
     log.addHandler(handler)
     viewer = App()
+    viewer.open_on_replay()
     viewer_server = web.ViewerServer(viewer, port=options.port)
     try:
         log.info("viewer starting")

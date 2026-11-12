@@ -527,7 +527,9 @@ EC Racing viewer
 ```
 
 - **Starting:** if port 8765 is taken, the next free one is used, and the banner shows which; `--port N` starts the
-  search at N, and `--no-browser` only prints the address, to be opened by hand. The page needs a browser with WebGL
+  search at N, and `--no-browser` only prints the address, to be opened by hand. The page opens on the training view
+  replaying the GA's notebook run 0 (its newest saved generation), so cars drive as soon as it appears; without that
+  run it opens on App training, waiting for Play. The page needs a browser with WebGL
   (it says so if WebGL is missing) and no internet connection: three.js is part of the repository
   (`racing/web/vendor/`).
 - **On the Windows desktop:** run the command in the Ubuntu terminal. Under WSL the viewer opens the page in the
@@ -541,7 +543,7 @@ EC Racing viewer
 - **Quitting:** the **Quit** button at the top right, or Ctrl+C in the terminal, ends the viewer, stops its training
   and closes the network window. Closing the browser tab does not end it.
 - **Screen:** the panel with the view's statistics is at the top left. The top bar at the top right holds **Training |
-  Race**, the cameras, the playback speeds (1×, 2×, 4×, 8×; 1× is twice real time) and **Pause**, in the training
+  Race**, the cameras, the playback speeds (1×, 2×, 4×, 8×; 1× is twice real time) and **Play/Pause**, in the training
   view **All | Best | Worst**, the rays, the **Training setup** or **Race setup** button and **Quit**. The setup drawer
   opens under the top bar with the view's settings; its last line is the status line, which says what the viewer is
   doing or why something cannot be shown. A mini-map of the whole track is at the bottom right. F11 (the browser's
@@ -555,8 +557,8 @@ EC Racing viewer
 - **Training view:** in **Training setup**, choose an approach, run (*0 (seeded)* to *3*), difficulty and population
   size, then press Play (or Space). Training follows the mastery rules and continues until Stop, which freezes the
   cars where they are. Training runs in step with the replay: each generation is replayed once, then the next one
-  trains, so the generation on screen is the one just trained. The playback speed sets the pace; Pause freezes both,
-  and choosing a speed while paused continues. In the race view training runs at full speed. The panel shows the
+  trains, so the generation on screen is the one just trained. The playback speed sets the pace; the top bar's Play/Pause
+  starts training or freezes both, and choosing a speed while paused continues. In the race view training runs at full speed. The panel shows the
   generation, the map, the difficulty, each map's success share against the requirement (90%, or 50% in the speed
   push), the streak, the target cut, the step size (mutation strength or σ), the cars kept, the best and mean
   fitness, the population's mean sensor length and steering sensitivity, and the best shown car's speed in mph. The
@@ -589,8 +591,8 @@ EC Racing viewer
   default), *All runs* (every saved run of every method, up to 32 cars), *Seeded* (run 0 of every method) or
   *Unseeded* (runs 1 to 3), and each method's chip switches that method on or off; both are kept while the viewer is
   open. All runs of a method drive in its color; runs 1 to 3 carry a white stripe from the nose to the rear wing, and
-  the leaderboard names run 0 *GA (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race (or Space); Stop (or
-  Space) returns to the start line, and Pause holds a running race. When app cars exist, **Controllers** switches the
+  the leaderboard names run 0 *GA (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race, the top bar's Play or
+  Space; Stop (or Space) returns to the start line, and the top bar's Pause holds a running race. When app cars exist, **Controllers** switches the
   list to the **app cars**: the best car of each viewer training run (saved after every generation, or whenever an
   imitation network improves), labelled for example *GA (app) s1*. App cars start switched off, race next to the
   reported controllers when switched on (drawn with white wings), and are never part of the reported results.

@@ -19,7 +19,7 @@
   const panelEl = document.getElementById("panel");
   const drawerEl = document.getElementById("drawer");
   const hintEl = document.getElementById("hint");
-  const pauseBtn = document.getElementById("pauseBtn");
+  const playPauseBtn = document.getElementById("playPauseBtn");
 
   const dash = "–";
   const seconds = value => (value === null || value === undefined ? dash : value.toFixed(1));
@@ -261,10 +261,12 @@
   });
   leaderBtn.addEventListener("click", () => { if (!leaderBtn.disabled) ui.command("follow", null); });
 
-  // ---------- Pause ----------
-  pauseBtn.addEventListener("click", () => {
+  // ---------- Play/Pause: starts the race, then holds it or lets it go on ----------
+  playPauseBtn.addEventListener("click", () => {
     const p = ECR.panel;
-    if (p && p.mode === "race" && !pauseBtn.disabled) ui.command("pause", !p.paused);
+    if (!p || p.mode !== "race" || playPauseBtn.disabled) return;
+    if (p.racing) ui.command("pause", !p.paused);
+    else if (p.start.enabled) ui.command("start");
   });
   document.getElementById("speeds").addEventListener("click", e => {
     const b = e.target.closest("[data-speed]");            // a speed while paused also lets the race go on
@@ -313,9 +315,8 @@
   function render(p) {
     activate(p.mode === "race");
     if (!active) return;
-    pauseBtn.disabled = !p.racing;
-    pauseBtn.classList.toggle("on", !!p.paused);
-    pauseBtn.setAttribute("aria-pressed", String(!!p.paused));
+    playPauseBtn.disabled = !p.racing && !p.start.enabled;
+    playPauseBtn.textContent = p.racing && !p.paused ? "Pause" : "Play";
     if (p.paused) for (const b of document.querySelectorAll("#speeds [data-speed]")) b.classList.remove("on");
 
     board.classList.toggle("nogap", p.pole === null);
