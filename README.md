@@ -41,7 +41,7 @@ Generated maps have a road width that changes along the lap, and the networks se
 road's width next to the nine distance rays and the speed, and six about the racing line (18 inputs), so that they drive
 any width rather than the one they trained on. The evaluation adds a robustness table: the four test circuits rebuilt at
 constant road widths of 6, 10, 14 and 18 m, the first narrower than any road met in training. The design specification
-is `docs/ec-racing-design.pdf` (version 3.17, which incorporates every revision).
+is `docs/ec-racing-design.pdf` (version 3.18, which incorporates every revision).
 
 The evaluation also reports the pole-lap table and figure of the four test circuits (notebook 08).
 
@@ -249,7 +249,7 @@ Results are written to `results/`, which is not under version control:
 | `results/racing_lines/` | The real circuits' racing lines, one file per layout and code identity, built once per machine like the grids, kept between runs |
 | `results/app_runs/<method>/seed<k>/`, `results/app_runs/champions/` | Training started in the viewer, and the best car of each such run; never part of the reported results |
 | `results/archive/revision2-notebooks/` | The notebooks of the revision 2.0 run, with their outputs |
-| `results/archive/revision3.1/` | The revision 3.1 results (runs, controllers, dataset, run record), shown by the viewer's **Runs** button |
+| `results/archive/revision3.1/` | The revision 3.1 results (runs, controllers, dataset, run record), shown by the viewer's **Results folder** control |
 
 To copy results to Windows, open `\\wsl$\Ubuntu\home\<Linux user>\ec-racing\results` in File Explorer.
 
@@ -412,6 +412,16 @@ method's best run on the test circuits they all finished, because runs that fini
 run 3 of version 3.14) left the old table without lap times. Nothing trains again; the table gets its lap times at the next
 evaluation.
 
+**Version 3.18** moves the viewer into the web browser as a 3D view (see Viewer) and draws the results charts in a
+cleaner style: a white background, runs told apart by shades of the method's color, and a faint line for every
+generation under a bold 25-generation average. Nothing trains again and no notebook needs to run; on the machine that
+holds the results, redraw the figures in `results/figures/` from the saved logs and tables (the networks figure keeps
+its look):
+
+```bash
+python scripts/redraw_figures.py
+```
+
 **Version 3.15** adds hardening and a stricter final pick. In the version 3.14 results the final controllers finished
 109 of 128 test races, and only 1 of the 32 finished all 20 validation maps. After its speed push a run now hardens at
 its last mastered target until 90% of the population finishes every map within it, three generations in a row (the
@@ -505,73 +515,115 @@ pilot: it needs a refined baseline of this revision.
 python -m racing.app
 ```
 
-The viewer opens in your web browser (a local page at http://127.0.0.1:8765/; `--port` and `--no-browser` change that). The log is `results/viewer.log`.
+The viewer is a page in the web browser, served by this Python process on the machine's own address. It prints a
+banner and opens the page:
 
-- **Training view:** choose an approach, run (*0 (seeded)* or *1*), difficulty and population size, then press Play
-  (or Space). Training follows the mastery rules and continues until Stop, which freezes the cars where they are.
-  Training runs in step with the replay: each generation is replayed once, then the next one trains, so the generation
-  on screen is the one just trained. The playback speed sets the pace; Pause freezes both. In the race view training
-  runs at full speed. The panel shows the level, each map's success share against 90%, the streak, the target
-  reduction and the population's mean sensor length and steering sensitivity.
+```
+EC Racing viewer
+  open:     http://127.0.0.1:8765/
+  results:  /home/<Linux user>/ec-racing/results
+  log:      /home/<Linux user>/ec-racing/results/viewer.log
+  quit:     Ctrl+C here, or the Quit button
+```
+
+- **Starting:** if port 8765 is taken, the next free one is used, and the banner shows which; `--port N` starts the
+  search at N, and `--no-browser` only prints the address, to be opened by hand. The page needs a browser with WebGL
+  (it says so if WebGL is missing) and no internet connection: three.js is part of the repository
+  (`racing/web/vendor/`).
+- **On the Windows desktop:** run the command in the Ubuntu terminal. Under WSL the viewer opens the page in the
+  default Windows browser (with `cmd.exe /c start`); if no page opens, copy the banner's address into the Windows
+  browser. The network window (below) is a separate window and is shown through WSLg.
+- **Log:** `results/viewer.log` records the start, the address, every command the page sends, status changes, track
+  loads, pages connecting and disconnecting, and errors. Look there first when the page does not respond.
+- **One viewer, any number of pages:** reloading the page, or opening the address in a second tab, shows the same
+  viewer; only the camera and the ray choice belong to each page. While no page is open, races and replays hold
+  where they are, and training started in the viewer waits at its next generation until a page is open again.
+- **Quitting:** the **Quit** button at the top right, or Ctrl+C in the terminal, ends the viewer, stops its training
+  and closes the network window. Closing the browser tab does not end it.
+- **Screen:** the panel with the view's statistics is at the top left. The top bar at the top right holds **Training |
+  Race**, the cameras, the playback speeds (1×, 2×, 4×, 8×; 1× is twice real time) and **Pause**, in the training
+  view **All | Best | Worst**, the rays, the **Training setup** or **Race setup** button and **Quit**. The setup drawer
+  opens under the top bar with the view's settings; its last line is the status line, which says what the viewer is
+  doing or why something cannot be shown. A mini-map of the whole track is at the bottom right. F11 (the browser's
+  full screen) fills the display.
+- **Cameras:** **Chase** (behind the followed car), **Wheels** (beside its front wheel), **Top** (high above it; the
+  default) and **Whole map** (the whole track, every car as a disc, no mini-map). Drag to turn the camera around the
+  car, scroll to zoom, double-click to reset. The followed car is the best car shown in the training view, and the
+  race leader or the car you chose in the race view.
+- **Keys:** C cycles the cameras, R the rays, Escape closes the setup drawer. Training view: Space plays or pauses.
+  Race view: ← and → change the track, Space starts or stops the race.
+- **Training view:** in **Training setup**, choose an approach, run (*0 (seeded)* to *3*), difficulty and population
+  size, then press Play (or Space). Training follows the mastery rules and continues until Stop, which freezes the
+  cars where they are. Training runs in step with the replay: each generation is replayed once, then the next one
+  trains, so the generation on screen is the one just trained. The playback speed sets the pace; Pause freezes both,
+  and choosing a speed while paused continues. In the race view training runs at full speed. The panel shows the
+  generation, the map, the difficulty, each map's success share against the requirement (90%, or 50% in the speed
+  push), the streak, the target cut, the step size (mutation strength or σ), the cars kept, the best and mean
+  fitness, the population's mean sensor length and steering sensitivity, and the best shown car's speed in mph. The progress card at the bottom left
+  plots the lowest map success share per generation against the dashed requirement, with tall ticks for a level
+  cleared and short ticks for a target cut or hardening.
+- **Cars shown:** **All**, **Best** or **Worst** (top bar or drawer), and how many with the **Cars shown** slider in
+  the drawer, from 1 to the population size. The best car shown is drawn in full with a white ring and its rays, and
+  the camera follows it; the others are light see-through cars, so even 2,000 stay smooth.
 - **Saved viewer training:** training started here is kept in `results/app_runs/<method>/seed<k>/`, separate from the
   reported results. For GA, ES, seeded ES and NEAT, Play continues the saved run of the selected method and run where
   it stopped (difficulty and population size apply only to a new run); **New run** deletes it and starts over. If a
   saved run cannot be resumed (other settings after a code update, or a damaged file), the panel says so: press New
   run. Baseline and Keras Tuner training always start afresh.
-- **Watching a notebook run:** **Source: Notebook run** replays the latest generation of the reported run of the
-  selected method and run (`scripts/run_notebooks.py`), with the same panel, plot and Show selector, so you can watch
-  the whole population or just the best car (Best, 1 car). When a replay ends, the newest generation is loaded, so a
-  run in progress is followed live; the view only reads the run, never slows it down or writes to it. For Baseline and
-  Keras Tuner it shows the speed push. Runs started before this feature have no replay file; race their cars instead.
-- **Earlier revisions' runs:** the **Runs** button (beside Source, and in the race view beside the Race control)
-  switches between the current results and each archive in `results/archive/` (for example `revision3.1`). An archived
-  run is replayed, and its controllers race, on its own revision's maps (revision 3.1: one road width per level, 16,
-  14, 12 and 10 m, read from the archive's `run_info.json`), and its networks read only the inputs they were trained
-  with (revision 3.1: the nine rays and the speed). Every run of an archive was seeded: the Run control reaches each
-  of its runs (an earlier revision may also hold run 2), and its cars are named by their seeds (*GA s0*, *GA s1*, …)
-  and carry no stripe. A run whose networks do not match the selected folder is named in the status line instead.
-  Training started in the viewer always uses the current results.
-- **Race view:** pick a test map with the arrow keys and a difficulty; the map is shown with the cars on the start
-  line. The **Race** control chooses the runs that race: *best runs* (each method's best run; the default), *all runs*
-  (every saved run of every method, up to 32 cars), *seeded runs* (run 0 of every method) or *unseeded runs* (runs 1
-  to 3), and each method's button below it switches that method on or off; both are kept while the viewer is open. All
-  runs of a method drive in its color; runs 1 to 3 cars carry a white stripe, and the leaderboard names run 0 *GA
-  (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race; Stop returns to the start line. The **Controllers**
-  button switches the list to the **app runs**: the best car of each viewer training run (saved after every
-  generation, or whenever an imitation network improves), labelled for example *GA (app) s1*. App cars start switched
-  off, race next to the reported controllers when switched on (drawn with a white border), and are never part of the
-  reported results. When many cars race, the leaderboard lists as many as fit.
+- **Watching a notebook run:** **Source: Notebook run** in Training setup replays the latest generation of the
+  reported run of the selected method and run (`scripts/run_notebooks.py`), with the same panel, progress card and
+  All | Best | Worst choice, so you can watch the whole population or just the best car (Best, 1 car). When a replay
+  ends, the newest generation is loaded, so a run in progress is followed live; the view only reads the run, never
+  slows it down or writes to it. For Baseline and Keras Tuner it shows the speed push. Runs started before this
+  feature have no replay file; race their cars instead.
+- **Earlier revisions' runs:** the **Results folder** control (in both setup drawers) switches between the current
+  results and each archive in `results/archive/` (for example `revision3.1`). An archived run is replayed, and its
+  controllers race, on its own revision's maps (revision 3.1: one road width per level, 16, 14, 12 and 10 m, read from
+  the archive's `run_info.json`), and its networks read only the inputs they were trained with (revision 3.1: the nine
+  rays and the speed). Every run of an archive was seeded: the Run control reaches each of its runs (an earlier
+  revision may also hold run 2), and its cars are named by their seeds (*GA s0*, *GA s1*, …) and carry no stripe. A
+  run whose networks do not match the selected folder is named in the status line instead. Training started in the
+  viewer always uses the current results.
+- **Race view:** in **Race setup**, pick a test map with the arrow keys or the track buttons, and a difficulty; the map
+  is shown with the cars on the start line. **Who races** chooses the runs: *Best runs* (each method's best run; the
+  default), *All runs* (every saved run of every method, up to 32 cars), *Seeded* (run 0 of every method) or
+  *Unseeded* (runs 1 to 3), and each method's chip switches that method on or off; both are kept while the viewer is
+  open. All runs of a method drive in its color; runs 1 to 3 carry a white stripe from the nose to the rear wing, and
+  the leaderboard names run 0 *GA (seeded)* and runs 1 to 3 *GA r1* to *GA r3*. Press Start race (or Space); Stop (or
+  Space) returns to the start line, and Pause holds a running race. When app cars exist, **Controllers** switches the
+  list to the **app cars**: the best car of each viewer training run (saved after every generation, or whenever an
+  imitation network improves), labelled for example *GA (app) s1*. App cars start switched off, race next to the
+  reported controllers when switched on (drawn with white wings), and are never part of the reported results.
+- **Race panel:** the followed car's speed in mph, its lap, its chosen action (for example *L½ gas*), its sensor length
+  and its nearest road edge, then the leaderboard: position, car, laps, last and best lap, the gap to the pole lap on a
+  test circuit, and the status. Rows that do not fit are counted as "… N more". The race leader (the car furthest
+  along that is still racing) is followed; click a row to follow that car with the camera, the panel and the network
+  window, and **Follow leader** to go back.
 - **Grip:** *Normal* (a(v), 5 g rising to 10 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the
   cars you watch in both views. It never affects training or results.
-- **Sensor rays:** shows the outlined car's nine rays, each drawn to that car's own sensor length.
-- **Camera:** *Whole map*, or *Follow 2×*, *4×* or *8×*: zoomed in and following the best car (the outlined one) in
-  the training view, or the race leader (the car furthest along that is still racing) in the race view. The mouse
-  wheel over the map zooms in and out, and the C key cycles the camera as the button does.
-- **Full screen:** the Full screen button or F11 fills the display; Windowed, F11 or Esc returns to a window, which
-  can also be resized by dragging its border. The map and panel follow the window's size.
-- **Network window:** the Network window button opens a separate window (movable to another monitor, resizable, closed
-  with the viewer) that shows a car's neural network live, about ten times a second: the inputs in real units (m,
-  km/h, corner radius), every hidden layer as a column ("layer 1 · 16 neurons"), units shaded by activation (blue
-  positive, orange negative), the 45 actions in nine steering groups with the chosen one named, and the strongest
-  signals as curves. Full (the default) also draws every other connection faintly; Simple leaves them out (button or
-  V). In the race view the Network of button cycles through the cars, shown on the start line before the start. In
-  the training view a timeline under the diagram collects the best network of every generation seen while the viewer
-  is open: Play (Space) steps through them, ◀ ▶ (arrow keys) or a click on the timeline picks one, whose best car then
+- **Sensor rays:** the top bar's rays control shows the followed car's nine rays as a red fan, each ray drawn to that
+  car's own sensor length and glowing where it meets the road edge; in the race view it can also show every car's
+  rays, or none (R cycles).
+- **Network window:** the **Network window** switch in either setup drawer opens a separate window (movable to another
+  monitor, resizable, closed with the viewer) that shows a car's neural network live, about ten times a second: the
+  inputs in real units (m, km/h, corner radius), every hidden layer as a column ("layer 1 · 16 neurons"), units shaded
+  by activation (blue positive, orange negative), the 45 actions in nine steering groups with the chosen one named,
+  and the strongest signals as curves. Full (the default) also draws every other connection faintly; Simple leaves
+  them out (button or V). In the race view it shows the followed car, on the start line before the start. In the
+  training view a timeline under the diagram collects the best network of every generation seen while the viewer is
+  open: Play (Space) steps through them, ◀ ▶ (arrow keys) or a click on the timeline picks one, whose best car then
   drives the current map in the window, and Live (L) returns to the newest.
 - **Difficulty:** Easy (gentle loops), Medium (circuits), Hard (circuits with a main straight into a hairpin,
   sometimes a chicane or esses), Extra hard (the 19 real training circuits, in both directions, with their real
   widths; the test circuits are the four held-out ones). Generated maps run clockwise or counter-clockwise and the
-  panel's map line names the road width.
+  panel's Map row names the road width.
 - **Controllers of earlier revisions** have 10 or 12 inputs instead of 18 (or 15 actions instead of 45); the race view
   leaves them out and says so.
-- **Racing line:** the race view draws the racing line thinly on the road.
-- **Leader's speed:** during a race, a box at the map's top-left corner names the race leader (the car the follow
-  camera tracks) and its speed in mph.
-- **Pole lap's car:** on a test circuit, the pole lap's driver races as a dark car with a white border, named for
-  example *Lewis Hamilton 2020 (pole)*, with its own leaderboard row. It starts at speed on the start line and laps the
-  racing line in exactly the pole time, its speed along the lap the car's ideal speed profile scaled to that time: only
-  its lap time is real, where the driver was within a lap is an estimate. The cars never sense it.
-- **Playback speed:** 1× is twice real time.
+- **Racing line:** both views draw the racing line as a thin green ribbon on the road.
+- **Pole lap's car:** on a test circuit, the pole lap's driver races as a see-through dark car, named for example
+  *Lewis Hamilton 2020 (pole)*, with its own leaderboard row. It starts at speed on the start line and laps the racing
+  line in exactly the pole time, its speed along the lap the car's ideal speed profile scaled to that time: only its
+  lap time is real, where the driver was within a lap is an estimate. The cars never sense it.
 
 ## Tests
 
