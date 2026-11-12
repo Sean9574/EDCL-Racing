@@ -299,6 +299,7 @@ LABELS = {"baseline": "Baseline", "kt_random": "KT Random", "kt_hyperband": "KT 
 COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E9",
           "kt_bayesian": "#CC79A7", "es": "#009E73", "ga": "#D55E00", "es_seeded": "#0072B2",
           "neat": "#F0E442"}         # the remaining Okabe-Ito color (spec §10.1)
+CHART_AVERAGE = 25           # generations in the bold moving average of the results charts (spec §11.4, version 3.18)
 
 # --- Application (spec §10) ---
 POPULATION_PRESETS = (100, 250, 550, 1000, 2000)    # 550 was the ES population to version 3.10 (spec §9.7)

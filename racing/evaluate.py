@@ -21,8 +21,6 @@ PER_SEED_COLUMNS = ["approach", "run_seed", "maps", "finished", "success", "lap_
 STAGES = (("imitation", "After imitation"), ("dagger", "After DAgger"), ("speed push", "After speed push"))
 LEVEL_NAMES = {**{level: f"{name} cleared" for level, name in config.DIFFICULTIES.items() if level < config.MAX_LEVEL},
                config.MAX_LEVEL: "Mastery goal"}
-SEED_STYLES = ("-", "--", ":", "-.")                       # one per run, runs 0-3 (spec §11.4)
-EVENT_STYLES = {"level_up": "-", "goal": "-", "tightened": ":", "hardened": "-."}
 
 
 def _drive_track(drivers, track_seed, level, factor):
@@ -424,20 +422,24 @@ def pole_figure(per_track, path):
     from racing import circuits
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, len(config.TEST_CIRCUITS), figsize=(3.4 * len(config.TEST_CIRCUITS), 3.2))
+    fig, axes = plt.subplots(1, len(config.TEST_CIRCUITS), figsize=(3.4 * len(config.TEST_CIRCUITS), 3.2),
+                             facecolor="white")
     for ax, name in zip(np.atleast_1d(axes), config.TEST_CIRCUITS):
         laps = per_track[per_track["circuit"] == name].groupby("approach")["flying_lap"].min()
         methods = [a for a in config.APPROACHES if a in laps.index and np.isfinite(laps[a])]
         pole = circuits.POLE_LAPS[name].seconds
+        style_axes(ax, circuits.NAMES[name])
+        ax.grid(False, axis="y")                             # the bars run along x, so the grid does too
+        ax.grid(axis="x", **CHART_GRID)
         bars = ax.barh([config.LABELS[a] for a in methods], [laps[a] for a in methods],
                        color=[config.COLORS[a] for a in methods], edgecolor="0.3", linewidth=0.5)
-        ax.bar_label(bars, labels=[f"{laps[a] - pole:+.2f} s" for a in methods], padding=2, fontsize=7)
+        # each gap label on a white box, so the pole line does not run through its text
+        ax.bar_label(bars, labels=[f"{laps[a] - pole:+.2f} s" for a in methods], padding=2, fontsize=7,
+                     bbox={"boxstyle": "square,pad=0.15", "facecolor": "white", "edgecolor": "none"})
         ax.set_xlim(0, 1.28 * max([pole] + [laps[a] for a in methods]))   # the longest bar and its gap label fit
         ax.invert_yaxis()                                    # the tables' order, first method on top
         ax.axvline(pole, color="0.1", linewidth=1.2, linestyle="--", label="pole lap")
-        ax.set_title(circuits.NAMES[name], fontsize=10)
         ax.set_xlabel("Flying lap (s)", fontsize=8)
-        ax.tick_params(labelsize=7)
     handles, labels = np.atleast_1d(axes)[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=7)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
@@ -698,15 +700,79 @@ def evolution_logs(runs_dir):
     return logs
 
 
+CHART_INK = "#1D2330"               # chart titles (spec §11.4, version 3.18)
+CHART_MUTED = "#6B7280"             # axis labels, tick labels and footnotes
+CHART_FAINT = (0, 0, 0, 0.28)       # the x-axis line and the event ticks
+CHART_GRID = {"color": "#000000", "alpha": 0.08, "linewidth": 0.8}
+RUN_MIX = "#8A919C"                 # the grey that later runs of a method are mixed toward
+EVENT_TICKS = {"level_up": 0.045, "goal": 0.045, "tightened": 0.025, "hardened": 0.025}   # share of the axis height
+AVERAGE_NOTE = f"Thin line: every generation. Bold line: {config.CHART_AVERAGE}-generation average."
+TICKS_NOTE = "Tall ticks: a level cleared; short ticks: a target cut or hardening."
+
+
+def run_shade(color, k, n):
+    """Run k of a method's n runs: the method's color, mixed toward a grey by 0.55 k / (n - 1), so runs are told
+    apart by shade rather than by dash pattern (spec §11.4)."""
+    import matplotlib.colors as mcolors
+    share = 0.55 * k / max(n - 1, 1)
+    return mcolors.to_hex((1 - share) * np.array(mcolors.to_rgb(color)) + share * np.array(mcolors.to_rgb(RUN_MIX)))
+
+
+def moving_average(values, window=config.CHART_AVERAGE):
+    """The centered moving average over `window` generations, shorter at the ends. A generation without a value
+    (NaN) stays NaN, and its neighbours average the values they have."""
+    values = pd.Series(np.asarray(values, dtype=float))
+    return values.rolling(window, center=True, min_periods=1).mean().where(values.notna()).to_numpy()
+
+
+def style_axes(ax, title):
+    """The chart style of spec §11.4: white, no frame except a faint x-axis, a faint horizontal grid, no tick marks,
+    muted labels and a left-aligned semibold title."""
+    ax.set_facecolor("white")
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(CHART_FAINT)
+    ax.grid(axis="y", **CHART_GRID)
+    ax.set_axisbelow(True)
+    ax.tick_params(which="both", length=0, labelsize=7.5, labelcolor=CHART_MUTED)
+    ax.xaxis.label.set_color(CHART_MUTED)
+    ax.yaxis.label.set_color(CHART_MUTED)
+    ax.set_title(title, loc="left", fontsize=10.5, fontweight="semibold", color=CHART_INK, pad=6)
+
+
+def event_ticks(ax, generations, events):
+    """Ticks rising from the x-axis at the generations of a run's events: tall for a level advancement or the mastery
+    goal, short for a target cut or hardening (spec §11.4). Their height is a share of the axis height, so they do
+    not change the y-range."""
+    generations = np.asarray(generations, dtype=float)
+    heights = pd.Series(list(events)).map(EVENT_TICKS).to_numpy(dtype=float)
+    for height in sorted(set(EVENT_TICKS.values())):
+        at = generations[heights == height]
+        if len(at):
+            ax.vlines(at, 0, height, transform=ax.get_xaxis_transform(), colors=[CHART_FAINT], linewidth=1,
+                      clip_on=False)
+
+
+def _footnote(fig, *notes):
+    """The notes at the figure's bottom left, on one line, or one line each if the figure is too narrow; the figure
+    grows by the footnote's height and the panels are laid out above it."""
+    lines = [" ".join(notes)] if len(" ".join(notes)) <= 15 * fig.get_figwidth() else list(notes)
+    height = 0.14 + 0.16 * len(lines)                    # inches
+    fig.set_figheight(fig.get_figheight() + height)
+    fig.text(0.1, 0.1, "\n".join(lines), transform=fig.dpi_scale_trans, fontsize=8, color=CHART_MUTED,
+             linespacing=1.5)
+    fig.tight_layout(rect=(0, height / fig.get_figheight(), 1, 1))
+
+
 def _outline(color):
-    """Path effects that draw a thin dark outline around a line in a light color (NEAT's yellow), so it stays
-    visible on a white background; None for darker colors."""
+    """Path effects that draw a thin outline in a dark tint of a light color (NEAT's yellow) around its bold line, so
+    it stays visible on a white background; None for darker colors."""
     import matplotlib.colors as mcolors
     import matplotlib.patheffects as effects
     r, g, b = mcolors.to_rgb(color)
     if 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.7:
         return None
-    return [effects.Stroke(linewidth=2.6, foreground="0.35"), effects.Normal()]
+    return [effects.Stroke(linewidth=2.5, foreground=(0.55 * r, 0.55 * g, 0.55 * b)), effects.Normal()]
 
 
 def _line_kwargs(color):
@@ -714,25 +780,30 @@ def _line_kwargs(color):
     return {"color": color} if outline is None else {"color": color, "path_effects": outline}
 
 
+def _run_lines(ax, generations, values, color, label=None):
+    """One run's series: every generation as a faint line under the bold moving average."""
+    values = np.asarray(values, dtype=float)
+    ax.plot(generations, values, color=color, linewidth=0.5, alpha=0.28)
+    ax.plot(generations, moving_average(values), linewidth=1.6, label=label, solid_capstyle="round",
+            solid_joinstyle="round", **_line_kwargs(color))
+
+
 def _plot_runs(ax, runs, column, approach):
-    """One line per run of `column` (runs told apart by line style), with level advancements and the mastery goal
-    as solid and target reductions as dotted grey vertical lines."""
-    for k, (seed, log) in enumerate(sorted(runs.items())):
+    """`column` of each run as in _run_lines, runs told apart by run_shade of the method's color, with each run's
+    events as event_ticks."""
+    ordered = sorted(runs.items())
+    for k, (seed, log) in enumerate(ordered):
         if column not in log:
             continue
-        ax.plot(log["generation"], log[column], linewidth=1.2, linestyle=SEED_STYLES[k % len(SEED_STYLES)],
-                label=f"run {seed}", **_line_kwargs(config.COLORS[approach]))
-        events = log["event"].fillna("").astype(str) if "event" in log else []
-        for generation, event in zip(log["generation"], events):
-            if event in EVENT_STYLES:
-                ax.axvline(generation, color="0.6", linewidth=0.6, linestyle=EVENT_STYLES[event], zorder=0)
+        _run_lines(ax, log["generation"], log[column], run_shade(config.COLORS[approach], k, len(ordered)),
+                   label=f"run {seed}")
+        if "event" in log:
+            event_ticks(ax, log["generation"], log["event"])
 
 
 def _panels(plt, logs, column, ylabel, threshold=None, sharey=True):
-    """Small multiples: one panel per method with data in `column`, one line per run (told apart by line style),
-    level advancements and the mastery goal as solid and target reductions as dotted grey vertical lines. None if no
-    method has data."""
-    from matplotlib.lines import Line2D
+    """Small multiples: one panel per method with data in `column`, its runs as in _plot_runs, the first panel's
+    legend naming the runs and a footnote explaining the lines and ticks. None if no method has data."""
     with_data = {approach: runs for approach, runs in logs.items()
                  if any(column in log and log[column].notna().any() for log in runs.values())}
     if not with_data:
@@ -741,24 +812,19 @@ def _panels(plt, logs, column, ylabel, threshold=None, sharey=True):
     ncols = min(4, n)
     nrows = -(-n // ncols)
     fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows), squeeze=False,
-                             sharey=sharey)
+                             sharey=sharey, facecolor="white")
     for ax in axes.flat[n:]:
         ax.set_visible(False)
     for ax, (approach, runs) in zip(axes.flat, with_data.items()):
+        style_axes(ax, config.LABELS[approach])
         _plot_runs(ax, runs, column, approach)
         if threshold is not None:
             ax.axhline(threshold, color="0.3", linewidth=0.8, linestyle="--", zorder=0)
-        ax.set_title(config.LABELS[approach], fontsize=10)
         ax.set_xlabel("Generation", fontsize=8)
-        ax.tick_params(labelsize=7)
-        ax.grid(alpha=0.25, linewidth=0.5)
     for row in axes:
         row[0].set_ylabel(ylabel, fontsize=8)
-    handles, _ = axes.flat[0].get_legend_handles_labels()
-    handles += [Line2D([], [], color="0.6", linewidth=0.6, label="level cleared / goal"),
-                Line2D([], [], color="0.6", linewidth=0.6, linestyle=":", label="target cut")]
-    axes.flat[0].legend(handles=handles, frameon=False, fontsize=7)
-    fig.tight_layout()
+    axes.flat[0].legend(frameon=False, fontsize=7, handlelength=1.4)
+    _footnote(fig, AVERAGE_NOTE, TICKS_NOTE)
     return fig
 
 
@@ -768,8 +834,8 @@ SETUP_PANELS = (("sensor_mean", "Sensor length (m)", config.SENSOR_LENGTH_LIMITS
 
 def _setup_figure(plt, logs):
     """Spec §11.4: for each method, the population's mean sensor length (upper panel) and mean steering
-    sensitivity (lower panel) per generation, one line per run, with level advancements and target reductions
-    marked and the starting setup (150 m, sensitivity 1) as a dashed line. None if no log records setups."""
+    sensitivity (lower panel) per generation, its runs as in _plot_runs, and the starting setup (150 m,
+    sensitivity 1) as a dashed line. None if no log records setups."""
     from matplotlib.lines import Line2D
     from matplotlib.ticker import FuncFormatter, NullFormatter
     with_setup = {approach: runs for approach, runs in logs.items()
@@ -778,7 +844,8 @@ def _setup_figure(plt, logs):
         return None
     ncols = min(4, len(with_setup))
     groups = -(-len(with_setup) // ncols)
-    fig, axes = plt.subplots(2 * groups, ncols, figsize=(3.4 * ncols, 4.6 * groups), squeeze=False)
+    fig, axes = plt.subplots(2 * groups, ncols, figsize=(3.4 * ncols, 4.6 * groups), squeeze=False,
+                             facecolor="white")
     for ax in axes.flat:
         ax.set_visible(False)
     for k, (approach, runs) in enumerate(with_setup.items()):
@@ -786,24 +853,22 @@ def _setup_figure(plt, logs):
         for row, (name, ylabel, limits, index) in enumerate(SETUP_PANELS):
             ax = axes[2 * group + row, column]
             ax.set_visible(True)
+            style_axes(ax, config.LABELS[approach] if row == 0 else "")   # the method heads its pair of panels
             _plot_runs(ax, runs, name, approach)
             ax.axhline(config.DEFAULT_SETUP[index], color="0.3", linewidth=0.8, linestyle="--", zorder=0)
             ax.set_yscale("log")
             ax.set_ylim(*limits)
             ax.set_yticks([limits[0], config.DEFAULT_SETUP[index], limits[1]])   # plain labels on the log axis
-            ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.3g}"))
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0f}" if value >= 1 else
+                                                       f"{value:.3g}"))
             ax.yaxis.set_minor_formatter(NullFormatter())
-            ax.set_title(f"{config.LABELS[approach]}: {ylabel[0].lower()}{ylabel[1:]}", fontsize=9)
             ax.set_xlabel("Generation", fontsize=8)
-            ax.set_ylabel(ylabel, fontsize=8)
-            ax.tick_params(labelsize=7)
-            ax.grid(alpha=0.25, linewidth=0.5)
-    handles, _ = axes[0, 0].get_legend_handles_labels()
-    handles += [Line2D([], [], color="0.3", linewidth=0.8, linestyle="--", label="starting setup"),
-                Line2D([], [], color="0.6", linewidth=0.6, label="level cleared / goal"),
-                Line2D([], [], color="0.6", linewidth=0.6, linestyle=":", label="target cut")]
-    axes[0, 0].legend(handles=handles, frameon=False, fontsize=7)
-    fig.tight_layout()
+            if column == 0:
+                ax.set_ylabel(ylabel, fontsize=8)
+    handles, _ = axes[1, 0].get_legend_handles_labels()
+    handles += [Line2D([], [], color="0.3", linewidth=0.8, linestyle="--", label="starting setup")]
+    axes[1, 0].legend(handles=handles, frameon=False, fontsize=7, handlelength=1.4, ncol=2)
+    _footnote(fig, AVERAGE_NOTE, TICKS_NOTE)
     return fig
 
 
@@ -828,8 +893,8 @@ def evolved_networks_table(drivers):
 
 def figures(runs_dir, out_dir):
     """Spec §11.4: the lowest map success share and the median lap time over training (one panel per method,
-    one line per run), the population's mean setup, the GA's and NEAT's mean network size over training, the
-    step sizes, and the Keras Tuner trials. Only figures with data are written."""
+    runs told apart by shade), the population's mean setup, the GA's and NEAT's mean network size over training, the
+    step sizes, and the Keras Tuner trials, in the chart style of version 3.18. Only figures with data are written."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -846,7 +911,7 @@ def figures(runs_dir, out_dir):
         if fig is None:
             continue
         if column == "min_share":
-            fig.axes[0].set_ylim(0.0, 1.02)                 # the y-axis is shared, so this sets every panel
+            fig.axes[0].set_ylim(-0.07, 1.02)               # shared y-axis; the event ticks fit in the strip below 0
         written.append(out_dir / name)
         fig.savefig(written[-1], dpi=150)
         plt.close(fig)
@@ -860,7 +925,8 @@ def figures(runs_dir, out_dir):
     with_steps = {approach: runs for approach, runs in logs.items()
                   if any("step_size" in log for log in runs.values())}
     if with_steps:
-        fig, ax = plt.subplots(figsize=(7, 3.5))
+        fig, ax = plt.subplots(figsize=(7, 3.5), facecolor="white")
+        style_axes(ax, "Step sizes")
         for approach, runs in with_steps.items():
             if approach == "ga":
                 name = "GA mutation strength"
@@ -868,21 +934,23 @@ def figures(runs_dir, out_dir):
                 name = f"{config.LABELS[approach]} speed push σ"
             else:
                 name = f"{config.LABELS[approach]} σ"
-            for k, (seed, log) in enumerate(sorted(runs.items())):
+            ordered = sorted(runs.items())
+            for k, (seed, log) in enumerate(ordered):
                 if "step_size" in log:
-                    ax.plot(log["generation"], log["step_size"], linewidth=1.0, label=name if k == 0 else None,
-                            **_line_kwargs(config.COLORS[approach]))
+                    _run_lines(ax, log["generation"], log["step_size"],
+                               run_shade(config.COLORS[approach], k, len(ordered)), label=name if k == 0 else None)
         ax.set_yscale("log")
-        ax.set_xlabel("Generation")
-        ax.legend(frameon=False, fontsize=7)
-        fig.tight_layout()
+        ax.set_xlabel("Generation", fontsize=8)
+        ax.legend(frameon=False, fontsize=7, handlelength=1.4)
+        _footnote(fig, AVERAGE_NOTE)                     # no event ticks: the methods share one axis
         written.append(out_dir / "step_sizes.png")
         fig.savefig(written[-1], dpi=150)
         plt.close(fig)
 
     trials = tuner_trials(runs_dir)
     if trials:
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots(figsize=(7, 4), facecolor="white")
+        style_axes(ax, "Keras Tuner trials")
         for approach, (table, pick) in trials.items():
             color = config.COLORS[approach]
             ax.scatter(table["params"], table["val_accuracy"], color=color, s=18, alpha=0.7,
@@ -890,13 +958,27 @@ def figures(runs_dir, out_dir):
             ax.scatter(pick["params"], pick["val_accuracy"], color=color, s=140, marker="*",
                        edgecolor="black", linewidth=0.8)
         ax.set_xscale("log")
-        ax.set_xlabel("Parameters")
-        ax.set_ylabel("Validation accuracy")
-        ax.legend(frameon=False)
+        ax.set_xlabel("Parameters", fontsize=8)
+        ax.set_ylabel("Validation accuracy", fontsize=8)
+        ax.legend(frameon=False, fontsize=7)
         fig.tight_layout()
         written.append(out_dir / "kt_trials.png")
         fig.savefig(written[-1], dpi=150)
         plt.close(fig)
+    return written
+
+
+def redraw_figures(results_dir=config.RESULTS_DIR):
+    """The figures of spec §11.4 redrawn from a results folder's saved logs and tables, without new runs: those of
+    figures() and, when the test races have flying laps, the pole-lap figure. The networks figure needs the trained
+    controllers and is left as it is. Returns the paths written."""
+    results_dir = Path(results_dir)
+    written = figures(results_dir / "runs", results_dir / "figures")
+    table = results_dir / "tables" / "driving_per_track.csv"
+    if table.exists():
+        per_track = pd.read_csv(table)
+        if per_track["flying_lap"].notna().any():
+            written.append(pole_figure(per_track, results_dir / "figures" / "pole_laps.png"))
     return written
 
 

@@ -1,8 +1,12 @@
 import json
 
+import matplotlib
 import numpy as np
 import pandas as pd
 import pytest
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
 
 from racing import config, evaluate, nets, neat, paths, population, sim
 
@@ -641,16 +645,21 @@ def test_the_robustness_table_gives_finishes_per_run():
     assert ga["14 m finished per run"] == "1 · 0 · 1 · –" and ga["14 m finished (1 maps)"] == "2 / 3"
 
 
-def test_plot_runs_gives_runs_0_to_3_four_different_line_styles():
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+def test_runs_are_told_apart_by_shade_not_dashes():
+    """Version 3.18: runs 0-3 share the line style and differ by shades of the method's color."""
     fig, ax = plt.subplots()
     log = pd.DataFrame({"generation": [0, 1, 2], "fitness": [1.0, 2.0, 3.0]})
     evaluate._plot_runs(ax, {run: log for run in range(4)}, "fitness", "ga")
-    styles = [line.get_linestyle() for line in ax.get_lines()]
+    lines = ax.get_lines()
     plt.close(fig)
-    assert len(styles) == 4 and len(set(styles)) == 4
+    assert {line.get_linestyle() for line in lines} == {"-"}
+    assert len({line.get_color() for line in lines if line.get_linewidth() > 1}) == 4
+
+
+def test_moving_average_skips_nans():
+    y = np.array([1.0, np.nan, 3.0, 5.0])
+    out = evaluate.moving_average(y, window=3)
+    assert np.isnan(out[1]) and out[2] == pytest.approx(4.0)
 
 
 def test_reduction_cells_append_mean_and_sd_over_the_runs_that_reached_the_goal():
@@ -770,7 +779,41 @@ def test_the_pole_figure_fits_slow_bars_and_their_gap_labels(tmp_path, monkeypat
             assert text.get_window_extent().x1 <= ax.bbox.x1
 
 
-def test_the_training_figure_marks_a_hardened_run():
-    """Version 3.15: the generation a run is hardened is marked like a level-up or a target cut."""
-    assert evaluate.EVENT_STYLES["hardened"] not in (evaluate.EVENT_STYLES["level_up"],
-                                                    evaluate.EVENT_STYLES["tightened"])
+def test_level_ticks_are_taller_than_target_cut_ticks():
+    """Version 3.18: level advancements and the mastery goal are tall ticks on the x-axis, target cuts and hardening
+    (version 3.15) short ones; the ticks are drawn in axis height, so they leave the data's y-range alone."""
+    fig, ax = plt.subplots()
+    ax.plot([0, 20], [40.0, 60.0])
+    evaluate.event_ticks(ax, [0, 5, 9, 12, 20], ["level_up", "tightened", "goal", "hardened", np.nan])
+    tops = {float(segment[0, 0]): float(segment[:, 1].max())
+            for collection in ax.collections for segment in collection.get_segments()}
+    bottom = ax.get_ylim()[0]
+    plt.close(fig)
+    assert tops == {0.0: 0.045, 5.0: 0.025, 9.0: 0.045, 12.0: 0.025}
+    assert bottom > 30.0
+
+
+def test_redraw_figures_writes_the_same_file_names(tmp_path):
+    """The figures are redrawn from a results folder's logs and tables without new runs; the networks figure needs
+    the trained controllers and is not drawn."""
+    runs = tmp_path / "runs"
+    for seed in (0, 1):
+        folder = paths.run_dir("ga", seed, runs)
+        write_log(folder, [None, "level_up", "tightened", "goal"], [0.1, 0.92, 0.5, 0.95], [np.nan, 41.0, 40.0, 38.5])
+        log = pd.read_csv(folder / "log.csv")
+        log["mean_nodes"], log["sensor_mean"], log["steer_mean"] = [0.0, 1.0, 1.5, 2.0], 150.0, 1.2
+        log.to_csv(folder / "log.csv", index=False)
+    search = paths.search_dir("kt_random", runs)
+    search.mkdir(parents=True)
+    pd.DataFrame({"trial_id": ["00", "01"], "config_id": ["00", "01"], "val_accuracy": [0.5, 0.6],
+                  "params": [100, 200], "epochs": 3}).to_csv(search / "trials.csv", index=False)
+    write_json(search / "summary.json", {"chosen_trial": "01"})
+    (tmp_path / "tables").mkdir()
+    pole_rows([("ga", 0, k, 95.0, 85.0, 86.0) for k in config.TEST_TRACKS]).to_csv(
+        tmp_path / "tables" / "driving_per_track.csv", index=False)
+    written = evaluate.redraw_figures(tmp_path)
+    assert sorted(p.name for p in written) == sorted([
+        "success_over_training.png", "lap_time_over_training.png", "setup_over_training.png",
+        "network_size_over_training.png", "step_sizes.png", "kt_trials.png", "pole_laps.png"])
+    assert all(p.parent == tmp_path / "figures" and p.read_bytes()[:4] == b"\x89PNG" for p in written)
+    assert not (tmp_path / "figures" / "networks.png").exists()
