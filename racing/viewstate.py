@@ -192,6 +192,7 @@ def panel_state(app):
         "race_level": {"choices": _choices(config.APP_DIFFICULTIES), "active": int(app.race_level),
                        "enabled": not racing},
         "racing": racing,
+        "paused": bool(app.race_paused),
         "start": {"enabled": not racing and bool(cars)},
         "race_runs": {"value": app.race_runs, "enabled": not racing},
         "group": {"value": app.race_group, "available": bool(app.app_available)},

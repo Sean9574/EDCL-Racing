@@ -10,7 +10,34 @@
 <main class="sim" id="sim">
   <!-- scene.js puts the WebGL canvas first in #sim; everything below floats over it -->
   <section class="glass panel" id="panel" aria-label="Panel" hidden></section>
-  <nav class="ctrl" id="topbar" aria-label="Viewer controls"></nav>
+  <nav class="ctrl" id="topbar" aria-label="Viewer controls">
+    <div class="glass seg" id="modes" role="group" aria-label="View">
+      <button type="button" data-mode="train">Training</button>
+      <button type="button" data-mode="race">Race</button>
+    </div>
+    <div class="glass seg" id="cameras" role="group" aria-label="Camera">
+      <button type="button" data-camera="chase">Chase</button>
+      <button type="button" data-camera="wheels">Wheels</button>
+      <button type="button" data-camera="top">Top</button>
+      <button type="button" data-camera="map">Whole map</button>
+    </div>
+    <div class="glass seg" id="speeds" role="group" aria-label="Playback speed">
+      <button type="button" data-speed="1">1×</button>
+      <button type="button" data-speed="2">2×</button>
+      <button type="button" data-speed="4">4×</button>
+      <button type="button" data-speed="8">8×</button>
+      <button type="button" class="race-only" id="pauseBtn">Pause</button>
+    </div>
+    <div class="glass seg" id="rays" role="group" aria-label="Sensor rays">
+      <button type="button" data-rays="car"><i class="ray-dot"></i>Rays: this car</button>
+      <button type="button" data-rays="all">All cars</button>
+      <button type="button" data-rays="off">Off</button>
+    </div>
+    <div class="glass seg">
+      <button type="button" id="setupBtn" aria-expanded="false" aria-controls="drawer">Race setup</button>
+    </div>
+    <div class="glass seg"><button type="button" id="quitBtn">Quit</button></div>
+  </nav>
   <aside class="glass drawer" id="drawer" aria-label="Setup"></aside>
   <section class="glass progress" id="progress" aria-label="Training progress" hidden></section>
   <figure class="glass mini" id="mini" hidden><figcaption class="cap">Whole track</figcaption><canvas id="minimap"></canvas></figure>
@@ -21,5 +48,6 @@
 <script src="/static/js/scene.js"></script>
 <script src="/static/js/cars.js"></script>
 <script src="/static/js/main.js"></script>
+<script src="/static/js/race.js"></script>
 </body>
 </html>

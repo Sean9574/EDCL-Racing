@@ -185,7 +185,8 @@ def test_every_command_name_is_accepted_and_unknown_ones_raise(window, tmp_path,
     fake_trainer_context(monkeypatch, [])
     calls = {"mode": "race", "approach": "es", "source": None, "folder": None, "run": 1, "difficulty": 2,
              "population": 1, "play": None, "stop": None, "new_run": None, "show": "worst", "shown": 5, "speed": 4,
-             "grip": "Unlimited", "network": None, "track": 1, "race_level": 3, "start": None, "race_runs": None,
+             "grip": "Unlimited", "network": None, "track": 1, "race_level": 3, "start": None, "pause": True,
+             "race_runs": None,
              "method": "ga", "group": None, "app_choice": "ga", "follow": None, "quit": None}
     assert set(calls) == set(viewer.COMMANDS)
     for name, arg in calls.items():
@@ -224,7 +225,8 @@ def test_bad_command_arguments_raise(window, tmp_path):
     for name, arg in (("approach", "x"), ("speed", 3), ("difficulty", 9), ("follow", 99), ("follow", "a"),
                       ("follow", True), ("run", 2), ("population", 0), ("show", "some"), ("shown", "9"),
                       ("shown", 2.5), ("grip", "Slippery"), ("race_level", 9), ("mode", "pit"), ("method", "zz"),
-                      ("app_choice", "ga"), ("track", 0), ("speed", [1]), ("difficulty", True)):
+                      ("app_choice", "ga"), ("track", 0), ("speed", [1]), ("difficulty", True), ("pause", 1),
+                      ("pause", None), ("race_runs", "most")):
         with pytest.raises(ValueError):
             window.command(name, arg)
     assert before == (window.approach, window.speed, window.difficulty, window.follow)
@@ -239,3 +241,37 @@ def test_panel_state_is_plain_json_in_every_view(window, tmp_path):
     window.update(1 / 60)
     state = panel_state(window)
     assert json.loads(json.dumps(state)) == state
+
+
+def test_pause_holds_the_running_race_and_the_panel_says_so(window, tmp_path):
+    race_window(window, tmp_path)
+    window.command("pause", True)                               # no race yet: nothing to hold
+    assert not window.race_paused and panel_state(window)["paused"] is False
+    window.update(1 / 60)
+    window.command("start")
+    window.update(0.2)
+    window.command("pause", True)
+    held = window.race.elapsed
+    window.update(0.2)
+    assert window.race.elapsed == held and panel_state(window)["paused"] is True
+    window.command("pause", False)
+    window.update(0.2)
+    assert window.race.elapsed > held and panel_state(window)["paused"] is False
+    window.command("pause", True)
+    window.command("stop")                                      # a new race starts unpaused
+    assert not window.race_paused
+    window.update(1 / 60)
+    window.command("start")
+    assert window.racing and not window.race_paused
+
+
+def test_race_runs_takes_a_choice_at_once_or_cycles_without_one(window, tmp_path):
+    race_window(window, tmp_path)
+    window.command("race_runs", "seeded")
+    assert window.race_runs == "seeded" and panel_state(window)["race_runs"]["value"] == "seeded"
+    window.command("race_runs", None)
+    assert window.race_runs == "unseeded"
+    window.update(1 / 60)
+    window.command("start")
+    window.command("race_runs", "best")                         # locked while a race runs
+    assert window.race_runs == "unseeded"

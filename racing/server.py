@@ -113,7 +113,8 @@ class ViewerServer:
             now = time.perf_counter()
             dt, last = now - last, now
             try:
-                self._run_commands()
+                if self._run_commands():
+                    next_panel = 0.0                    # a command's effect reaches the page at once
                 if not app.alive:
                     break
                 app.watched = self.clients > 0
@@ -138,11 +139,14 @@ class ViewerServer:
             self.finished.set()
 
     def _run_commands(self):
+        """Run the queued commands; whether there were any."""
+        ran = False
         while True:
             try:
                 command = self.commands.get_nowait()
             except queue.Empty:
-                return
+                return ran
+            ran = True
             try:
                 self.app.command(command.name, command.arg)
                 log.info("command %s %r", command.name, command.arg)
@@ -154,7 +158,7 @@ class ViewerServer:
                 log.exception("command %s %r failed", command.name, command.arg)
             command.done.set()
             if not self.app.alive:
-                return
+                return ran
 
     def _publish_scene(self):
         """Keep the scene current every tick (cheap: built only when the shown track changes) and log track loads."""
@@ -168,8 +172,7 @@ class ViewerServer:
             self.scene_key = key
             self.scene_json = "null" if scene is None else _json(scene)
             self.scene_version += 1
-            if scene is None:
-                self.frame_json = None
+            self.frame_json = None                      # the last frame is of the old track; a page waits for a new one
             self.state.notify_all()
 
     def _forget_payloads(self):

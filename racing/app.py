@@ -567,6 +567,7 @@ class App:
         self.ghost = None                   # PoleGhost of a test circuit's race, else None
         self.ghosts = {}                    # (circuit, track length, pole lap) -> PoleGhost, built once
         self.racing = False
+        self.race_paused = False            # Pause holds the running race where it is
         self.failed = set()                 # (approach, seed) whose controller file could not be loaded
         self.app_available = {}             # approach -> run seeds with a saved app car (spec §10.6)
         self.app_choice = {}                # approach -> "off" or a run seed
@@ -1204,9 +1205,13 @@ class App:
 
     def cycle_race_runs(self):
         """Race the best runs, all runs, the seeded runs or the unseeded runs (spec §10.3). Not during a race."""
-        if self.racing:
+        self.set_race_runs(RACE_RUNS[(RACE_RUNS.index(self.race_runs) + 1) % len(RACE_RUNS)])
+
+    def set_race_runs(self, runs):
+        """Race the runs of one RACE_RUNS choice. Not during a race."""
+        if self.racing or runs == self.race_runs:
             return
-        self.race_runs = RACE_RUNS[(RACE_RUNS.index(self.race_runs) + 1) % len(RACE_RUNS)]
+        self.race_runs = runs
         self.reset_race()
 
     def toggle_race(self, approach):
@@ -1251,6 +1256,7 @@ class App:
     def reset_race(self):
         """Back to the map preview: the selected controllers and app cars wait on the start line."""
         self.racing = False
+        self.race_paused = False
         self.race = None
         self.ghost = None
         self.step_budget = 0.0
@@ -1339,7 +1345,15 @@ class App:
         self.prepare_race()
         if self.race is not None:
             self.racing = True
+            self.race_paused = False
             self.status = "Racing."
+
+    def pause_race(self, paused):
+        """Hold the running race where it is, or let it continue. Only while a race runs."""
+        if not self.racing or paused == self.race_paused:
+            return
+        self.race_paused = paused
+        self.status = "Race paused." if paused else "Racing."
 
     def stop_race(self):
         self.reset_race()
@@ -1381,7 +1395,7 @@ class App:
             active = None if frozen else self.playback
         else:
             self.prepare_race()
-            active = self.race if self.racing else None
+            active = self.race if self.racing and not self.race_paused else None
         if active is not None and self.watched:
             self.step_budget += self.speed * config.PLAYBACK_BASE * dt / config.DT
             steps = int(self.step_budget)
@@ -1428,6 +1442,20 @@ def _whole(arg, what):
     return int(arg)
 
 
+def _flag(arg, what):
+    if not isinstance(arg, bool):
+        raise ValueError(f"{what}: {arg!r} is not true or false")
+    return arg
+
+
+def _race_runs(app, arg):
+    """No argument cycles the choices (spec §10.3); a choice of RACE_RUNS is taken at once."""
+    if arg is None:
+        app.cycle_race_runs()
+    else:
+        app.set_race_runs(_one_of(arg, RACE_RUNS, "race_runs"))
+
+
 def _follow(app, arg):
     if arg is not None and not 0 <= _whole(arg, "follow") < len(app.race_cars()):
         raise ValueError(f"follow: {arg!r} is not a car of the race")
@@ -1459,7 +1487,8 @@ COMMANDS = {        # the page's commands (name -> function of the app and its a
     "track": lambda app, arg: app.change_race_track(_direction(arg)),
     "race_level": lambda app, arg: app.set_race_level(_one_of(arg, config.APP_DIFFICULTIES, "race_level")),
     "start": lambda app, arg: app.start_race(),
-    "race_runs": lambda app, arg: app.cycle_race_runs(),
+    "pause": lambda app, arg: app.pause_race(_flag(arg, "pause")),
+    "race_runs": _race_runs,
     "method": lambda app, arg: app.toggle_race(_one_of(arg, config.APPROACHES, "method")),
     "group": lambda app, arg: app.cycle_race_group(),
     "app_choice": _app_choice,

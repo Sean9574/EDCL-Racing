@@ -219,6 +219,130 @@
     showNotice();
   };
 
+  // ---------- the shared interface: top bar, setup drawer, keys (both views) ----------
+  /* ECR.ui, for race.js and training.js:
+       el(tag, className, text)        a new element
+       icon(name)                      a small inline SVG: "prev" | "next"
+       sync(box, items, make, update)  keyed list: reuse box's children by item.key (focus and hover survive)
+       command(name, arg)              ECR.send, a refusal logged to the console
+       setDrawer(open), drawerOpen()   the setup drawer under the top bar; open adds `setup` to #sim (no mini-map)
+       onKey(fn)                       fn(event, key) → true when it used the key; never called while typing */
+  const ui = ECR.ui = {};
+  ui.el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const ICONS = {prev: "M6.5 1.5 3 5l3.5 3.5", next: "M3.5 1.5 7 5 3.5 8.5"};
+  ui.icon = name => {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg"), path = document.createElementNS(ns, "path");
+    svg.setAttribute("viewBox", "0 0 10 10");
+    svg.setAttribute("class", "icon");
+    svg.setAttribute("aria-hidden", "true");
+    path.setAttribute("d", ICONS[name]);
+    svg.appendChild(path);
+    return svg;
+  };
+  ui.sync = (box, items, make, update) => {
+    const old = new Map();
+    for (const node of box.children) old.set(node.dataset.key, node);
+    items.forEach((item, k) => {
+      let node = old.get(item.key);
+      if (node) old.delete(item.key);
+      else { node = make(item); node.dataset.key = item.key; }
+      update(node, item);
+      if (box.children[k] !== node) box.insertBefore(node, box.children[k] || null);
+    });
+    for (const node of old.values()) node.remove();
+  };
+  ui.command = (name, arg) => ECR.send(name, arg).then(error => {
+    if (error) console.warn(`command ${name} refused: ${error}`);
+    return error;
+  });
+
+  const topbar = document.getElementById("topbar");
+  const drawer = document.getElementById("drawer");
+  const setupBtn = document.getElementById("setupBtn");
+  const buttonsOf = (group, attr) => [...document.querySelectorAll(`#${group} [data-${attr}]`)];
+
+  // the drawer hangs under the top bar, which wraps to two rows in a narrow window
+  function placeDrawer() {
+    const top = topbar.offsetTop + topbar.offsetHeight + 8;
+    drawer.style.top = `${top}px`;
+    drawer.style.maxHeight = `calc(100% - ${top + 14}px)`;
+  }
+  new ResizeObserver(placeDrawer).observe(topbar);
+  ui.drawerOpen = () => drawer.classList.contains("open");
+  ui.setDrawer = open => {
+    drawer.classList.toggle("open", open);
+    sim.classList.toggle("setup", open);
+    setupBtn.classList.toggle("on", open);
+    setupBtn.setAttribute("aria-expanded", String(open));
+    if (open) placeDrawer();
+  };
+
+  function syncView() {
+    for (const b of buttonsOf("cameras", "camera")) b.classList.toggle("on", b.dataset.camera === ECR.view.camera);
+    for (const b of buttonsOf("rays", "rays")) b.classList.toggle("on", b.dataset.rays === ECR.view.rays);
+  }
+  ECR.onView(syncView);
+  syncView();
+
+  ECR.onPanel(p => {
+    sim.dataset.mode = p.mode;
+    for (const b of buttonsOf("modes", "mode")) b.classList.toggle("on", b.dataset.mode === p.mode);
+    for (const b of buttonsOf("speeds", "speed")) b.classList.toggle("on", Number(b.dataset.speed) === p.speed);
+    setupBtn.textContent = p.mode === "race" ? "Race setup" : "Training setup";
+  });
+
+  const cycle = (list, value) => list[(list.indexOf(value) + 1) % list.length];
+  const clicks = {
+    mode: b => { if (!b.classList.contains("on")) ui.command("mode", b.dataset.mode); },
+    camera: b => ECR.scene.setCamera(b.dataset.camera),
+    speed: b => ui.command("speed", Number(b.dataset.speed)),
+    rays: b => ECR.scene.setRays(b.dataset.rays),
+  };
+  topbar.addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b || b.disabled) return;
+    for (const attr in clicks) if (attr in b.dataset) return clicks[attr](b);
+  });
+  setupBtn.addEventListener("click", () => ui.setDrawer(!ui.drawerOpen()));
+  document.getElementById("quitBtn").addEventListener("click", () => {
+    ECR.send("quit").finally(() => ECR.close());
+  });
+
+  // keys: C cycles the cameras, R the rays, Escape closes the drawer; the views add theirs with ui.onKey
+  const keyHandlers = [];
+  ui.onKey = fn => { keyHandlers.push(fn); };
+  const typing = e => {
+    const t = e.target;
+    return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  };
+  let spaceTaken = false;
+  document.addEventListener("keydown", e => {
+    if (notices.final || typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const raw = e.key || "", key = raw.length === 1 ? raw.toLowerCase() : raw;
+    let used = false;
+    if (e.repeat && (key === "c" || key === "r" || key === " ")) used = true;          // held keys act once
+    else if (key === "c") { ECR.scene.setCamera(cycle(ECR.scene.CAMERAS, ECR.view.camera)); used = true; }
+    else if (key === "r") { ECR.scene.setRays(cycle(ECR.scene.RAY_MODES, ECR.view.rays)); used = true; }
+    else if (key === "Escape" && ui.drawerOpen()) { ui.setDrawer(false); used = true; }
+    else {
+      for (const fn of keyHandlers) {
+        try { used = fn(e, key) === true; } catch (error) { console.error(error); }
+        if (used) break;
+      }
+    }
+    if (used) e.preventDefault();
+    if (key === " ") spaceTaken = used;
+  });
+  document.addEventListener("keyup", e => {          // a Space the page used never also presses a focused button
+    if (e.key === " " && spaceTaken) { e.preventDefault(); spaceTaken = false; }
+  });
+
   // ---------- the display loop ----------
   let last = performance.now(), failed = null;
   function tick(ms) {
