@@ -559,9 +559,9 @@ EC Racing viewer
   and choosing a speed while paused continues. In the race view training runs at full speed. The panel shows the
   generation, the map, the difficulty, each map's success share against the requirement (90%, or 50% in the speed
   push), the streak, the target cut, the step size (mutation strength or σ), the cars kept, the best and mean
-  fitness, the population's mean sensor length and steering sensitivity, and the best shown car's speed in mph. The progress card at the bottom left
-  plots the lowest map success share per generation against the dashed requirement, with tall ticks for a level
-  cleared and short ticks for a target cut or hardening.
+  fitness, the population's mean sensor length and steering sensitivity, and the best shown car's speed in mph. The
+  progress card at the bottom left plots the lowest map success share per generation against the dashed requirement,
+  with tall ticks for a level cleared and short ticks for a target cut or hardening.
 - **Cars shown:** **All**, **Best** or **Worst** (top bar or drawer), and how many with the **Cars shown** slider in
   the drawer, from 1 to the population size. The best car shown is drawn in full with a white ring and its rays, and
   the camera follows it; the others are light see-through cars, so even 2,000 stay smooth.
@@ -602,8 +602,8 @@ EC Racing viewer
 - **Grip:** *Normal* (a(v), 5 g rising to 10 g, the training grip) or *Unlimited* (10 × a(v)) sets the grip of the
   cars you watch in both views. It never affects training or results.
 - **Sensor rays:** the top bar's rays control shows the followed car's nine rays as a red fan, each ray drawn to that
-  car's own sensor length and glowing where it meets the road edge; in the race view it can also show every car's
-  rays, or none (R cycles).
+  car's own sensor length and glowing where it meets the road edge, or none; in the race view also every car's rays
+  (R cycles).
 - **Network window:** the **Network window** switch in either setup drawer opens a separate window (movable to another
   monitor, resizable, closed with the viewer) that shows a car's neural network live, about ten times a second: the
   inputs in real units (m, km/h, corner radius), every hidden layer as a column ("layer 1 · 16 neurons"), units shaded
