@@ -55,6 +55,8 @@ def test_race_frame_sends_rays_of_every_live_car_and_training_only_the_focus(win
     frame = frame_state(window)
     assert list(frame["rays"]) == [str(frame["focus"])] and len(frame["rays"][str(frame["focus"])]) == config.N_RAYS
     assert frame["action"] in nets_labels() and frame["ghost"] is None
+    focus = frame["focus"]
+    assert frame["sensor"] == {str(focus): round(float(window.playback.cars.ray_length[focus]), 1)}
     race_window(window, tmp_path)
     window.update(1 / 60)
     assert frame_state(window)["action"] == ""                     # before the first step
@@ -65,6 +67,8 @@ def test_race_frame_sends_rays_of_every_live_car_and_training_only_the_focus(win
     live = [str(i) for i, done in enumerate(frame["done"]) if not done]
     assert frame["mode"] == "race" and sorted(frame["rays"]) == sorted(live) and len(live) == 3
     assert frame["action"] in nets_labels() and frame["ghost"] is not None and len(frame["ghost"]) == 3
+    assert frame["sensor"] == {k: round(float(window.race.cars.ray_length[int(k)]), 1) for k in live}
+    assert all(max(frame["rays"][k]) <= frame["sensor"][k] for k in live)        # no ray is longer than its sensor
     window.race.cars.crashed[1] = True
     flags = frame_state(window)
     assert len(flags["crashed"]) == len(flags["done"]) == len(flags["x"])

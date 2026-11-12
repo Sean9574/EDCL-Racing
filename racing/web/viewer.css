@@ -1,0 +1,124 @@
+/* EC Racing viewer: a full-window 3D scene with glass cards floating over it (spec 3.18, Figures 1 and 2). */
+:root {
+  --scene: #1b1f25;                 /* scene background; the WebGL clear color is the same */
+  --ink: #eceef2;
+  --ink-2: #d7dbe2;
+  --soft: #c3c8d0;                  /* idle button text */
+  --muted: #9aa1ad;
+  --faint: #6f7682;
+  --line: rgba(255, 255, 255, .08);
+  --glass: rgba(16, 18, 22, .72);
+  --hover: rgba(255, 255, 255, .06);
+  --on: rgba(255, 255, 255, .14);
+  --ray: #ff4d5e;
+  --gutter: 14px;
+  color-scheme: dark;
+}
+
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--scene);
+  color: var(--ink);
+  font: 12.5px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+[hidden] { display: none !important; }
+
+/* ----- the scene ----- */
+.sim { position: fixed; inset: 0; overflow: hidden; background: var(--scene); }
+.sim > canvas.view { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; outline: none; }
+.sim > canvas.view:active { cursor: grabbing; }
+
+/* ----- glass cards ----- */
+.glass {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+}
+
+/* top left: the race or the training panel */
+.panel {
+  top: var(--gutter); left: var(--gutter);
+  width: 262px; max-height: calc(100% - 2 * var(--gutter));
+  padding: 12px 14px 10px;
+  line-height: 1.75;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.row { display: flex; justify-content: space-between; gap: 12px; }
+.k { color: var(--muted); }
+.sep { height: 1px; background: var(--line); margin: 7px 0 5px; }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; vertical-align: 0; }
+
+/* top right: the controls, one glass segment per group */
+.ctrl {
+  position: absolute; top: var(--gutter); right: var(--gutter);
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px;
+  max-width: calc(100% - 300px);
+}
+.seg { position: static; display: flex; padding: 3px; gap: 2px; }
+.seg button {
+  font: inherit; font-size: 12px; line-height: 1.5;
+  color: var(--soft); background: transparent;
+  border: 0; border-radius: 7px; padding: 5px 11px;
+  cursor: pointer; white-space: nowrap;
+  transition: background-color .15s, color .15s;
+}
+.seg button.on { background: var(--on); color: #fff; }
+.seg button:hover:not(.on):not(:disabled) { color: #fff; }
+.seg button:disabled { color: var(--faint); cursor: default; }
+.seg button:focus-visible { outline: 1px solid rgba(255, 255, 255, .5); outline-offset: -1px; }
+.seg button i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
+
+/* under the top bar: the setup drawer (.open shows it; #sim.setup hides the mini-map) */
+.drawer {
+  top: 62px; right: var(--gutter);
+  width: 300px; max-height: calc(100% - 76px);
+  padding: 12px 14px;
+  line-height: 1.6;
+  overflow: auto;
+  display: none;
+}
+.drawer.open { display: block; }
+.drawer .h { color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+.drawer .h:first-child { margin-top: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  font: inherit; font-size: 12px; line-height: 1.5;
+  padding: 3px 9px; border: 0; border-radius: 7px;
+  background: rgba(255, 255, 255, .07); color: var(--soft);
+  display: inline-flex; align-items: center; cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.chip.on { background: rgba(255, 255, 255, .16); color: #fff; }
+.chip:hover:not(.on):not(:disabled) { color: #fff; }
+.chip:disabled { color: var(--faint); cursor: default; }
+.chip i { width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; display: inline-block; }
+.go { margin-top: 10px; display: flex; gap: 6px; }
+
+/* bottom left: the training progress card */
+.progress { left: var(--gutter); bottom: var(--gutter); width: 420px; padding: 10px 12px 8px; font-size: 12px; }
+
+/* bottom right: the mini-map; hidden in the Whole map camera and while a drawer is open */
+.mini { right: var(--gutter); bottom: var(--gutter); width: 210px; margin: 0; padding: 9px 10px 8px; }
+.mini .cap { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.mini canvas { display: block; margin: 0 auto; }
+.sim.setup .mini, .sim.mapview .mini { display: none; }
+
+/* bottom left: a one-line hint (race view) */
+.hint { left: var(--gutter); bottom: var(--gutter); padding: 6px 10px; font-size: 12px; color: var(--muted); }
+
+/* centre: a message instead of the scene (no WebGL, viewer closed, connecting) */
+.sim.closed > :not(.notice) { display: none !important; }
+.notice {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--soft); font-size: 14px;
+  pointer-events: none;
+}

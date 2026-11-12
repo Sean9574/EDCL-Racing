@@ -1,5 +1,25 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>EC Racing</title></head>
-<body><div id="sim">EC Racing viewer (page under construction)</div></body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EC Racing</title>
+<link rel="stylesheet" href="/static/viewer.css">
+</head>
+<body>
+<main class="sim" id="sim">
+  <!-- scene.js puts the WebGL canvas first in #sim; everything below floats over it -->
+  <section class="glass panel" id="panel" aria-label="Panel" hidden></section>
+  <nav class="ctrl" id="topbar" aria-label="Viewer controls"></nav>
+  <aside class="glass drawer" id="drawer" aria-label="Setup"></aside>
+  <section class="glass progress" id="progress" aria-label="Training progress" hidden></section>
+  <figure class="glass mini" id="mini" hidden><figcaption class="cap">Whole track</figcaption><canvas id="minimap"></canvas></figure>
+  <div class="glass hint" id="hint" hidden></div>
+  <div class="notice" id="notice" role="status" hidden></div>
+</main>
+<script src="/static/vendor/three.min.js"></script>
+<script src="/static/js/scene.js"></script>
+<script src="/static/js/cars.js"></script>
+<script src="/static/js/main.js"></script>
+</body>
 </html>

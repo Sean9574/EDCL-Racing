@@ -61,23 +61,33 @@ def _rays(app, playback, focus):
     return {str(int(i)): _round(row, 1) for i, row in zip(wanted, lengths)}
 
 
+def _sensors(playback, rays, focus):
+    """The sensor lengths (m) of the cars whose rays are sent and of the focus car, keyed like `rays`: a ray this long
+    met no road edge."""
+    cars = playback.cars
+    shown = {int(i) for i in rays} | ({focus} if len(cars.x) else set())
+    return {str(i): round(float(cars.ray_length[i]), 1) for i in sorted(shown)}
+
+
 def frame_state(app):
-    """The cars now: positions, speeds, headings, who is done or crashed, the followed car's action and rays, and the
-    pole ghost. None without a track on show; with a track but no cars yet the car lists are empty."""
+    """The cars now: positions, speeds, headings, who is done or crashed, the followed car's action, rays and sensor
+    length, and the pole ghost. None without a track on show; with a track but no cars yet the car lists are empty."""
     track = shown_track(app)
     if track is None:
         return None
     playback = app.race if app.mode == "race" else app.playback
     frame = {"scene": scene_key(track), "mode": app.mode, "t": 0.0, "x": [], "y": [], "v": [], "h": [],
-             "done": [], "crashed": [], "focus": 0, "rays": {}, "action": "", "ghost": None}
+             "done": [], "crashed": [], "focus": 0, "rays": {}, "sensor": {}, "action": "", "ghost": None}
     if playback is None or playback.track is not track:
         return frame
     cars = playback.cars
     focus = _focus(app, playback)
     action = int(playback.actions[focus]) if len(cars.x) else -1
+    rays = _rays(app, playback, focus)
     frame.update(t=round(float(playback.elapsed), 2), x=_round(cars.x, 2), y=_round(cars.y, 2),
                  v=_round(cars.speed, 2), h=_round(cars.heading, 3), done=cars.done.astype(int).tolist(),
-                 crashed=cars.crashed.astype(int).tolist(), focus=focus, rays=_rays(app, playback, focus),
+                 crashed=cars.crashed.astype(int).tolist(), focus=focus, rays=rays,
+                 sensor=_sensors(playback, rays, focus),
                  action=netfig.output_labels()[action] if action >= 0 else "")
     if app.mode == "race" and app.ghost is not None:
         g = app.ghost.state(playback.elapsed)
