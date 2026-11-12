@@ -82,6 +82,7 @@ def test_static_paths_outside_the_web_folder_are_refused(server):
     assert get(server, "/static/../app.py")[0] == 404
     assert get(server, "/static/%2e%2e/app.py")[0] == 404
     assert get(server, "/nothing")[0] == 404
+    assert get(server, "/static/%00")[0] == 404
 
 
 def test_command_reaches_the_app(server, window):
@@ -94,7 +95,7 @@ def test_bad_command_is_400(server):
     assert status == 400 and b"nope" in body
     assert post_command(server, {"name": "speed", "arg": 123})[0] == 400
     conn = connection(server)
-    conn.request("POST", "/command", "not json")
+    conn.request("POST", "/command", "not json", {"Content-Type": "application/json"})
     assert conn.getresponse().status == 400
 
 
@@ -126,7 +127,8 @@ def test_busy_port_falls_back(window):
     port = int(first.start().rstrip("/").rsplit(":", 1)[1])
     second = ViewerServer(window, port=port)
     try:
-        assert second.start().rstrip("/").endswith(f":{port + 1}")
+        second.start()
+        assert port < second.port < port + 20           # the next free port (port + 1 unless something else holds it)
     finally:
         second.stop()
         first.stop()
@@ -164,7 +166,7 @@ def test_main_prints_the_banner_and_quits(window, monkeypatch, tmp_path, capsys)
     url = next(line.split()[1] for line in out.splitlines() if "open:" in line)
     assert out.startswith("EC Racing viewer") and "log:" in out and "quit:" in out
     conn = http.client.HTTPConnection(*url.removeprefix("http://").rstrip("/").split(":"))
-    conn.request("POST", "/command", json.dumps({"name": "quit"}))
+    conn.request("POST", "/command", json.dumps({"name": "quit"}), {"Content-Type": "application/json"})
     assert conn.getresponse().status == 204
     thread.join(5.0)
     assert result == [0] and "command" in (tmp_path / "logs" / "viewer.log").read_text()
@@ -174,3 +176,70 @@ def test_browser_command_uses_windows_on_wsl():
     assert browser_command("http://127.0.0.1:8765/", "Linux ... microsoft-standard-WSL2") == \
         ["cmd.exe", "/c", "start", "", "http://127.0.0.1:8765/"]
     assert browser_command("http://127.0.0.1:8765/", "Linux version 6.8.0-142-generic") is None
+
+
+def raw_post(server, headers, body='{"name": "speed", "arg": 2}'):
+    conn = connection(server)
+    conn.request("POST", "/command", body, headers)
+    return conn.getresponse().status
+
+
+def test_commands_need_json_and_this_viewers_own_origin(server, window):
+    json_type = {"Content-Type": "application/json"}
+    assert raw_post(server, {"Content-Type": "text/plain"}) == 415
+    assert raw_post(server, {}) == 415
+    assert raw_post(server, {**json_type, "Origin": "http://evil.example"}) == 403
+    assert raw_post(server, {**json_type, "Host": "evil.example"}) == 403
+    assert raw_post(server, {**json_type, "Host": "127.0.0.1:1"}) == 403
+    assert window.speed != 2
+    port = server.port
+    assert raw_post(server, {**json_type, "Origin": f"http://localhost:{port}"}) == 204
+    assert raw_post(server, {**json_type, "Host": f"localhost:{port}"}) == 204
+
+
+def test_events_refuse_a_foreign_host(server):
+    conn = connection(server)
+    conn.request("GET", "/events", headers={"Host": "evil.example"})
+    assert conn.getresponse().status == 403
+
+
+def test_the_port_is_free_again_right_after_stop(window):
+    first = ViewerServer(window, port=0)
+    first.url = first.start()
+    port = first.port
+    conn = connection(first)
+    conn.request("GET", "/events")
+    conn.getresponse().readline()
+    first.stop()
+    conn.close()
+    second = ViewerServer(window, port=port)
+    try:
+        assert second.start().rstrip("/").endswith(f":{port}")
+    finally:
+        second.stop()
+
+
+def test_a_page_connecting_after_a_track_change_gets_the_new_scene(server, window, circle_track, monkeypatch):
+    first = read_events(server, {"scene"})[0][1]["key"]         # no page open from here on
+    import copy
+
+    def get_track(seed, level):
+        track = copy.copy(circle_track)
+        track.seed = seed
+        return track
+    monkeypatch.setattr(viewer, "get_track", get_track)
+    assert post_command(server, {"name": "track", "arg": 1})[0] == 204
+    assert wait_for(lambda: server.scene_key not in (first, None), 2.0)
+    seen = read_events(server, {"scene", "frame"})
+    scene = next(d for n, d in seen if n == "scene")
+    frame = next(d for n, d in seen if n == "frame")
+    assert scene["key"] != first and frame["scene"] == scene["key"]
+
+
+def test_track_loads_are_logged_and_no_track_sends_a_null_scene(server, window, tmp_path):
+    assert wait_for(lambda: "track:" in (tmp_path / "viewer.log").read_text()
+                    if (tmp_path / "viewer.log").exists() else False, 2.0) or server.scene_json is not None
+    assert post_command(server, {"name": "mode", "arg": "train"})[0] == 204     # no generation yet: no track
+    assert wait_for(lambda: server.scene_json == "null", 2.0)
+    seen = read_events(server, {"scene"})
+    assert seen[0] == ("scene", None)

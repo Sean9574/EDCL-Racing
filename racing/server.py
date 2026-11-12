@@ -15,6 +15,7 @@ from racing import config, viewstate
 
 log = logging.getLogger("racing.viewer")
 
+_UNSET = object()
 LOOP_HZ = 60                    # App updates per second
 COMMAND_WAIT = 5.0              # s a request waits for the loop to run its command
 KEEPALIVE = 1.0                 # s without an event before an event stream sends a comment (and notices a closed page)
@@ -52,7 +53,8 @@ class ViewerServer:
         self.commands = queue.Queue()
         self.state = threading.Condition()      # guards everything below; notified on every new payload
         self.clients = 0
-        self.scene_key = self.scene_json = None
+        self.scene_key = _UNSET         # the shown track's key (None: no track); scene_json is "null" then
+        self.scene_json, self.scene_version = None, 0
         self.panel_json, self.panel_version = None, 0
         self.frame_json, self.frame_version = None, 0
         self.stopping = threading.Event()
@@ -119,7 +121,10 @@ class ViewerServer:
                 if app.status != status:
                     status = app.status
                     log.info("status: %s", status)
-                if self.clients > 0:
+                self._publish_scene()
+                if self.clients == 0:
+                    self._forget_payloads()
+                else:
                     next_frame, next_panel = self._publish(now, next_frame, next_panel)
                 problem = None
             except Exception as error:                  # keep the viewer up; log each new problem once
@@ -151,12 +156,30 @@ class ViewerServer:
             if not self.app.alive:
                 return
 
+    def _publish_scene(self):
+        """Keep the scene current every tick (cheap: built only when the shown track changes) and log track loads."""
+        track = viewstate.shown_track(self.app)
+        key = None if track is None else viewstate.scene_key(track)
+        if key == self.scene_key:
+            return
+        scene = None if track is None else viewstate.scene_state(track)
+        log.info("track: %s", "none" if scene is None else f"{scene['name']} ({key})")
+        with self.state:
+            self.scene_key = key
+            self.scene_json = "null" if scene is None else _json(scene)
+            self.scene_version += 1
+            if scene is None:
+                self.frame_json = None
+            self.state.notify_all()
+
+    def _forget_payloads(self):
+        """With no page open the panel and frame go stale; the next page waits for fresh ones."""
+        if self.panel_json is not None or self.frame_json is not None:
+            with self.state:
+                self.panel_json = self.frame_json = None
+
     def _publish(self, now, next_frame, next_panel):
         app = self.app
-        track = viewstate.shown_track(app)
-        with_scene = None
-        if track is not None and viewstate.scene_key(track) != self.scene_key:
-            with_scene = viewstate.scene_state(track)
         panel = None
         if now >= next_panel:
             panel = _json(viewstate.panel_state(app))
@@ -166,11 +189,9 @@ class ViewerServer:
             state = viewstate.frame_state(app)
             frame = None if state is None else _json(state)
             next_frame = now + 1.0 / config.FRAME_HZ
-        if with_scene is None and frame is None and (panel is None or panel == self.panel_json):
+        if frame is None and (panel is None or panel == self.panel_json):
             return next_frame, next_panel
         with self.state:
-            if with_scene is not None:
-                self.scene_key, self.scene_json = with_scene["key"], _json(with_scene)
             if panel is not None and panel != self.panel_json:
                 self.panel_json, self.panel_version = panel, self.panel_version + 1
             if frame is not None:
@@ -197,7 +218,7 @@ class ViewerServer:
         """Send events through `write(text)` until the page leaves or the server stops. A page gets the scene first."""
         count = self._client(+1)
         log.info("page connected (%d open)", count)
-        sent_scene, sent_panel, sent_frame = None, 0, 0
+        sent_scene, sent_panel, sent_frame = 0, 0, 0
         try:
             while not self.stopping.is_set():
                 with self.state:
@@ -215,14 +236,14 @@ class ViewerServer:
             log.info("page disconnected (%d open)", count)
 
     def _news(self, scene, panel, frame):
-        return ((self.scene_json is not None and self.scene_key != scene) or self.panel_version != panel
-                or self.frame_version != frame)
+        return ((self.scene_version != scene) or (self.panel_version != panel and self.panel_json is not None)
+                or (self.frame_version != frame and self.frame_json is not None))
 
     def _events(self, scene, panel, frame):
         out = []
-        if self.scene_json is not None and self.scene_key != scene:
+        if self.scene_version != scene:
             out.append(f"event: scene\ndata: {self.scene_json}\n\n")
-            scene = self.scene_key
+            scene = self.scene_version
         if self.panel_version != panel and self.panel_json is not None:
             out.append(f"event: panel\ndata: {self.panel_json}\n\n")
             panel = self.panel_version
@@ -234,10 +255,16 @@ class ViewerServer:
     def file_for(self, name):
         """The file under the web folder that `name` (a URL path) names; None when missing or outside it."""
         root = self.web_dir.resolve()
-        path = (root / unquote(name).lstrip("/")).resolve()
+        try:
+            path = (root / unquote(name).lstrip("/")).resolve()
+        except ValueError:                              # a null byte
+            return None
         if root != path and root not in path.parents or not path.is_file():
             return None
         return path
+
+    def allowed_hosts(self):
+        return (f"127.0.0.1:{self.port}", f"localhost:{self.port}")
 
     def _handler(self):
         server = self
@@ -263,7 +290,21 @@ class ViewerServer:
                     kind += "; charset=utf-8"
                 self.reply(200, path.read_bytes(), kind)
 
+            def refused(self):
+                """The 403 text when the Host (or Origin) is not this viewer's own address, else None. This keeps other
+                websites (and DNS rebinding) from reaching the viewer."""
+                hosts = server.allowed_hosts()
+                if self.headers.get("Host") not in hosts:
+                    return "forbidden host"
+                origin = self.headers.get("Origin")
+                if origin is not None and origin not in [f"http://{host}" for host in hosts]:
+                    return "forbidden origin"
+                return None
+
             def do_GET(self):
+                problem = self.refused()
+                if problem:
+                    return self.reply(403, problem.encode())
                 route = urlsplit(self.path).path
                 if route == "/":
                     path = server.file_for("index.html")
@@ -291,6 +332,11 @@ class ViewerServer:
                 server.stream(write)
 
             def do_POST(self):
+                problem = self.refused()
+                if problem:
+                    return self.reply(403, problem.encode())
+                if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
+                    return self.reply(415, b"commands are application/json")
                 if urlsplit(self.path).path != "/command":
                     return self.reply(404, b"not found")
                 try:
@@ -314,4 +360,6 @@ class ViewerServer:
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = False         # a busy port must fail, so the next one is tried
+
+    def handle_error(self, request, client_address):
+        log.exception("request from %s failed", client_address[0])
