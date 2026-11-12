@@ -114,7 +114,12 @@ class ViewerServer:
             dt, last = now - last, now
             try:
                 if self._run_commands():
-                    next_panel = 0.0                    # a command's effect reaches the page at once
+                    # a command's effect reaches the page at once: now, before update(), which can take seconds
+                    # (entering the race view loads its controllers there), and again after it
+                    next_panel = 0.0
+                    if app.alive and self.clients > 0:
+                        self._publish_scene()
+                        self._publish_panel()
                 if not app.alive:
                     break
                 app.watched = self.clients > 0
@@ -180,6 +185,14 @@ class ViewerServer:
         if self.panel_json is not None or self.frame_json is not None:
             with self.state:
                 self.panel_json = self.frame_json = None
+
+    def _publish_panel(self):
+        """Send the panel now if it changed."""
+        panel = _json(viewstate.panel_state(self.app))
+        if panel != self.panel_json:
+            with self.state:
+                self.panel_json, self.panel_version = panel, self.panel_version + 1
+                self.state.notify_all()
 
     def _publish(self, now, next_frame, next_panel):
         app = self.app

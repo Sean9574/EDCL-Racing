@@ -954,6 +954,75 @@ def test_the_training_status_names_the_run(window, circle_track):
     assert window.status == "Training GA, run 1."
 
 
+def test_back_in_training_the_status_is_the_training_views_own(window, tmp_path):
+    """The race's status lines stay in the race view: back in training before any generation, the training view's
+    own status shows."""
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    assert window.status == "Racing."
+    window.set_mode("train")
+    assert window.status == "Press Play to start training."
+    window.set_mode("race")
+    window.stop()
+    assert window.status.startswith("Race stopped")
+    window.set_mode("train")
+    assert window.status == "Press Play to start training."
+
+
+def test_back_in_training_a_running_paused_or_ended_training_is_named(window, tmp_path, monkeypatch):
+    fake_trainer_context(monkeypatch, [])
+    window.start_training()
+    race_window(window, tmp_path)
+    window.set_mode("train")
+    assert window.status == "Training GA, run 0."
+    window.toggle_play()                                                    # Pause
+    window.set_mode("race")
+    window.set_mode("train")
+    assert window.status == "Paused."
+
+    class Unusable:
+        exitcode = 3
+
+        def is_alive(self):
+            return False
+
+    window.set_mode("race")
+    window.process = Unusable()
+    window.poll_reports()                                                   # the run ends during the race
+    window.set_mode("race")
+    window.stop()
+    window.set_mode("train")
+    assert window.status == "Saved run cannot resume: press New run to start over."
+    window.stop()                                                           # Stop in the training view
+    window.set_mode("race")
+    window.set_mode("train")
+    assert window.status == "Stopped. Change the settings or press Play."
+
+
+def test_back_in_training_the_notebook_view_looks_for_its_run_at_once(window, tmp_path):
+    window.clock = lambda: 100.0                                            # no poll interval passes in this test
+    notebook_view(window, tmp_path / "runs")
+    window.update(1 / 60)
+    assert window.status == "Nothing to replay yet for GA run 0."
+    race_window(window, tmp_path / "champions")
+    window.update(1 / 60)
+    window.start_race()
+    window.set_mode("train")
+    assert window.status == "Looking for the notebook run."
+    window.update(1 / 60)
+    assert window.status == "Nothing to replay yet for GA run 0."
+    save_replay(window, ga_report(0))
+    window.set_mode("race")
+    window.set_mode("train")
+    window.update(1 / 60)
+    assert window.status == "Replaying the notebook run GA run 0."
+    window.set_mode("race")
+    window.start_race()
+    window.set_mode("train")
+    assert window.status == "Replaying the notebook run GA run 0."
+
+
 def test_seeded_es_without_the_dagger_baseline_shows_a_message(window, tmp_path):
     window.train_runs_dir = tmp_path
     window.champions_dir = tmp_path                      # the old check never finds a controller: no real process

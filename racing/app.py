@@ -14,6 +14,8 @@ import time
 from collections import namedtuple
 from pathlib import Path
 
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")       # the network window imports pygame; no greeting
+
 import numpy as np
 
 from racing import checkpoint, circuits, config, curriculum, ideal, netwindow, nets, paths, population, runs, sim
@@ -530,6 +532,7 @@ class App:
         self.acks = None                    # tells the trainer a report has been replayed (training in step)
         self.unacked = None                 # the report the trainer waits on until its replay ends
         self.halted = False                 # Stop freezes the training replay until the next Play
+        self.ended = None                   # how the last training process here ended, until the view changes
         self.source = "app"                 # "app": training started here; "notebook": a reported run, read-only
         self.replay_paused = False          # Pause of the notebook-run replay (the run itself never waits)
         self.replay_mtime = None            # modification time of the loaded replay file
@@ -631,6 +634,7 @@ class App:
                                              self.running, self.app_runs_dir, self.app_champions_dir, self.acks))
         self.process.start()
         self.halted = False
+        self.ended = None
         self.latest, self.history, self.playback, self.playback_generation = None, self.saved_history(), None, None
         self.net_sent = None                                 # a new run's first report goes to the window
         self.status = f"Training {config.LABELS[self.approach]}, run {self.run_seed}."
@@ -719,6 +723,7 @@ class App:
         """Forget the shown reports, so the next ones come only from the selected source, method and seed."""
         self.latest, self.history, self.playback, self.playback_report = None, [], None, None
         self.playback_generation = None
+        self.ended = None
         self.replay_mtime, self.replay_polled, self.replay_paused = None, None, False
         self.net_sent = None
 
@@ -826,11 +831,12 @@ class App:
             self.drain_reports()                     # a report sent just before the process ended
             code = self.process.exitcode
             if code == 0:
-                self.status = "Training finished. New run starts over."
+                self.ended = "Training finished. New run starts over."
             elif code == UNUSABLE_RUN:
-                self.status = "Saved run cannot resume: press New run to start over."
+                self.ended = "Saved run cannot resume: press New run to start over."
             else:
-                self.status = f"Training stopped (exit code {code})."
+                self.ended = f"Training stopped (exit code {code})."
+            self.status = self.ended
             self.process = None
             self.discard_reports()
 
@@ -1147,8 +1153,23 @@ class App:
             self.acknowledge()                       # nobody watches the training: it continues at full speed
         if mode == "race" and (entering or not self.race_available):
             self.load_race()
-        elif mode == "train" and self.status.startswith("No trained controllers"):
-            self.status = "Training view."
+        elif mode == "train" and entering:
+            self.status = self.training_status()     # the race's status lines stay in the race view
+            if self.source == "notebook" and self.latest is None:
+                self.replay_mtime = self.replay_polled = None       # look again at once: the poll names what is missing
+
+    def training_status(self):
+        """The training view's status line for what it shows now (spec §10.2)."""
+        if self.source == "notebook":
+            if self.latest is None:
+                return "Looking for the notebook run."
+            name = f"{config.LABELS[self.approach]} run {self.run_seed}"
+            return "Replay paused." if self.replay_paused else f"Replaying the notebook run {name}."
+        if self.process is not None:
+            return "Paused." if self.paused else f"Training {config.LABELS[self.approach]}, run {self.run_seed}."
+        if self.halted:
+            return "Stopped. Change the settings or press Play."
+        return self.ended or "Press Play to start training."
 
     # ----- race view -----
     def load_race(self):

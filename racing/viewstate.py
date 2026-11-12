@@ -18,7 +18,10 @@ def _clean(value, digits=2):
 
 
 def scene_key(track):
-    return f"{track.seed}-{track.level}-{track.name}-{track.length:.1f}"
+    """Names a track's geometry: seed, level, circuit, length and road width range (an archive's constant-width maps
+    share the centreline of this revision's maps)."""
+    return (f"{track.seed}-{track.level}-{track.name}-{track.length:.1f}"
+            f"-{track.widths.min():.1f}-{track.widths.max():.1f}")
 
 
 def scene_state(track):

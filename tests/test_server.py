@@ -90,23 +90,49 @@ def test_command_reaches_the_app(server, window):
     assert wait_for(lambda: window.speed == 4, 1.0)
 
 
+def panel_speeds_until(response, wanted, seconds):
+    """Read an event stream's panels until one has playback speed `wanted`; the speeds seen."""
+    end, speeds = time.time() + seconds, []
+    while time.time() < end and wanted not in speeds:
+        line = response.readline().decode()
+        if line.startswith("data: ") and '"speeds"' in line:
+            speeds.append(json.loads(line[6:])["speed"])
+    return speeds
+
+
 def test_a_commands_panel_is_sent_without_waiting_for_the_panel_interval(server, monkeypatch):
     monkeypatch.setattr(config, "PANEL_HZ", 0.1)                # the panel interval is 10 s from the next panel on
     conn = connection(server)
     conn.request("GET", "/events")
     response = conn.getresponse()
-
-    def speeds_until(wanted, seconds):
-        end, speeds = time.time() + seconds, []
-        while time.time() < end and wanted not in speeds:
-            line = response.readline().decode()
-            if line.startswith("data: ") and '"speeds"' in line:
-                speeds.append(json.loads(line[6:])["speed"])
-        return speeds
-    assert speeds_until(1, 3.0)[-1] == 1                        # the page's first panel
+    assert panel_speeds_until(response, 1, 3.0)[-1] == 1       # the page's first panel
     assert post_command(server, {"name": "speed", "arg": 8})[0] == 204
-    assert 8 in speeds_until(8, 2.0)
+    assert 8 in panel_speeds_until(response, 8, 2.0)
     conn.close()
+
+
+def test_a_commands_panel_is_sent_before_a_slow_update(server, window, monkeypatch):
+    """A click shows at once even while update() is busy, as when the race view loads its controllers."""
+    busy, done = threading.Event(), threading.Event()
+    update = window.update
+
+    def slow_update(dt):
+        if window.speed == 8 and not done.is_set():
+            busy.set()
+            done.wait(5.0)
+        update(dt)
+    monkeypatch.setattr(window, "update", slow_update)
+    conn = connection(server)
+    conn.request("GET", "/events")
+    response = conn.getresponse()
+    try:
+        assert panel_speeds_until(response, 1, 3.0)[-1] == 1
+        assert post_command(server, {"name": "speed", "arg": 8})[0] == 204
+        assert 8 in panel_speeds_until(response, 8, 2.0)
+        assert busy.is_set() and not done.is_set()              # the panel came while update() was still waiting
+    finally:
+        done.set()
+        conn.close()
 
 
 def test_bad_command_is_400(server):

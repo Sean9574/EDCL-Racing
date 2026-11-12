@@ -6,7 +6,8 @@ import pytest
 
 from racing import app as viewer
 from racing import config
-from racing.viewstate import frame_state, panel_state, scene_state
+from racing.tracks import get_track
+from racing.viewstate import frame_state, panel_state, scene_key, scene_state
 from test_app import (app_race_window, fake_trainer_context, ga_report, race_window,  # noqa: F401
                       save_app_run)
 
@@ -22,8 +23,15 @@ def test_scene_is_downsampled_to_about_3_m_and_json(circle_track):
     step = max(1, round(config.SCENE_SPACING / circle_track.spacing))
     assert len(s["left"]) == len(circle_track.left[::step])
     assert len(s["right"]) == len(s["line"]) == len(s["left"])
-    assert s["key"] == f"0-1--{circle_track.length:.1f}" and len(s["start"]) == 2
+    assert s["key"] == f"0-1--{circle_track.length:.1f}-16.0-16.0" and len(s["start"]) == 2
     json.dumps(s)
+
+
+def test_tracks_differing_only_in_road_width_have_different_scene_keys():
+    """An archive's constant-width map has this revision's centreline; the page must still get its own road."""
+    own, archived = get_track(1000, 1), get_track(1000, 1, 16.0)
+    assert own.length == archived.length and own.widths.min() < archived.widths.min()
+    assert scene_key(own) != scene_key(archived)
 
 
 def test_frame_names_its_scene(window):
