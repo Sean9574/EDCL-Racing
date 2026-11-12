@@ -15,7 +15,8 @@
   const HINT = "Drag to look around · scroll to zoom · C camera · R rays · Space play or pause";
   const PLOT = {
     share: {title: "Lowest map success share",
-            foot: "Dashed: the share needed to pass. Ticks: a level cleared (tall) or a target cut (short)."},
+            foot: "Dashed: the share needed to pass. " +
+                  "Ticks: a level cleared (tall), or a target cut or hardening (short)."},
     accuracy: {title: "Best and mean validation accuracy",
                foot: "Filled: the best validation accuracy so far. Line: the mean."},
   };
@@ -223,9 +224,9 @@
 
   function renderProgress(p, unit) {
     const h = p.history, kind = PLOT[h.kind] || PLOT.share;
-    const n = h.points.length;
+    const n = h.points.length, units = new Set(h.points.map(q => q[0])).size;    // a generation can repeat
     if (cardTitle.textContent !== kind.title) cardTitle.textContent = kind.title;
-    cardCount.textContent = `${count(n)} ${n === 1 ? unit.toLowerCase() : UNITS[unit]}`;
+    cardCount.textContent = `${count(units)} ${units === 1 ? unit.toLowerCase() : UNITS[unit]}`;
     if (foot.dataset.text !== kind.foot) {     // one sentence per line
       foot.dataset.text = kind.foot;
       foot.replaceChildren(...kind.foot.split(/(?<=\.) /).map(text => el("span", "", text)));

@@ -185,7 +185,7 @@ body {
 .panel .empty { color: var(--muted); line-height: 1.5; margin: 2px 0 4px; }
 
 /* ----- the race view (Figure 1) ----- */
-.sim[data-mode="race"] { --panel-w: 360px; }
+.sim[data-mode="race"] { --panel-w: 420px; }      /* full names, "Lewis Hamilton 2019 (pole)", at 1280 px wide */
 
 /* the followed car */
 .race-panel .speed { font-size: 30px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; }
@@ -207,7 +207,7 @@ body {
 .race-panel .board { --lb-cols: 16px minmax(0, 1fr) 24px 32px 32px 38px 52px; font-size: 12px; }
 .race-panel .board.nogap { --lb-cols: 16px minmax(0, 1fr) 24px 34px 34px 52px; }
 .race-panel .board .lb {
-  display: grid; grid-template-columns: var(--lb-cols); column-gap: 5px;
+  display: grid; grid-template-columns: var(--lb-cols); column-gap: 4px;
   padding: 0 6px; margin: 0 -6px; border-radius: 6px;
   white-space: nowrap; line-height: 1.75;
 }

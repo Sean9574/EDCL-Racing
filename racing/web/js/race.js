@@ -315,6 +315,7 @@
     if (!active) return;
     pauseBtn.disabled = !p.racing;
     pauseBtn.classList.toggle("on", !!p.paused);
+    pauseBtn.setAttribute("aria-pressed", String(!!p.paused));
     if (p.paused) for (const b of document.querySelectorAll("#speeds [data-speed]")) b.classList.remove("on");
 
     board.classList.toggle("nogap", p.pole === null);
