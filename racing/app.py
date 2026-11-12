@@ -195,7 +195,7 @@ def pole_gap(flying_lap, pole):
 
 
 MPH_PER_MPS = 3600 / 1609.344   # miles per hour in one m/s
-MARKED_EVENTS = ("level_up", "goal", "tightened", "hardened")   # marked on the training plot (spec §10.2)
+MARKED_EVENTS = {"level_up": "tall", "goal": "tall", "tightened": "short", "hardened": "short"}   # training plot marks (§10.2)
 NET_FRAME_INTERVAL = 0.1     # s: the network window gets the shown car's node values at most this often
 
 
@@ -1389,7 +1389,14 @@ class App:
             steps = min(steps, config.MAX_STEPS_PER_FRAME)
             active.advance(steps)
 
-    # ----- input -----
+    # ----- commands -----
+    def command(self, name, arg=None):
+        """Run one of the page's buttons: `name` from COMMANDS with its argument. ValueError for an unknown name or a
+        bad argument; nothing changes then."""
+        if name not in COMMANDS:
+            raise ValueError(f"unknown command {name!r}")
+        COMMANDS[name](self, arg)
+
     # ----- drawing -----
     def leader_speed_line(self):
         """The race leader's name and speed, '1st  KT Random r1  194 mph'; None before a race."""
@@ -1399,3 +1406,63 @@ class App:
         car = self.race_cars()[i]
         name = car_name(car[0], car[1], app=is_app(car), archived=self.archived())
         return f"1st  {name}  {speed_text(float(self.race.cars.speed[i]))}"
+
+
+def _one_of(arg, options, what):
+    try:
+        found = not isinstance(arg, bool) and arg in options
+    except TypeError:                   # an unhashable argument
+        found = False
+    if not found:
+        raise ValueError(f"{what}: {arg!r} is not one of {list(options)}")
+    return arg
+
+
+def _direction(arg):
+    return _one_of(arg, (-1, 1), "direction")
+
+
+def _whole(arg, what):
+    if isinstance(arg, bool) or not isinstance(arg, (int, np.integer)):
+        raise ValueError(f"{what}: {arg!r} is not a whole number")
+    return int(arg)
+
+
+def _follow(app, arg):
+    if arg is not None and not 0 <= _whole(arg, "follow") < len(app.race_cars()):
+        raise ValueError(f"follow: {arg!r} is not a car of the race")
+    app.set_follow(arg)
+
+
+def _app_choice(app, arg):
+    if arg not in app.app_available:
+        raise ValueError(f"app_choice: {arg!r} has no app car")
+    app.cycle_app_choice(arg)
+
+
+COMMANDS = {        # the page's commands (name -> function of the app and its argument)
+    "mode": lambda app, arg: app.set_mode(_one_of(arg, ("train", "race"), "mode")),
+    "approach": lambda app, arg: app.select_approach(_one_of(arg, config.APPROACHES, "approach")),
+    "source": lambda app, arg: app.toggle_source(),
+    "folder": lambda app, arg: app.cycle_folder(),
+    "run": lambda app, arg: app.change_run_seed(_direction(arg)),
+    "difficulty": lambda app, arg: app.set_difficulty(_one_of(arg, config.DIFFICULTIES, "difficulty")),
+    "population": lambda app, arg: app.change_population(_direction(arg)),
+    "play": lambda app, arg: app.toggle_play(),
+    "stop": lambda app, arg: app.stop(),
+    "new_run": lambda app, arg: app.new_run(),
+    "show": lambda app, arg: app.set_show(_one_of(arg, ("all", "best", "worst"), "show")),
+    "shown": lambda app, arg: app.set_shown(_whole(arg, "shown")),
+    "speed": lambda app, arg: app.set_speed(_one_of(arg, config.SPEEDS, "speed")),
+    "grip": lambda app, arg: app.set_grip(_one_of(arg, config.APP_GRIPS, "grip")),
+    "network": lambda app, arg: app.toggle_network_window(),
+    "track": lambda app, arg: app.change_race_track(_direction(arg)),
+    "race_level": lambda app, arg: app.set_race_level(_one_of(arg, config.APP_DIFFICULTIES, "race_level")),
+    "start": lambda app, arg: app.start_race(),
+    "race_runs": lambda app, arg: app.cycle_race_runs(),
+    "method": lambda app, arg: app.toggle_race(_one_of(arg, config.APPROACHES, "method")),
+    "group": lambda app, arg: app.cycle_race_group(),
+    "app_choice": _app_choice,
+    "follow": _follow,
+    "quit": lambda app, arg: app.shutdown(),
+}

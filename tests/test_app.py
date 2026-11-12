@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from racing import app as viewer
-from racing import checkpoint, circuits, config, neat, nets, paths, population, setup, sim
+from racing import checkpoint, circuits, config, neat, nets, paths, population, setup, sim, viewstate
 
 
 @pytest.fixture
@@ -950,25 +950,12 @@ def test_settings_are_locked_while_training(window):
     assert window.population["ga"] == config.GA_POP
 
 
-@pytest.mark.skip(reason="rewritten in Task 2")
-def test_the_run_control_names_the_seeded_run(window, monkeypatch):
-    """spec §10.2: the training view's control reads 'Run', its value '0 (seeded)' for run 0 and '1' for run 1."""
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append((string, x, font or window.font))
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    buttons = recording_buttons(window, monkeypatch)
-    strings = [string for string, _, _ in drawn]
-    assert "Run" in strings and "Run seed" not in strings
-    value, x, font = next(item for item in drawn if item[0] == "0 (seeded)")
-    later = next(rect for label, *_, rect in buttons if label == ">")
-    assert x + font.size(value)[0] < later.left                         # the value fits before the > button
-    drawn.clear()
-    window.change_run_seed(1)
-    assert "1" in [string for string, _, _ in drawn] and "0 (seeded)" not in [string for string, _, _ in drawn]
+def test_the_run_control_names_the_seeded_run(window):
+    """spec §10.2: the training view's run control reads '0 (seeded)' for run 0 and '1' for run 1."""
+    assert viewstate.panel_state(window)["run"]["label"] == "0 (seeded)"
+    window.command("run", 1)
+    state = viewstate.panel_state(window)
+    assert window.run_seed == 1 and state["run"]["label"] == "1"
 
 
 def test_the_training_status_names_the_run(window, circle_track):
@@ -1747,25 +1734,17 @@ def test_imitation_approaches_have_no_saved_run(window):
     assert not window.has_saved_run() and window.saved_history() == []
 
 
-@pytest.mark.skip(reason="rewritten in Task 2")
-def test_an_idle_panel_mentions_a_saved_run(window, monkeypatch):
+def test_an_idle_panel_mentions_a_saved_run(window):
+    assert viewstate.panel_state(window)["note"] == "No generation completed yet."
     save_app_run(window)
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append(string)
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    assert any(string.startswith("Saved run found") for string in drawn)
+    assert viewstate.panel_state(window)["note"].startswith("Saved run found")
 
 
-@pytest.mark.skip(reason="rewritten in Task 2")
 def test_the_new_run_button_is_offered_only_while_idle(window, monkeypatch):
-    assert any(action == window.new_run for _, action in window.buttons)
+    assert viewstate.panel_state(window)["new_run"]["enabled"]
     fake_trainer_context(monkeypatch, [])
-    window.toggle_play()
-    assert not any(action == window.new_run for _, action in window.buttons)
+    window.command("play")
+    assert window.process is not None and not viewstate.panel_state(window)["new_run"]["enabled"]
 
 
 def app_race_window(window, tmp_path):
@@ -1792,25 +1771,17 @@ def test_app_cars_form_their_own_group_switched_off_by_default(window, tmp_path)
     assert nets.champion_seeds(window.champions_dir) == {"es": [0], "ga": [0, 1]}     # reported set untouched
 
 
-@pytest.mark.skip(reason="rewritten in Task 2")
-def test_the_race_group_button_switches_the_controller_list(window, tmp_path, monkeypatch):
+def test_the_race_group_button_switches_the_controller_list(window, tmp_path):
     app_race_window(window, tmp_path)
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append(string)
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    buttons = recording_buttons(window, monkeypatch)
-    assert "Controllers: reported ▸" in window.race_group_label() and ("ES", True) in [
-        (label, on) for label, on, _ in method_switches(buttons)]
-    window.cycle_race_group()
-    drawn.clear()
-    buttons.clear()
-    assert window.race_group == "app" and "NEAT (app)" in drawn and not method_switches(buttons)
-    window.cycle_race_group()
-    assert window.race_group == "final"
+    state = viewstate.panel_state(window)
+    assert state["group"] == {"value": "final", "available": True}
+    assert ("ES", True) in [(m["label"], m["on"]) for m in state["methods"]]
+    window.command("group")
+    state = viewstate.panel_state(window)
+    assert window.race_group == "app" and state["group"]["value"] == "app"
+    assert "NEAT (app)" in [c["label"] for c in state["app_choices"]]
+    window.command("group")
+    assert window.race_group == "final" and viewstate.panel_state(window)["group"]["value"] == "final"
 
 
 def test_without_app_cars_the_race_panel_is_unchanged(window, tmp_path):
@@ -2480,3 +2451,44 @@ def test_set_shown_keeps_the_count_inside_the_population(window):
     assert window.shown == window.population_size()
     window.set_shown(0)
     assert window.shown == 1
+
+
+# ----- logic once asserted through pixel tests -----
+def test_a_leaderboard_line_names_the_car_laps_times_and_status():
+    assert viewer.leaderboard_line(1, "kt_hyperband", 0, 1, 52.31, 51.94, "racing") == \
+        "1. KT Hyperband (seeded) lap 1 52.3/51.9 racing"
+
+
+def test_a_fresh_race_ranks_every_car(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    for _ in range(30):
+        window.update(1 / 60)
+    rows = viewer.leaderboard(window.race, len(window.lineup))
+    assert sorted(r[0] for r in rows) == [1, 2, 3] and sorted(r[1] for r in rows) == [0, 1, 2]
+
+
+def test_the_grips_are_named_for_the_page():
+    assert viewer.GRIP_LABELS["Unlimited"] == "Unlimited (10×)" and "Normal" in viewer.GRIP_LABELS
+
+
+def test_each_car_takes_its_own_sensor_length_in_training_and_in_the_race(window, tmp_path):
+    rng = np.random.default_rng(6)
+    rows = setup.random(rng, 30)
+    rows[:, 0] = np.geomspace(30.0, 1000.0, 30)                  # every car its own sensor length (spec §9.11)
+    cars = nets.DensePopulation(nets.init_population(rng, 30), setup=rows)
+    window.set_show("all")
+    window.receive(ga_report(population_=cars))
+    window.update(1 / 60)
+    lengths = window.playback.cars.ray_length
+    assert len(np.unique(lengths)) == len(lengths) > 1
+    assert np.array_equal(lengths, cars.subset(window.indices).setup[:, 0])
+    for (approach, seed), length in zip((("es", 0), ("ga", 0), ("ga", 1)), (40.0, 300.0, 900.0)):
+        racer = nets.DensePopulation(nets.init_population(rng, 1), setup=np.array([[length, 1.0]]))
+        population.save_dense_champion(approach, seed, racer, 0, tmp_path)
+    window.champions_dir = tmp_path
+    window.race_runs = "all"
+    window.set_mode("race")
+    window.update(1 / 60)
+    assert list(window.race.cars.ray_length) == [40.0, 300.0, 900.0]

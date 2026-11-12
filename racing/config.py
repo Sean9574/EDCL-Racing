@@ -306,6 +306,7 @@ SPEEDS = (1, 2, 4, 8)
 PLAYBACK_BASE = 2.0          # simulated seconds per real second at 1× playback
 MAX_STEPS_PER_FRAME = 10     # simulation steps per drawn frame; a stalled frame cannot trigger a burst
 DEFAULT_SHOWN = 100
+SCENE_SPACING = 3.0          # m between the points of a track's outline sent to the page
 KT_VIEW_SEED = 80
 RACE_LAPS = LAPS
 DIFFICULTIES = {1: "Easy", 2: "Medium", 3: "Hard", 4: "Extra hard"}   # curriculum level → name (spec §10.4)
