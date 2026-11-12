@@ -1,7 +1,5 @@
-"""EC Racing viewer (spec §10): live training view and race view through one top-down camera.
-
-Run with:  ~/miniconda3/bin/python -m racing.app
-"""
+"""EC Racing viewer logic (spec §10): the training view and the race view. The App holds all state and has no drawing;
+the browser page shows it."""
 import csv
 import json
 import multiprocessing as mp
@@ -16,59 +14,11 @@ import time
 from collections import namedtuple
 from pathlib import Path
 
-os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-
 import numpy as np
-import pygame
 
 from racing import checkpoint, circuits, config, curriculum, ideal, netwindow, nets, paths, population, runs, sim
 from racing.actions import class_to_controls
 from racing.tracks import get_track
-
-GRASS = (214, 230, 205)
-ROAD = (92, 96, 104)
-EDGE = (245, 245, 245)
-RACING_LINE = (184, 190, 202)   # the racing line on the road (spec §10.3): light, thin, no method's color
-PANEL_BG = (248, 249, 251)
-INK = (29, 35, 48)
-MUTED = (91, 100, 116)
-BUTTON = (228, 232, 238)
-BUTTON_ACTIVE = (55, 62, 78)     # dark neutral: never mistaken for an approach (spec §10.1)
-DISABLED = (238, 240, 243)       # a locked button's fill
-LOCKED_TINT = 0.35               # a locked button that is on keeps this much of its color
-RAY = (255, 196, 0)
-WHITE = (255, 255, 255)
-MIN_LINE_CONTRAST = 3.0          # a plot line with less contrast against white gets a dark outline (WCAG 2)
-
-
-def hex_to_rgb(code):
-    code = code.lstrip("#")
-    return tuple(int(code[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def luminance(rgb):
-    """Relative luminance of an sRGB color (WCAG 2): 0 for black, 1 for white."""
-    c = np.asarray(rgb[:3], dtype=float) / 255.0
-    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-    return float(c @ np.array([0.2126, 0.7152, 0.0722]))
-
-
-def contrast(a, b):
-    """Contrast ratio of two colors (WCAG 2), from 1 to 21."""
-    light, dark = sorted((luminance(a), luminance(b)), reverse=True)
-    return (light + 0.05) / (dark + 0.05)
-
-
-def ink_for(fill):
-    """Text color on `fill`: dark ink on light colors such as NEAT's yellow, white on dark ones, whichever
-    contrasts more."""
-    return INK if contrast(fill, INK) >= contrast(fill, WHITE) else WHITE
-
-
-def needs_outline(color, background=WHITE):
-    """Whether a line or swatch in `color` needs a dark outline to stand out from `background`."""
-    return contrast(color, background) < MIN_LINE_CONTRAST
-
 
 UNUSABLE_RUN = 3                    # trainer exit code: the saved viewer run cannot be resumed (spec §10.6)
 UNUSABLE_ERRORS = (checkpoint.SettingsMismatch, checkpoint.UnreadableRecord, EOFError, pickle.UnpicklingError)
@@ -97,80 +47,9 @@ def select_indices(fitness, mode, count, sample_seed=0):
     return np.sort(np.random.default_rng(sample_seed).choice(n, count, replace=False))
 
 
-class Camera:
-    """Maps world coordinates (m) to pixels so that a track fills the view rectangle; with `zoom` above 1 the scale
-    is that many times larger and the view is centred on `center` (a point in m, such as a followed car)."""
-
-    def __init__(self, track, rect, zoom=1, center=None):
-        edges = np.vstack([track.left, track.right])
-        lo, hi = edges.min(axis=0), edges.max(axis=0)
-        self.scale = 0.94 * min(rect.width / (hi[0] - lo[0]), rect.height / (hi[1] - lo[1])) * zoom
-        self.center = (lo + hi) / 2 if center is None else np.asarray(center, dtype=float)
-        self.rect = rect
-
-    def to_screen(self, x, y):
-        sx = self.rect.centerx + (np.asarray(x) - self.center[0]) * self.scale
-        sy = self.rect.centery - (np.asarray(y) - self.center[1]) * self.scale
-        return sx, sy
 
 
-def render_track(track, camera, size):
-    """Grass, road surface, racing line, edges and start line, drawn once per track (spec §10.3)."""
-    surface = pygame.Surface(size)
-    surface.fill(GRASS)
-    lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
-    rx, ry = camera.to_screen(track.right[:, 0], track.right[:, 1])
-    m = len(lx)
-    for i in range(m):
-        j = (i + 1) % m
-        pygame.draw.polygon(surface, ROAD, [(lx[i], ly[i]), (lx[j], ly[j]), (rx[j], ry[j]), (rx[i], ry[i])])
-    pygame.draw.lines(surface, RACING_LINE, True, list(zip(*camera.to_screen(track.line[:, 0], track.line[:, 1]))), 1)
-    pygame.draw.lines(surface, EDGE, True, list(zip(lx, ly)), 2)
-    pygame.draw.lines(surface, EDGE, True, list(zip(rx, ry)), 2)
-    pygame.draw.line(surface, INK, (lx[0], ly[0]), (rx[0], ry[0]), 3)
-    return surface
 
-
-def visible_segments(track, camera):
-    """Indices i of the road segments from centerline point i to i + 1 that reach into the camera's view."""
-    lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
-    rx, ry = camera.to_screen(track.right[:, 0], track.right[:, 1])
-    nxt = np.roll(np.arange(len(lx)), -1)
-    xs = np.stack([lx, lx[nxt], rx[nxt], rx])
-    ys = np.stack([ly, ly[nxt], ry[nxt], ry])
-    rect = camera.rect
-    inside = ((xs.max(axis=0) >= rect.left) & (xs.min(axis=0) <= rect.right)
-              & (ys.max(axis=0) >= rect.top) & (ys.min(axis=0) <= rect.bottom))
-    return np.flatnonzero(inside)
-
-
-def draw_track_part(surface, track, camera):
-    """Road, racing line, edges and start line of the part of the track in the camera's view, drawn directly: a zoomed
-    view draws this every frame instead of keeping a picture of the whole track at its scale (spec §10.3)."""
-    lx, ly = camera.to_screen(track.left[:, 0], track.left[:, 1])
-    rx, ry = camera.to_screen(track.right[:, 0], track.right[:, 1])
-    m = len(lx)
-    segments = visible_segments(track, camera)
-    for i in segments:
-        j = (i + 1) % m
-        pygame.draw.polygon(surface, ROAD, [(lx[i], ly[i]), (lx[j], ly[j]), (rx[j], ry[j]), (rx[i], ry[i])])
-    qx, qy = camera.to_screen(track.line[:, 0], track.line[:, 1])
-    for i in segments:
-        j = (i + 1) % m
-        pygame.draw.line(surface, RACING_LINE, (qx[i], qy[i]), (qx[j], qy[j]), 1)
-    for i in segments:
-        j = (i + 1) % m
-        pygame.draw.line(surface, EDGE, (lx[i], ly[i]), (lx[j], ly[j]), 2)
-        pygame.draw.line(surface, EDGE, (rx[i], ry[i]), (rx[j], ry[j]), 2)
-    if 0 in segments:
-        pygame.draw.line(surface, INK, (lx[0], ly[0]), (rx[0], ry[0]), 3)
-
-
-def car_polygon(sx, sy, heading, size):
-    """Triangle pointing along the heading. Screen y points down, so world rotations flip sign."""
-    c, s = np.cos(heading), np.sin(heading)
-    shape = [(size, 0.0), (-0.6 * size, 0.5 * size), (-0.6 * size, -0.5 * size)]
-    return [(sx + px * c - py * s, sy - (px * s + py * c)) for px, py in shape]
 
 
 class Playback:
@@ -185,6 +64,7 @@ class Playback:
         self.cars = sim.start_cars(track, n, laps, setup)
         self.time_limit = sim.time_limit_for(track, laps) if time_limit is None else time_limit
         self.elapsed = 0.0              # s of race time simulated
+        self.actions = np.full(len(self.cars.x), -1, dtype=int)     # each car's last action class, -1 before the first step
         self.inputs = sim.sense(track, self.cars)   # every car's inputs at the last step, on the start line until the
                                                     # first (the network window shows them)
 
@@ -197,7 +77,9 @@ class Playback:
             if self.over:
                 return
             self.inputs = sim.sense(self.track, self.cars)
-            steer, throttle = class_to_controls(self.policy(self.inputs, self.cars))
+            actions = np.asarray(self.policy(self.inputs, self.cars))
+            self.actions = actions.astype(int)
+            steer, throttle = class_to_controls(actions)
             sim.step(self.track, self.cars, steer, throttle, self.time_limit, grip_scale=self.grip_scale)
             self.elapsed += config.DT
 
@@ -330,7 +212,6 @@ def speed_text(speed):
 
 
 GHOST = -1                      # the pole ghost's car index in leaderboard rows
-GHOST_COLOR = (34, 38, 48)      # the pole ghost: a dark neutral car with a white border, never a method's color
 GhostState = namedtuple("GhostState", "x y heading progress laps finished")
 
 
@@ -567,8 +448,8 @@ def setup_line(report):
 
 
 def log_history(log):
-    """The plot history of a run from its log.csv: (generation, lowest map share, nan, marked) per generation, level
-    advancements, the goal and target cuts marked; empty for a missing or unreadable log."""
+    """The plot history of a run from its log.csv: (generation, lowest map share, nan, event name or None) per
+    generation; empty for a missing or unreadable log."""
     if not Path(log).exists():
         return []
     history = []
@@ -576,7 +457,7 @@ def log_history(log):
         with open(log, newline="") as f:
             for row in csv.DictReader(f):
                 history.append((int(row["generation"]), float(row["min_share"]), float("nan"),
-                                row.get("event") in MARKED_EVENTS))
+                                row.get("event") or None))
     except (OSError, ValueError, KeyError, TypeError):
         return []
     return history
@@ -615,17 +496,10 @@ def stats_lines(report, approach):
 class App:
     """The viewer window: training view and race view."""
 
-    def __init__(self, screen, background_tracks=True):
-        self.screen = screen
-        self.font = pygame.font.Font(str(config.FONT_PATH), 15)         # shipped: the same widths on every machine
-        self.small = pygame.font.Font(str(config.FONT_PATH), 13)
-        self.fullscreen = False
-        self.layout()
+    def __init__(self, background_tracks=True):
         self.alive = True
+        self.watched = True                 # False: nobody looks at the page, so nothing is replayed (reports still flow)
         self.mode = "train"
-        self.buttons = []
-        self.slider = None
-        self.dragging = False
         self.background_tracks = background_tracks
         self.tracks = {}
         self.building = set()
@@ -649,8 +523,6 @@ class App:
         self.app_champions_dir = config.APP_CHAMPIONS_DIR   # their best cars, raceable in the race view
         self.show = "best"
         self.shown = config.DEFAULT_SHOWN
-        self.rays = False
-        self.zoom_index = 0                 # into config.CAMERA_ZOOMS; above 1× the camera follows a car
         self.grip_name = "Normal"           # display grip of the viewer's own simulations (spec §10.5)
         self.process = None
         self.reports = None
@@ -673,7 +545,7 @@ class App:
         # network window
         self.net_process = None
         self.net_queue = None
-        self.net_choice = 0                 # index into the race lineup
+        self.follow = None                  # the race car the page follows and the network window shows; None: the leader
         self.net_sent = None                # identity of the network the window shows
         self.net_driver = None              # its driver, for the live node values
         self.net_member = None              # in training: the shown network's index in the report
@@ -971,10 +843,10 @@ class App:
             if self.mode == "race":
                 self.acknowledge()
         if "min_share" in report:
-            marked = report.get("event") in MARKED_EVENTS
-            self.history.append((report["generation"], float(report["min_share"]), float("nan"), marked))
+            self.history.append((report["generation"], float(report["min_share"]), float("nan"),
+                                 report.get("event")))
         else:
-            self.history.append((report["generation"], report["best"], report["mean"], report["leveled_up"]))
+            self.history.append((report["generation"], report["best"], report["mean"], report.get("event")))
 
     # ----- network window -----
     def toggle_network_window(self):
@@ -1006,24 +878,37 @@ class App:
         self.net_driver, self.net_member, self.net_values_at, self.net_values_step = None, None, float("-inf"), None
         self.net_history_sent = 0
 
-    def selected_car(self):
-        """The race car whose network the window shows: the first car if the choice is outside the race; None for
-        an empty race."""
+    def followed_car(self):
+        """The race car the page follows and the network window shows: the chosen car while it still races, else the
+        race leader (the first car before a race exists); None for an empty race."""
         cars = self.race_cars()
         if not cars:
             return None
-        return cars[self.net_choice if 0 <= self.net_choice < len(cars) else 0]
+        if self.follow in cars:
+            return self.follow
+        if self.race is not None and len(self.race.cars.x) == len(cars):
+            return cars[race_leader(self.race.cars)]
+        return cars[0]
 
-    def cycle_network_car(self):
+    def selected_car(self):
+        """The race car whose network the window shows."""
+        return self.followed_car()
+
+    def set_follow(self, index):
+        """Follow the race car at `index` of race_cars(); None (or an index outside the race) follows the leader."""
         cars = self.race_cars()
-        if cars:
-            self.net_choice = (cars.index(self.selected_car()) + 1) % len(cars)
+        self.follow = cars[index] if index is not None and 0 <= index < len(cars) else None
 
-    def network_car_label(self):
-        car = self.selected_car()
-        if car is None:
-            return "Network of: –"
-        return f"Network of: {car_name(car[0], car[1], is_app(car), self.archived())} ▸"
+    def set_shown(self, count):
+        """Show `count` cars of the training population (at least 1, at most the population size)."""
+        self.shown = int(min(max(count, 1), self.population_size()))
+        self.playback = None
+
+    def shutdown(self):
+        """Stop the training, close the network window and end the viewer."""
+        self.stop_training()
+        self.close_network_window()
+        self.alive = False
 
     def record_generation(self):
         """Keep the best network of the newest report's generation for the window's timeline (collected while the
@@ -1196,76 +1081,6 @@ class App:
         self.speed = speed
 
     # ----- window -----
-    def layout(self):
-        """The map view and the panel for the window's current size; the pictures of whole tracks are redrawn at
-        the new size."""
-        width, height = self.screen.get_size()
-        self.view = pygame.Rect(0, 0, max(width - config.PANEL_WIDTH, 1), height)
-        self.panel = pygame.Rect(self.view.right, 0, config.PANEL_WIDTH, height)
-        self.surfaces = {}
-
-    def toggle_fullscreen(self):
-        """Full screen at the display's resolution, or back to a resizable window of config.WINDOW_SIZE."""
-        if self.fullscreen:
-            self.screen = pygame.display.set_mode(config.WINDOW_SIZE, pygame.RESIZABLE)
-            self.fullscreen = False
-        else:
-            try:
-                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-            except pygame.error as error:
-                self.status = f"Full screen is not available here ({error})."
-                return
-            if screen.get_width() <= config.PANEL_WIDTH:                    # no usable display size reported
-                self.screen = pygame.display.set_mode(config.WINDOW_SIZE, pygame.RESIZABLE)
-                self.status = "Full screen is not available here."
-                self.layout()
-                return
-            self.screen = screen
-            self.fullscreen = True
-        self.layout()
-
-    def resized(self):
-        """The window was resized by dragging its border."""
-        if not self.fullscreen:
-            self.screen = pygame.display.get_surface() or self.screen
-            self.layout()
-
-    def camera_zoom(self):
-        return config.CAMERA_ZOOMS[self.zoom_index]
-
-    def camera_label(self):
-        zoom = self.camera_zoom()
-        return f"Camera: {'Whole map' if zoom == 1 else f'Follow {zoom}×'} ▸"
-
-    def cycle_camera(self):
-        self.zoom_index = (self.zoom_index + 1) % len(config.CAMERA_ZOOMS)
-
-    def zoom_by(self, steps):
-        """Zoom in (steps > 0) or out by whole steps of config.CAMERA_ZOOMS, without wrapping (the mouse wheel)."""
-        self.zoom_index = min(max(self.zoom_index + int(steps), 0), len(config.CAMERA_ZOOMS) - 1)
-
-    def follow_point(self, playback, track):
-        """Where the zoomed camera looks (m): the best car of the shown generation in training, the race leader (the
-        car furthest along that is still racing, else furthest along) in a race; the start line without cars."""
-        if playback is None or len(playback.cars.x) == 0:
-            return (track.left[0] + track.right[0]) / 2
-        cars = playback.cars
-        if self.mode == "train":
-            i = self.best_slot if self.best_slot < len(cars.x) else 0
-        else:
-            i = race_leader(cars)
-        return np.array([cars.x[i], cars.y[i]])
-
-    def view_camera(self, track, playback):
-        """The camera of this frame: the whole map, or zoomed onto the followed car."""
-        zoom = self.camera_zoom()
-        if zoom == 1:
-            return self.track_surface(track)[0]
-        return Camera(track, self.view, zoom, self.follow_point(playback, track))
-
-    def toggle_rays(self):
-        self.rays = not self.rays
-
     @property
     def grip_scale(self):
         """The display grip as a multiple of a(v) (config.APP_GRIPS)."""
@@ -1286,11 +1101,6 @@ class App:
     def toggle_grip(self):
         names = list(config.APP_GRIPS)
         self.set_grip(names[(names.index(self.grip_name) + 1) % len(names)])
-
-    def set_shown_from(self, x):
-        fraction = min(max((x - self.slider.left) / self.slider.width, 0.0), 1.0)
-        self.shown = 1 + int(round(fraction * (self.population_size() - 1)))
-        self.playback = None
 
     # ----- playback -----
     def start_playback(self, report, track):
@@ -1444,13 +1254,12 @@ class App:
         self.race = None
         self.ghost = None
         self.step_budget = 0.0
-        selected = self.selected_car()
         self.lineup = [(approach, seed) for approach in self.race_available for seed in self.race_seeds(approach)
                        if (approach, seed) not in self.failed]
         self.app_lineup = [(approach, choice, "app") for approach, choice in self.app_choice.items()
                            if choice != "off" and (approach, choice, "app") not in self.failed]
-        cars = self.race_cars()
-        self.net_choice = cars.index(selected) if selected in cars else 0
+        if self.follow not in self.race_cars():
+            self.follow = None
 
     def driver(self, approach, seed, source="final"):
         """The driver of a reported controller, or of an app car (source "app"), loaded once."""
@@ -1573,7 +1382,7 @@ class App:
         else:
             self.prepare_race()
             active = self.race if self.racing else None
-        if active is not None:
+        if active is not None and self.watched:
             self.step_budget += self.speed * config.PLAYBACK_BASE * dt / config.DT
             steps = int(self.step_budget)
             self.step_budget = 0.0 if steps > config.MAX_STEPS_PER_FRAME else self.step_budget - steps
@@ -1581,129 +1390,7 @@ class App:
             active.advance(steps)
 
     # ----- input -----
-    def handle(self, event):
-        if event.type == pygame.QUIT:
-            self.alive = False
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.slider is not None and self.slider.collidepoint(event.pos):
-                self.dragging = True
-                self.set_shown_from(event.pos[0])
-                return
-            for rect, action in self.buttons:
-                if rect.collidepoint(event.pos):
-                    action()
-                    return
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self.dragging = False
-        elif event.type == pygame.MOUSEMOTION and self.dragging:
-            self.set_shown_from(event.pos[0])
-        elif event.type in (pygame.VIDEORESIZE, pygame.WINDOWSIZECHANGED):
-            self.resized()
-        elif event.type == pygame.MOUSEWHEEL:
-            if self.view.collidepoint(pygame.mouse.get_pos()):
-                self.zoom_by(event.y)
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_c:
-                self.cycle_camera()
-            elif event.key == pygame.K_F11 or (event.key == pygame.K_ESCAPE and self.fullscreen):
-                self.toggle_fullscreen()
-            elif event.key == pygame.K_SPACE and self.mode == "train":
-                self.toggle_play()
-            elif event.key == pygame.K_LEFT and self.mode == "race":
-                self.change_race_track(-1)
-            elif event.key == pygame.K_RIGHT and self.mode == "race":
-                self.change_race_track(1)
-
     # ----- drawing -----
-    def track_surface(self, track):
-        key = (track.seed, track.level, track.name, track.length, track.max_width)
-        if key not in self.surfaces:
-            camera = Camera(track, self.view)
-            self.surfaces[key] = (camera, render_track(track, camera, self.view.size))
-        return self.surfaces[key]
-
-    def draw(self):
-        self.screen.fill(GRASS)
-        self.buttons = []
-        self.slider = None
-        if self.mode == "train":
-            track, playback = self.shown_track(), self.playback
-        else:
-            playback = self.race
-            available = self.race_available or self.app_available
-            track = playback.track if playback is not None else (self.race_track() if available else None)
-        if track is not None:
-            camera = self.view_camera(track, playback)
-            self.screen.set_clip(self.view)                 # a zoomed track and its cars stay out of the panel
-            if self.camera_zoom() == 1:
-                self.screen.blit(self.track_surface(track)[1], self.view.topleft)
-            else:
-                draw_track_part(self.screen, track, camera)
-            if playback is not None and self.mode == "train":
-                self.draw_population(playback, camera)
-            elif playback is not None:
-                self.draw_racers(playback, camera)
-                self.draw_leader_speed()
-            self.screen.set_clip(None)
-        self.draw_panel()
-
-    def draw_population(self, playback, camera):
-        cars = playback.cars
-        sx, sy = camera.to_screen(cars.x, cars.y)
-        size = max(6.0, 4.5 * camera.scale)
-        color = hex_to_rgb(config.COLORS[self.approach])
-        overlay = pygame.Surface(self.view.size, pygame.SRCALPHA)
-        for i in range(len(sx)):
-            alpha = 90 if cars.done[i] else 170
-            pygame.draw.polygon(overlay, color + (alpha,), car_polygon(sx[i], sy[i], cars.heading[i], size))
-        self.screen.blit(overlay, self.view.topleft)
-        b = self.best_slot
-        if b < len(sx):
-            pygame.draw.polygon(self.screen, INK, car_polygon(sx[b], sy[b], cars.heading[b], size * 1.3), 2)
-            if self.rays and not cars.done[b]:
-                lengths = sim.cast_rays(playback.track, cars.x[b:b + 1], cars.y[b:b + 1], cars.heading[b:b + 1],
-                                        lengths=cars.ray_length[b:b + 1])[0]   # this car's own sensor length
-                angles = cars.heading[b] + config.RAY_ANGLES
-                ex, ey = camera.to_screen(cars.x[b] + np.cos(angles) * lengths, cars.y[b] + np.sin(angles) * lengths)
-                for k in range(config.N_RAYS):
-                    pygame.draw.line(self.screen, RAY, (sx[b], sy[b]), (ex[k], ey[k]), 1)
-
-    def draw_racers(self, playback, camera):
-        cars = playback.cars
-        sx, sy = camera.to_screen(cars.x, cars.y)
-        size = max(8.0, 6.0 * camera.scale)
-        if self.rays:                                   # every racing car's rays, each at its own sensor length
-            live = np.flatnonzero(~cars.done)
-            if live.size:
-                lengths = sim.cast_rays(playback.track, cars.x[live], cars.y[live], cars.heading[live],
-                                        lengths=cars.ray_length[live])
-                for row, i in enumerate(live):
-                    angles = cars.heading[i] + config.RAY_ANGLES
-                    ex, ey = camera.to_screen(cars.x[i] + np.cos(angles) * lengths[row],
-                                              cars.y[i] + np.sin(angles) * lengths[row])
-                    for k in range(config.N_RAYS):
-                        pygame.draw.line(self.screen, RAY, (sx[i], sy[i]), (ex[k], ey[k]), 1)
-        if self.ghost is not None:                      # the pole lap's car, under the controllers' cars
-            g = self.ghost.state(playback.elapsed)
-            gx, gy = camera.to_screen(g.x, g.y)
-            shape = car_polygon(gx, gy, g.heading, size)
-            pygame.draw.polygon(self.screen, GHOST_COLOR, shape)
-            pygame.draw.polygon(self.screen, WHITE, shape, 2)
-        archived = self.archived()                      # every run of an archive was seeded: no stripe
-        for i, car in enumerate(self.race_cars()):
-            color = hex_to_rgb(config.COLORS[car[0]])
-            if cars.crashed[i]:
-                color = tuple(int(0.5 * c + 127) for c in color)          # faded
-            shape = car_polygon(sx[i], sy[i], cars.heading[i], size)
-            pygame.draw.polygon(self.screen, color, shape)
-            if is_app(car):                                                # app cars: a white border
-                pygame.draw.polygon(self.screen, WHITE, shape, 3)
-            elif car[1] != SEEDED_RUN and not archived:     # run 1 and up: a white stripe, rear to nose (§10.3)
-                (nose_x, nose_y), (left_x, left_y), (right_x, right_y) = shape
-                pygame.draw.line(self.screen, WHITE, ((left_x + right_x) / 2, (left_y + right_y) / 2),
-                                 (nose_x, nose_y), 2)
-            pygame.draw.polygon(self.screen, INK, shape, 1)
-
     def leader_speed_line(self):
         """The race leader's name and speed, '1st  KT Random r1  194 mph'; None before a race."""
         if self.race is None or len(self.race.cars.x) == 0:
@@ -1712,294 +1399,3 @@ class App:
         car = self.race_cars()[i]
         name = car_name(car[0], car[1], app=is_app(car), archived=self.archived())
         return f"1st  {name}  {speed_text(float(self.race.cars.speed[i]))}"
-
-    def draw_leader_speed(self):
-        """The race leader's speed in a box at the map's top-left corner."""
-        line = self.leader_speed_line()
-        if line is None:
-            return
-        surface = self.font.render(line, True, INK)
-        box = surface.get_rect(topleft=(self.view.left + 10, self.view.top + 10)).inflate(16, 10)
-        pygame.draw.rect(self.screen, PANEL_BG, box, border_radius=6)
-        pygame.draw.rect(self.screen, MUTED, box, 1, border_radius=6)
-        self.screen.blit(surface, (box.left + 8, box.top + 5))
-
-    def text(self, string, x, y, font=None, color=INK):
-        surface = (font or self.font).render(string, True, color)
-        self.screen.blit(surface, (x, y))
-        return y + surface.get_height() + 4
-
-    def swatch(self, approach, rect):
-        """An approach's color square; a light color gets a dark outline on the light panel."""
-        color = hex_to_rgb(config.COLORS[approach])
-        pygame.draw.rect(self.screen, color, rect)
-        if needs_outline(color, PANEL_BG):
-            pygame.draw.rect(self.screen, INK, rect, 1)
-
-    def button(self, rect, label, action, active=False, enabled=True, color=None):
-        fill = hex_to_rgb(color) if (color and active) else (BUTTON_ACTIVE if active else BUTTON)
-        if not enabled:                 # locked; a colored button that is on keeps a light tint of its color
-            fill = (tuple(round(LOCKED_TINT * c + (1 - LOCKED_TINT) * d) for c, d in zip(fill, DISABLED))
-                    if color and active else DISABLED)
-        pygame.draw.rect(self.screen, fill, rect, border_radius=6)
-        if color and not active:
-            pygame.draw.rect(self.screen, hex_to_rgb(color), pygame.Rect(rect.left, rect.top, 5, rect.height),
-                             border_top_left_radius=6, border_bottom_left_radius=6)
-        ink = ink_for(fill) if active and enabled else (INK if enabled else MUTED)     # disabled: the light fill
-        label_surface = self.small.render(label, True, ink)
-        self.screen.blit(label_surface, label_surface.get_rect(center=rect.center))
-        if enabled:
-            self.buttons.append((rect, action))
-
-    def draw_speed_buttons(self, x, y, w):
-        """The playback speeds in one row, named on the left like the track and run rows. Returns the next free
-        y."""
-        self.text("Playback speed", x, y + 5, self.small, MUTED)
-        quarter = (w - 110 - 24) // 4
-        for k, speed in enumerate(config.SPEEDS):
-            self.button(pygame.Rect(x + 110 + k * (quarter + 8), y, quarter, 28), f"{speed}×",
-                        lambda s=speed: self.set_speed(s), self.speed == speed)
-        return y + 36
-
-    def draw_panel(self):
-        pygame.draw.rect(self.screen, PANEL_BG, self.panel)
-        x, y, w = self.panel.left + 16, 14, self.panel.width - 32
-        third = (w - 16) // 3
-        self.button(pygame.Rect(x, y, third, 30), "Training", lambda: self.set_mode("train"), self.mode == "train")
-        self.button(pygame.Rect(x + third + 8, y, third, 30), "Race", lambda: self.set_mode("race"),
-                    self.mode == "race")
-        self.button(pygame.Rect(x + 2 * (third + 8), y, third, 30), "Windowed" if self.fullscreen else "Full screen",
-                    self.toggle_fullscreen, self.fullscreen)
-        y += 44
-        if self.mode == "train":
-            self.draw_train_panel(x, y, w)
-        else:
-            self.draw_race_panel(x, y, w)
-        self.text(self.status[:56], x, self.panel.bottom - 26, self.small, MUTED)
-
-    def draw_difficulty(self, x, y, w, level, action, enabled, choices=config.DIFFICULTIES):
-        """One button per difficulty of `choices` (spec §10.4). Returns the next free y."""
-        y = self.text("Difficulty", x, y, self.small, MUTED)
-        per_row = 4 if len(choices) <= 4 else 3             # five choices wrap so each label fits its button
-        width = (w - 8 * (per_row - 1)) // per_row
-        for k, (value, name) in enumerate(choices.items()):
-            rect = pygame.Rect(x + (k % per_row) * (width + 8), y + (k // per_row) * 32, width, 26)
-            self.button(rect, name, lambda v=value: action(v), level == value, enabled=enabled)
-        return y + 32 * -(-len(choices) // per_row) + 2
-
-    def draw_train_panel(self, x, y, w):
-        idle = self.process is None
-        third = (w - 16) // 3
-        y = self.text("Approach", x, y, self.small, MUTED)
-        for k, approach in enumerate(config.APPROACHES):
-            rect = pygame.Rect(x + (k % 3) * (third + 8), y + (k // 3) * 34, third, 28)
-            self.button(rect, config.LABELS[approach], lambda a=approach: self.select_approach(a),
-                        approach == self.approach, enabled=idle, color=config.COLORS[approach])
-        y += 3 * 34 + 4
-        notebook = self.source == "notebook"
-        half = (w - 8) // 2
-        self.button(pygame.Rect(x, y, half, 26), f"Source: {'Notebook run' if notebook else 'App training'} ▸",
-                    self.toggle_source, notebook, enabled=idle)
-        self.button(pygame.Rect(x + half + 8, y, half, 26), self.folder_label(), self.cycle_folder,
-                    self.folder_name != "current", enabled=idle and notebook)
-        y += 34
-        self.text("Run", x, y + 5, self.small, MUTED)               # run 0 is the seeded run (spec §10.2)
-        self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_run_seed(-1), enabled=idle)
-        seeded = self.run_seed == SEEDED_RUN and not (notebook and self.archived())
-        self.text(f"{self.run_seed} (seeded)" if seeded else str(self.run_seed), x + 150, y + 5)
-        self.button(pygame.Rect(x + 240, y, 30, 28), ">", lambda: self.change_run_seed(1), enabled=idle)
-        y += 36
-        y = self.draw_difficulty(x, y, w, self.difficulty, self.set_difficulty, idle and not notebook)
-        if self.approach in self.population and not notebook:
-            self.text("Population", x, y + 5, self.small, MUTED)
-            self.button(pygame.Rect(x + 110, y, 30, 28), "−", lambda: self.change_population(-1), enabled=idle)
-            self.text(str(self.population[self.approach]), x + 152, y + 5)
-            self.button(pygame.Rect(x + 210, y, 30, 28), "+", lambda: self.change_population(1), enabled=idle)
-            y += 36
-        if notebook:
-            playing = not self.replay_paused
-        else:
-            playing = self.process is not None and self.running is not None and self.running.is_set()
-        self.button(pygame.Rect(x, y, third, 32), "Pause" if playing else "Play", self.toggle_play, playing)
-        self.button(pygame.Rect(x + third + 8, y, third, 32), "Stop", self.stop, enabled=not idle and not notebook)
-        self.button(pygame.Rect(x + 2 * (third + 8), y, third, 32), "New run", self.new_run,
-                    enabled=idle and not notebook)
-        y += 42
-        y = self.text("Show", x, y, self.small, MUTED)
-        for k, mode in enumerate(("all", "best", "worst")):
-            self.button(pygame.Rect(x + k * (third + 8), y, third, 26), mode.capitalize(),
-                        lambda m=mode: self.set_show(m), self.show == mode)
-        y += 34
-        size = self.population_size()
-        shown = min(self.shown, size)
-        y = self.text(f"Cars shown: {shown}", x, y, self.small, MUTED)
-        self.slider = pygame.Rect(x, y + 4, w, 10)
-        pygame.draw.rect(self.screen, BUTTON, self.slider, border_radius=5)
-        knob = x + (shown - 1) / max(size - 1, 1) * w
-        pygame.draw.circle(self.screen, BUTTON_ACTIVE, (int(knob), y + 9), 8)
-        y += 24
-        y = self.draw_speed_buttons(x, y, w)
-        y = self.draw_view_toggles(x, y, w)
-        y = self.draw_network_button(x, y, w)
-        y = self.draw_stats(x, y)
-        bottom = self.panel.bottom - 34
-        if bottom - y > 50:
-            self.draw_plot(pygame.Rect(x, y + 4, w, bottom - y - 4))
-
-    def draw_view_toggles(self, x, y, w):
-        """Sensor rays and the display grip side by side (spec §10.2, §10.5). Returns the next free y."""
-        half = (w - 8) // 2
-        self.button(pygame.Rect(x, y, half, 26), f"Sensor rays: {'on' if self.rays else 'off'}", self.toggle_rays,
-                    self.rays)
-        self.button(pygame.Rect(x + half + 8, y, half, 26), f"Grip: {GRIP_LABELS[self.grip_name]}", self.toggle_grip,
-                    self.grip_name != "Normal", enabled=not self.racing)
-        return y + 34
-
-    def draw_network_button(self, x, y, w):
-        """The network window button and the camera button side by side. Returns the next free y."""
-        half = (w - 8) // 2
-        self.button(pygame.Rect(x, y, half, 26), "Network window", self.toggle_network_window,
-                    self.net_process is not None)
-        self.button(pygame.Rect(x + half + 8, y, half, 26), self.camera_label(), self.cycle_camera,
-                    self.camera_zoom() != 1)
-        return y + 34
-
-    def draw_stats(self, x, y):
-        y = self.text(self.map_text(), x, y, self.small)
-        r = self.latest
-        if r is None:
-            if self.source == "app" and self.process is None and self.has_saved_run():
-                return self.text("Saved run found: Play resumes, New run restarts.", x, y, self.small, MUTED)
-            return self.text("No generation completed yet.", x, y, self.small, MUTED)
-        for line in stats_lines(r, r["approach"]):
-            y = self.text(line, x, y, self.small)
-        return y
-
-    def draw_plot(self, rect):
-        pygame.draw.rect(self.screen, (255, 255, 255), rect)
-        pygame.draw.rect(self.screen, BUTTON, rect, 1)
-        shares = self.latest is not None and "min_share" in self.latest
-        title = (f"Lowest map success share, {len(self.history)} generations" if shares
-                 else f"Best and mean validation accuracy, {len(self.history)} reports")
-        self.text(title, rect.left + 6, rect.top + 4, self.small, MUTED)
-        if len(self.history) < 2:
-            return
-        gens = np.array([h[0] for h in self.history], dtype=float)
-        main = np.array([h[1] for h in self.history], dtype=float)
-        second = np.array([h[2] for h in self.history], dtype=float)
-        if shares:
-            lo, hi = 0.0, 1.0
-        else:
-            values = np.concatenate([main, second[~np.isnan(second)]])
-            lo, hi = float(values.min()), float(values.max())
-        span = hi - lo if hi > lo else 1.0
-        width = max(gens[-1] - gens[0], 1.0)
-
-        def point(g, v):
-            return (rect.left + 6 + (g - gens[0]) / width * (rect.width - 12),
-                    rect.bottom - 6 - (v - lo) / span * (rect.height - 30))
-
-        for g, _, _, marked in self.history:
-            if marked:
-                px = point(g, lo)[0]
-                pygame.draw.line(self.screen, MUTED, (px, rect.top + 22), (px, rect.bottom - 2), 1)
-        if shares:                                          # the requirement of the latest generation
-            y = point(gens[0], curriculum.mastery_fraction(self.latest.get("speed_push", False)))[1]
-            pygame.draw.line(self.screen, BUTTON_ACTIVE, (rect.left + 6, y), (rect.right - 6, y), 1)
-        if not np.isnan(second).all():
-            pygame.draw.lines(self.screen, MUTED, False, [point(g, v) for g, v in zip(gens, second)], 1)
-        color, points = hex_to_rgb(config.COLORS[self.approach]), [point(g, v) for g, v in zip(gens, main)]
-        if needs_outline(color):                           # NEAT's yellow on the white plot
-            pygame.draw.lines(self.screen, INK, False, points, 4)
-        pygame.draw.lines(self.screen, color, False, points, 2)
-
-    def draw_race_panel(self, x, y, w):
-        idle = not self.racing
-        half = (w - 8) // 2
-        if not self.race_available and not self.app_available:     # another folder may have some
-            self.button(pygame.Rect(x, y, half, 22), self.folder_label(), self.cycle_folder,
-                        self.folder_name != "current", enabled=idle)
-            self.text("No trained controllers found.", x, y + 30, self.small, MUTED)
-            return
-        self.text("Track", x, y + 5, self.small, MUTED)
-        self.button(pygame.Rect(x + 110, y, 30, 28), "<", lambda: self.change_race_track(-1), enabled=idle)
-        self.button(pygame.Rect(x + 150, y, 30, 28), ">", lambda: self.change_race_track(1), enabled=idle)
-        y = self.text(self.race_name(), x, y + 34, self.small) + 2
-        y = self.draw_difficulty(x, y, w, self.race_level, self.set_race_level, idle, config.APP_DIFFICULTIES)
-        half = (w - 8) // 2
-        self.button(pygame.Rect(x, y, half, 32), "Start race", self.start_race, self.racing,
-                    enabled=idle and bool(self.race_cars()))
-        self.button(pygame.Rect(x + half + 8, y, half, 32), "Stop", self.stop_race, enabled=self.racing)
-        y += 42
-        y = self.draw_view_toggles(x, y, w)
-        y = self.draw_network_button(x, y, w)
-        self.button(pygame.Rect(x, y - 6, w, 26), self.network_car_label(), self.cycle_network_car,
-                    enabled=bool(self.race_cars()))
-        y += 28
-        self.button(pygame.Rect(x, y, half, 22), self.race_runs_label(), self.cycle_race_runs,
-                    self.race_runs != "best", enabled=idle)
-        self.button(pygame.Rect(x + half + 8, y, half, 22), self.folder_label(), self.cycle_folder,
-                    self.folder_name != "current", enabled=idle)
-        y += 26
-        if self.app_available:
-            self.button(pygame.Rect(x, y, half, 22), self.race_group_label(), self.cycle_race_group)
-            y += 26
-        if self.race_group == "app" and self.app_available:
-            for approach in self.app_available:
-                self.swatch(approach, pygame.Rect(x, y + 6, 10, 10))
-                self.text(f"{config.LABELS[approach]} (app)", x + 16, y + 3, self.small)
-                self.button(pygame.Rect(x + 140, y, w - 140, 22), self.app_choice_label(approach),
-                            lambda a=approach: self.cycle_app_choice(a), enabled=idle)
-                y += 24
-        else:           # each method's switch, filled when on, in a grid of three: a race of 32 runs keeps every row
-            third = (w - 16) // 3
-            for k, approach in enumerate(self.race_available):
-                self.button(pygame.Rect(x + (k % 3) * (third + 8), y + (k // 3) * 26, third, 22),
-                            config.LABELS[approach], lambda a=approach: self.toggle_race(a),
-                            self.race_on.get(approach, True), enabled=idle, color=config.COLORS[approach])
-            y += 26 * -(-len(self.race_available) // 3)
-        y += 4
-        y = self.draw_speed_buttons(x, y, w)
-        heading = f"Leaderboard ({config.RACE_LAPS} laps): lap, last/best lap time (s)"
-        y = self.text(heading + (", vs pole" if self.pole_lap() else ""), x, y, self.small, MUTED)
-        cars = self.race_cars()
-        pole = self.pole_lap()
-        rows = leaderboard(self.race, len(cars), pole, ghost=self.ghost)
-        room = max((self.panel.bottom - 30 - y) // (self.small.get_linesize() + 4), 1)
-        shown = rows if len(rows) <= room else rows[:room - 1]
-        for position, i, laps, last, best, status, gap in shown:
-            if i == GHOST:
-                pygame.draw.rect(self.screen, GHOST_COLOR, pygame.Rect(x, y + 3, 10, 10))
-                y = self.text(leaderboard_line(position, None, None, laps, last, best, status, gap=gap,
-                                               name=self.ghost.name), x + 16, y, self.small)
-                continue
-            car = cars[i]
-            self.swatch(car[0], pygame.Rect(x, y + 3, 10, 10))
-            y = self.text(leaderboard_line(position, car[0], car[1], laps, last, best, status, app=is_app(car),
-                                           archived=self.archived(), gap=gap if pole else None), x + 16, y, self.small)
-        if len(shown) < len(rows):
-            self.text(f"… {len(rows) - len(shown)} more", x + 16, y, self.small, MUTED)
-
-
-def main():
-    pygame.init()
-    pygame.display.set_caption("EC Racing")
-    screen = pygame.display.set_mode(config.WINDOW_SIZE, pygame.RESIZABLE)
-    viewer = App(screen)
-    clock = pygame.time.Clock()
-    try:
-        while viewer.alive:
-            dt = clock.tick(config.FPS) / 1000.0
-            for event in pygame.event.get():
-                viewer.handle(event)
-            viewer.update(dt)
-            viewer.draw()
-            pygame.display.flip()
-    finally:
-        viewer.stop_training()
-        viewer.close_network_window()
-        pygame.quit()
-
-
-if __name__ == "__main__":
-    main()

@@ -301,9 +301,6 @@ COLORS = {"baseline": "#7F7F7F", "kt_random": "#E69F00", "kt_hyperband": "#56B4E
           "neat": "#F0E442"}         # the remaining Okabe-Ito color (spec §10.1)
 
 # --- Application (spec §10) ---
-WINDOW_SIZE = (1280, 800)
-PANEL_WIDTH = 380
-FPS = 60
 POPULATION_PRESETS = (100, 250, 550, 1000, 2000)    # 550 was the ES population to version 3.10 (spec §9.7)
 SPEEDS = (1, 2, 4, 8)
 PLAYBACK_BASE = 2.0          # simulated seconds per real second at 1× playback
@@ -317,7 +314,6 @@ APP_GRIPS = {"Normal": 1.0, "Unlimited": 10.0}   # multiples of a(v), the displa
                                                  # only (spec §10.5); never a recorded setting
 ROBUSTNESS_WIDTHS = (6.0, 10.0, 14.0, 18.0)   # m, the robustness table's widths (spec §11.1); evaluation only
 REPLAY_POLL_SECONDS = 1.0    # the notebook-run view looks for a newer generation at most this often
-CAMERA_ZOOMS = (1, 2, 4, 8)  # the camera button's steps; above 1 the camera follows the best car or the race leader
 
 # --- Paths ---
 FONT_PATH = PROJECT_DIR / "racing" / "fonts" / "DejaVuSansCondensed.ttf"   # the viewer's font, shipped with the project so

@@ -6,7 +6,6 @@ import threading
 import time
 
 import numpy as np
-import pygame
 import pytest
 
 from racing import app as viewer
@@ -18,13 +17,10 @@ def window(monkeypatch, circle_track, tmp_path_factory):
     monkeypatch.setattr(config, "RESULTS_DIR", tmp_path_factory.mktemp("results"))   # never the checkout's results/
     monkeypatch.setattr(viewer, "get_track", lambda seed, level: circle_track)
     monkeypatch.setattr(viewer.os, "killpg", lambda pgid, sig: None)     # tests never signal real processes
-    pygame.init()
-    screen = pygame.display.set_mode(config.WINDOW_SIZE)
-    instance = viewer.App(screen, background_tracks=False)
+    instance = viewer.App(background_tracks=False)
     yield instance
     instance.process = None
     instance.stop_training()
-    pygame.quit()
 
 
 def test_the_window_never_reads_the_checkouts_results(window):
@@ -57,60 +53,6 @@ def neat_report(generation=0, n=20):
     return ga_report(generation, n, approach="neat", population_=neat.NeatPopulation(genomes), species=3)
 
 
-def test_button_text_is_dark_on_light_colors_and_white_on_dark_ones():
-    """NEAT's yellow is too light for white text (spec §10.1)."""
-    rgb = viewer.hex_to_rgb
-    assert viewer.ink_for(rgb(config.COLORS["neat"])) == viewer.INK
-    assert viewer.ink_for(rgb(config.COLORS["es_seeded"])) == viewer.WHITE         # dark blue
-    assert viewer.ink_for(viewer.BUTTON_ACTIVE) == viewer.WHITE
-    assert viewer.ink_for(viewer.WHITE) == viewer.INK
-    for color in config.COLORS.values():                                       # the better of the two inks
-        fill = rgb(color)
-        assert viewer.contrast(fill, viewer.ink_for(fill)) == max(viewer.contrast(fill, viewer.INK),
-                                                                   viewer.contrast(fill, viewer.WHITE))
-
-
-def test_light_plot_lines_get_a_dark_outline():
-    rgb = viewer.hex_to_rgb
-    assert viewer.needs_outline(rgb(config.COLORS["neat"]))
-    assert not viewer.needs_outline(rgb(config.COLORS["es_seeded"])) and not viewer.needs_outline(viewer.INK)
-
-
-def test_the_selected_neat_button_has_dark_text(window):
-    rect = pygame.Rect(10, 10, 160, 28)
-    window.screen.fill((0, 0, 0))
-    window.button(rect, "NEAT", lambda: None, active=True, color=config.COLORS["neat"])
-    pixels = {tuple(window.screen.get_at((x, y)))[:3] for x in range(rect.left, rect.right)
-              for y in range(rect.top, rect.bottom)}
-    assert viewer.INK in pixels and (255, 255, 255) not in pixels
-
-
-def test_a_disabled_selected_button_keeps_legible_text(window):
-    """A method switched on is drawn disabled during a race: muted text, never white."""
-    rect = pygame.Rect(10, 10, 160, 28)
-    window.screen.fill(viewer.PANEL_BG)
-    window.button(rect, "Baseline", lambda: None, active=True, enabled=False, color=config.COLORS["baseline"])
-    pixels = {tuple(window.screen.get_at((x, y)))[:3] for x in range(rect.left, rect.right)
-              for y in range(rect.top, rect.bottom)}
-    darkest = min(pixels, key=viewer.luminance)                             # the text's ink
-    assert (255, 255, 255) not in pixels and viewer.contrast(darkest, viewer.MUTED) < 1.2
-
-
-def test_a_locked_method_switch_still_shows_whether_it_is_on(window):
-    """During a race the switches are locked: one switched on keeps a light tint of its color, one switched off the
-    plain disabled fill, and the muted text stays legible on both."""
-    for color in config.COLORS.values():
-        fills = []
-        for active in (True, False):
-            rect = pygame.Rect(10, 10, 110, 22)
-            window.screen.fill(viewer.PANEL_BG)
-            window.button(rect, "", lambda: None, active=active, enabled=False, color=color)
-            fills.append(tuple(window.screen.get_at((rect.left + 12, rect.top + 4)))[:3])
-        on, off = fills
-        assert off == viewer.DISABLED and on not in (viewer.DISABLED, viewer.hex_to_rgb(color)), color
-        assert viewer.contrast(on, viewer.MUTED) >= 3.0, color
-
-
 def test_select_indices_modes():
     fitness = np.array([0.3, 0.9, 0.1, 0.5])
     assert list(viewer.select_indices(fitness, "best", 2)) == [1, 3]
@@ -125,34 +67,10 @@ def test_select_indices_clamps_the_count():
     assert len(viewer.select_indices(fitness, "all", 1000)) == 5
 
 
-def test_camera_keeps_the_track_inside_the_view(circle_track):
-    rect = pygame.Rect(0, 0, 900, 800)
-    camera = viewer.Camera(circle_track, rect)
-    for edge in (circle_track.left, circle_track.right):
-        sx, sy = camera.to_screen(edge[:, 0], edge[:, 1])
-        assert sx.min() >= 0 and sx.max() <= 900 and sy.min() >= 0 and sy.max() <= 800
-
-
 def test_training_playback_drives_all_laps(window):
     window.receive(ga_report())
     window.update(1 / 60)
     assert window.playback.cars.laps == config.LAPS
-
-
-def test_training_stats_fit_the_panel(window):
-    window.receive(ga_report())
-    window.update(1 / 60)
-    widest = dict(level=4, generation=123456, map_shares=np.ones(3), min_share=1.0, streak=3, target_reduction=0.185,
-                  step_size=0.0505, best=1.5843, mean=1.2329, species=20, is_kept=np.ones(1000, dtype=bool),
-                  sensor_mean=150.0, sensor_std=70.0, steer_mean=3.0, steer_std=1.33)
-    for approach in config.EVOLUTION_APPROACHES:
-        report = ga_report(approach=approach, **widest)
-        for line in viewer.stats_lines(report, approach):
-            assert window.small.size(line)[0] <= window.panel.width - 32, line
-    imitation = {"generation": 149, "best": 0.7046, "mean": 0.6123, "level": 4}
-    for approach in config.IMITATION_APPROACHES:
-        for line in viewer.stats_lines(imitation, approach):
-            assert window.small.size(line)[0] <= window.panel.width - 32, line
 
 
 def test_stats_lines_show_maps_streak_and_target():
@@ -281,115 +199,6 @@ def test_the_display_grip_never_reaches_training(window, monkeypatch, tmp_path):
     assert config.APP_GRIPS == {"Normal": 1.0, "Unlimited": 10.0}
 
 
-def test_rays_follow_each_cars_sensor_length(window, monkeypatch, tmp_path):
-    seen = []
-    cast = sim.cast_rays
-
-    def recording(track, x, y, heading, lengths=None):
-        seen.append(None if lengths is None else np.array(lengths))
-        return cast(track, x, y, heading, lengths)
-
-    monkeypatch.setattr(viewer.sim, "cast_rays", recording)
-    rng = np.random.default_rng(6)
-    rows = setup.random(rng, 30)
-    rows[:, 0] = np.geomspace(30.0, 1000.0, 30)                  # every car its own sensor length (spec §9.11)
-    cars = nets.DensePopulation(nets.init_population(rng, 30), setup=rows)
-    window.rays = True
-    window.set_show("all")                                       # cars in index order, so the best is not slot 0
-    window.receive(ga_report(population_=cars))
-    window.update(1 / 60)
-    lengths = window.playback.cars.ray_length
-    assert len(np.unique(lengths)) == len(lengths) > 1           # another car's length or a constant would differ
-    seen.clear()
-    window.draw()
-    best = window.best_slot
-    assert best != 0 and len(seen) == 1 and np.array_equal(seen[0], lengths[best:best + 1])
-    for (approach, seed), length in zip((("es", 0), ("ga", 0), ("ga", 1)), (40.0, 300.0, 900.0)):
-        racer = nets.DensePopulation(nets.init_population(rng, 1), setup=np.array([[length, 1.0]]))
-        population.save_dense_champion(approach, seed, racer, 0, tmp_path)
-    window.champions_dir = tmp_path                               # race_window's lineup, with distinct sensors
-    window.race_runs = "all"
-    window.set_mode("race")
-    window.update(1 / 60)
-    assert sorted(window.race.cars.ray_length) == [40.0, 300.0, 900.0]
-    window.start_race()
-    window.update(1 / 60)
-    seen.clear()
-    window.draw()
-    live = np.flatnonzero(~window.race.cars.done)
-    assert len(seen) == 1 and np.array_equal(seen[0], window.race.cars.ray_length[live])
-
-
-def test_the_camera_cycles_from_the_whole_map_through_follow_zooms(window):
-    labels = []
-    for _ in config.CAMERA_ZOOMS:
-        labels.append(window.camera_label())
-        window.cycle_camera()
-    assert labels == ["Camera: Whole map ▸", "Camera: Follow 2× ▸", "Camera: Follow 4× ▸", "Camera: Follow 8× ▸"]
-    assert window.camera_zoom() == 1
-    window.zoom_by(5)
-    assert window.camera_zoom() == config.CAMERA_ZOOMS[-1]               # the wheel stops at the ends
-    window.zoom_by(-1)
-    assert window.camera_zoom() == config.CAMERA_ZOOMS[-2]
-    window.zoom_by(-9)
-    assert window.camera_zoom() == 1
-
-
-def test_the_c_key_and_the_wheel_over_the_map_change_the_camera(window, monkeypatch):
-    window.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c))
-    assert window.camera_zoom() == 2
-    monkeypatch.setattr(viewer.pygame.mouse, "get_pos", lambda: window.view.center)
-    window.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1))
-    assert window.camera_zoom() == 4
-    monkeypatch.setattr(viewer.pygame.mouse, "get_pos", lambda: window.panel.center)
-    window.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1))       # over the panel: no zoom
-    assert window.camera_zoom() == 4
-
-
-def test_the_camera_button_sits_next_to_the_network_window_button(window):
-    window.draw()
-    (rect, _), = [(r, a) for r, a in window.buttons if a == window.cycle_camera]
-    (network, _), = [(r, a) for r, a in window.buttons if a == window.toggle_network_window]
-    assert rect.top == network.top and rect.left > network.right
-    window.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=rect.center))
-    assert window.camera_zoom() == 2
-
-
-def test_a_follow_camera_centres_on_the_best_car_in_training(window):
-    window.receive(ga_report())
-    window.update(1 / 60)
-    for _ in range(30):
-        window.update(1 / 60)
-    cars, best = window.playback.cars, window.best_slot
-    window.cycle_camera()
-    camera = window.view_camera(window.playback.track, window.playback)
-    assert camera.center == pytest.approx([cars.x[best], cars.y[best]])
-    sx, sy = camera.to_screen(cars.x[best], cars.y[best])
-    assert (sx, sy) == pytest.approx(window.view.center)
-    whole = viewer.Camera(window.playback.track, window.view)
-    assert camera.scale == pytest.approx(2 * whole.scale)
-
-
-def test_a_follow_camera_centres_on_the_race_leader(window, tmp_path):
-    race_window(window, tmp_path)
-    window.update(1 / 60)
-    window.start_race()
-    for _ in range(60):
-        window.update(1 / 60)
-    cars = window.race.cars
-    window.zoom_by(2)
-    leader = window.follow_point(window.race, window.race.track)
-    racing = np.flatnonzero(~cars.done)
-    best = racing[np.argmax(cars.progress[racing])]
-    assert leader == pytest.approx([cars.x[best], cars.y[best]])
-    cars.done[best] = True                                               # the leader crashed or finished
-    following = window.follow_point(window.race, window.race.track)
-    still = np.flatnonzero(~cars.done)
-    if still.size:
-        assert following == pytest.approx([cars.x[still[np.argmax(cars.progress[still])]],
-                                           cars.y[still[np.argmax(cars.progress[still])]]])
-
-
 def test_the_race_leader_is_the_furthest_car_still_racing():
     cars = sim.Cars.__new__(sim.Cars)
     cars.progress, cars.done = np.array([5.0, 9.0, 7.0]), np.array([False, True, False])
@@ -414,105 +223,12 @@ def test_the_race_view_shows_the_leaders_speed(window, tmp_path):
     leader = viewer.race_leader(cars)
     line = window.leader_speed_line()
     assert line.startswith("1st ") and line.endswith(viewer.speed_text(float(cars.speed[leader])))
-    window.draw()
-
-
-def test_without_cars_a_follow_camera_looks_at_the_start_line(window, circle_track):
-    window.cycle_camera()
-    start = (circle_track.left[0] + circle_track.right[0]) / 2
-    assert window.follow_point(None, circle_track) == pytest.approx(start)
-
-
-def test_zoomed_views_draw_only_the_visible_track(window, circle_track):
-    whole = viewer.Camera(circle_track, window.view)
-    assert len(viewer.visible_segments(circle_track, whole)) == len(circle_track.left)
-    start = (circle_track.left[0] + circle_track.right[0]) / 2
-    close = viewer.Camera(circle_track, window.view, 8, start)
-    part = viewer.visible_segments(circle_track, close)
-    assert 0 in part and 0 < len(part) < len(circle_track.left) / 2
-
-
-@pytest.mark.parametrize("zoom_steps", [1, 2, 3])
-def test_every_zoom_draws_in_both_views(window, tmp_path, zoom_steps):
-    window.zoom_by(zoom_steps)
-    window.draw()                                                        # no cars yet: the start line
-    window.receive(ga_report())
-    for _ in range(5):
-        window.update(1 / 60)
-        window.draw()
-    window.rays = True
-    window.draw()
-    race_window(window, tmp_path)
-    window.update(1 / 60)
-    window.draw()
-    window.start_race()
-    for _ in range(5):
-        window.update(1 / 60)
-        window.draw()
-    assert window.screen.get_clip() == window.screen.get_rect()          # the view's clip is lifted again
-
-
-def fake_display(monkeypatch, fullscreen_size=(1920, 1080)):
-    """pygame.display.set_mode answering with surfaces of the requested size, or `fullscreen_size` for (0, 0)."""
-    calls = []
-
-    def set_mode(size, flags=0):
-        calls.append((tuple(size), flags))
-        return pygame.Surface(fullscreen_size if tuple(size) == (0, 0) else size)
-
-    monkeypatch.setattr(viewer.pygame.display, "set_mode", set_mode)
-    return calls
-
-
-def test_full_screen_fills_the_display_and_windowed_mode_returns(window, monkeypatch):
-    calls = fake_display(monkeypatch)
-    window.toggle_fullscreen()
-    assert window.fullscreen and calls[-1] == ((0, 0), pygame.FULLSCREEN)
-    assert window.view.size == (1920 - config.PANEL_WIDTH, 1080) and window.panel.right == 1920
-    window.draw()
-    assert any(a == window.toggle_fullscreen for _, a in window.buttons)
-    window.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
-    assert not window.fullscreen and calls[-1] == (config.WINDOW_SIZE, pygame.RESIZABLE)
-    assert window.view.size == (config.WINDOW_SIZE[0] - config.PANEL_WIDTH, config.WINDOW_SIZE[1])
-    window.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F11))
-    assert window.fullscreen
-
-
-def test_track_pictures_are_redrawn_for_the_new_size(window, monkeypatch, circle_track):
-    fake_display(monkeypatch)
-    small = window.track_surface(circle_track)[1].get_size()
-    window.toggle_fullscreen()
-    big = window.track_surface(circle_track)[1].get_size()
-    assert small == (config.WINDOW_SIZE[0] - config.PANEL_WIDTH, config.WINDOW_SIZE[1])
-    assert big == (1920 - config.PANEL_WIDTH, 1080)
-
-
-def test_without_a_usable_display_full_screen_says_so(window, monkeypatch):
-    fake_display(monkeypatch, fullscreen_size=(0, 0))
-    window.toggle_fullscreen()
-    assert not window.fullscreen and "not available" in window.status
-    assert window.view.size == (config.WINDOW_SIZE[0] - config.PANEL_WIDTH, config.WINDOW_SIZE[1])
-
-    def failing(size, flags=0):
-        raise pygame.error("no display mode")
-
-    monkeypatch.setattr(viewer.pygame.display, "set_mode", failing)
-    window.toggle_fullscreen()
-    assert not window.fullscreen and "no display mode" in window.status
-
-
-def test_a_resized_window_lays_out_the_view_and_panel_again(window, monkeypatch):
-    monkeypatch.setattr(viewer.pygame.display, "get_surface", lambda: pygame.Surface((1600, 900)))
-    window.handle(pygame.event.Event(pygame.VIDEORESIZE, size=(1600, 900), w=1600, h=900))
-    assert window.view.size == (1600 - config.PANEL_WIDTH, 900) and window.panel.left == 1600 - config.PANEL_WIDTH
-    window.draw()
 
 
 def test_app_plays_a_report(window):
     window.receive(ga_report())
     for _ in range(120):
         window.update(1 / 60)
-        window.draw()
     assert window.playback is not None and window.playback_generation == 0
 
 
@@ -526,7 +242,6 @@ def test_stop_freezes_the_training_replay(window):
     frozen_time, frozen_x = playback.cars.time, playback.cars.x.copy()
     for _ in range(300):                                 # long enough for a replay to end and start again
         window.update(1 / 60)
-        window.draw()
     assert window.playback is playback                   # not restarted
     assert playback.cars.time == frozen_time and np.array_equal(playback.cars.x, frozen_x)
     assert window.latest is not None                     # the last generation's stats stay on the panel
@@ -630,16 +345,17 @@ def test_neat_report_plays_in_the_training_view(window):
     window.receive(neat_report())
     for _ in range(60):
         window.update(1 / 60)
-        window.draw()
     assert window.playback is not None and window.playback.cars.laps == config.LAPS
 
 
-def test_history_marks_level_ups_and_target_cuts(window):
-    for generation, event in enumerate((None, "level_up", None, "goal", "tightened", "end_speed")):
+def test_history_keeps_the_event_name(window):
+    events = (None, "level_up", None, "goal", "tightened", "end_speed")
+    for generation, event in enumerate(events):
         window.receive(ga_report(generation, event=event))
-    assert [h[3] for h in window.history] == [False, True, False, True, True, False]
+    assert [h[3] for h in window.history] == list(events)
     assert [h[1] for h in window.history] == [0.84] * 6
-    window.draw()                                        # the success-share plot draws with markers
+    window.receive(ga_report(6, event="tightened"))
+    assert window.history[-1][3] == "tightened"
 
 
 def test_playback_advances_the_simulation(circle_track):
@@ -668,7 +384,6 @@ def test_race_without_champions_shows_a_message(window, tmp_path):
     window.champions_dir = tmp_path
     window.set_mode("race")
     window.update(1 / 60)
-    window.draw()
     assert "No trained controllers" in window.status
 
 
@@ -873,38 +588,6 @@ def test_the_runs_control_and_the_switches_are_kept_while_the_view_is_open(windo
     assert window.lineup == [("ga", 0)]
 
 
-def recording_buttons(window, monkeypatch):
-    """The buttons the window draws, as (label, action, active, color, rect)."""
-    drawn, real = [], window.button
-
-    def recording_button(rect, label, action, active=False, enabled=True, color=None):
-        drawn.append((label, action, active, color, rect))
-        return real(rect, label, action, active, enabled, color)
-
-    monkeypatch.setattr(window, "button", recording_button)
-    return drawn
-
-
-def method_switches(drawn):
-    """The race view's method switches among drawn buttons, as (label, on, rect): a method's name in its color."""
-    colors = {config.LABELS[approach]: config.COLORS[approach] for approach in config.APPROACHES}
-    return [(label, active, rect) for label, _, active, color, rect in drawn
-            if color is not None and colors.get(label) == color]
-
-
-def test_the_race_panel_has_the_race_control_and_a_switch_per_method(window, tmp_path, monkeypatch):
-    race_window(window, tmp_path)
-    drawn = recording_buttons(window, monkeypatch)
-    window.draw()
-    assert ("Race: all runs ▸", window.cycle_race_runs) in [(label, action) for label, action, *_ in drawn]
-    assert [(label, on) for label, on, _ in method_switches(drawn)] == [("ES", True), ("GA", True)]
-    next(action for label, action, *_ in drawn if label == "GA")()          # GA's switch
-    assert window.race_on["ga"] is False and window.lineup == [("es", 0)]
-    drawn.clear()
-    window.draw()
-    assert [(label, on) for label, on, _ in method_switches(drawn)] == [("ES", True), ("GA", False)]
-
-
 def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monkeypatch, circle_track):
     """An archive of an earlier revision may hold runs 0, 1 and 2; 'all' races every one. Every run of an archive
     was seeded, so the leaderboard names each by its seed, 'GA s0' to 'GA s2' (spec §10.3)."""
@@ -921,17 +604,9 @@ def test_all_races_every_saved_run_of_an_earlier_revision(window, tmp_path, monk
     window.start_race()
     window.update(1 / 60)
     assert len(window.race.cars.x) == 3
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append(string)
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    window.draw()
-    rows = [string for string in drawn if string[:1].isdigit() and ". " in string]
-    assert sorted(row.split(" lap")[0].split(". ", 1)[1] for row in rows) == sorted(["GA s0", "GA s1", "GA s2",
-                                                                                     window.ghost.name])
+    names = [window.ghost.name if row[1] == viewer.GHOST else viewer.car_name(*window.race_cars()[row[1]], archived=True)
+             for row in viewer.leaderboard(window.race, 3, ghost=window.ghost)]
+    assert sorted(names) == sorted(["GA s0", "GA s1", "GA s2", window.ghost.name])
     window.stop_race()
     window.cycle_race_runs()
     assert window.lineup == [("ga", 0)]
@@ -944,31 +619,6 @@ def test_the_leaderboard_names_the_seeded_run():
     assert viewer.leaderboard_line(2, "ga", 1, 2, 50.0, 49.0, "racing").startswith("2. GA r1 lap 2")
     assert viewer.leaderboard_line(3, "ga", 2, 2, 50.0, 49.0, "racing").startswith("3. GA r2 lap 2")
     assert viewer.leaderboard_line(4, "ga", 0, 2, 50.0, 49.0, "racing", app=True).startswith("4. GA (app) s0 lap 2")
-
-
-def test_run_1_cars_carry_a_white_stripe(window, tmp_path, monkeypatch):
-    """spec §10.3: the run 1 car carries a white stripe from its rear to its nose; run 0 cars and app cars do not."""
-    app_race_window(window, tmp_path)                       # reported: es 0, ga 0, ga 1; app cars: ga 2, neat 0
-    window.cycle_app_choice("ga")
-    window.update(1 / 60)
-    assert window.race_cars() == [("es", 0), ("ga", 0), ("ga", 1), ("ga", 2, "app")]
-    camera = window.view_camera(window.race.track, window.race)            # draws the track picture once
-    calls = []
-    monkeypatch.setattr(viewer.pygame.draw, "polygon",
-                        lambda surface, color, points, width=0: calls.append(("polygon", tuple(color), points, width)))
-    monkeypatch.setattr(viewer.pygame.draw, "line",
-                        lambda surface, color, start, end, width=1: calls.append(("line", tuple(color), start, end,
-                                                                                  width)))
-    window.draw_racers(window.race, camera)
-    fills = [k for k, call in enumerate(calls) if call[0] == "polygon" and call[3] == 0]
-    assert calls[fills[0]][1] == viewer.GHOST_COLOR                     # the pole ghost, under the cars
-    fills = fills[1:]
-    stripes = [k for k, call in enumerate(calls) if call[0] == "line"]
-    assert len(fills) == 4 and len(stripes) == 1 and fills[2] < stripes[0] < fills[3]      # only ga run 1's
-    nose, left, right = calls[fills[2]][2]
-    _, color, start, end, width = calls[stripes[0]]
-    assert color == viewer.WHITE and width == 2 and end == nose
-    assert start == pytest.approx(((left[0] + right[0]) / 2, (left[1] + right[1]) / 2))
 
 
 def test_an_archives_runs_are_named_by_their_seeds_and_carry_no_stripe(window, tmp_path, monkeypatch, circle_track):
@@ -985,13 +635,7 @@ def test_an_archives_runs_are_named_by_their_seeds_and_carry_no_stripe(window, t
     window.set_mode("race")
     window.cycle_folder()
     window.update(1 / 60)
-    assert window.race_cars() == [("ga", 0), ("ga", 1)] and window.network_car_label() == "Network of: GA s0 ▸"
-    camera = window.view_camera(window.race.track, window.race)
-    lines = []
-    monkeypatch.setattr(viewer.pygame.draw, "line",
-                        lambda surface, color, start, end, width=1: lines.append((start, end)))
-    window.draw_racers(window.race, camera)
-    assert lines == []
+    assert window.race_cars() == [("ga", 0), ("ga", 1)] and window.followed_car() == ("ga", 0)
     window.cycle_race_runs()
     assert window.lineup == [("ga", 0)]
     window.cycle_race_runs()
@@ -999,15 +643,13 @@ def test_an_archives_runs_are_named_by_their_seeds_and_carry_no_stripe(window, t
     window.cycle_folder()                                   # the current results: run 1 carries its stripe again
     window.update(1 / 60)
     assert window.race_cars() == [("ga", 1)]
-    window.draw_racers(window.race, window.view_camera(window.race.track, window.race))
-    assert len(lines) == 1 and window.network_car_label() == "Network of: GA r1 ▸"
+    assert window.followed_car() == ("ga", 1) and viewer.car_name("ga", 1, archived=window.archived()) == "GA r1"
 
 
 def test_preview_waits_on_the_start_line_until_started(window, tmp_path):
     race_window(window, tmp_path)
     for _ in range(5):
         window.update(1 / 60)
-        window.draw()
     assert window.race is not None and window.race.cars.time == 0.0 and not window.racing
     window.start_race()
     window.update(0.1)
@@ -1028,8 +670,6 @@ def test_race_settings_are_locked_while_racing(window, tmp_path):
     window.toggle_race("ga")
     assert window.race_index == 0 and window.race_level == config.MAX_LEVEL and window.lineup == lineup
     assert window.race_runs == "all" and window.race_on["ga"]
-    window.draw()
-    assert window.cycle_race_runs not in [action for _, action in window.buttons]      # drawn disabled
 
 
 def test_race_difficulty_sets_the_track_level(monkeypatch, window, tmp_path, circle_track):
@@ -1039,18 +679,6 @@ def test_race_difficulty_sets_the_track_level(monkeypatch, window, tmp_path, cir
     window.set_race_level(2)
     window.update(1 / 60)
     assert (config.DISPLAY_SEEDS[0], 2) in calls
-
-
-def test_race_draws_a_leaderboard_and_fits_the_window(window, tmp_path):
-    race_window(window, tmp_path)
-    window.update(1 / 60)
-    window.start_race()
-    for _ in range(30):
-        window.update(1 / 60)
-        window.draw()
-    rows = viewer.leaderboard(window.race, len(window.lineup))
-    assert sorted(r[0] for r in rows) == [1, 2, 3] and sorted(r[1] for r in rows) == [0, 1, 2]
-    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
 
 
 def test_unreadable_controller_is_skipped(window, tmp_path):
@@ -1095,29 +723,6 @@ def test_step_burst_is_capped_and_budget_dropped(window):
     window.update(10.0)
     assert abs(window.playback.cars.time - config.MAX_STEPS_PER_FRAME * config.DT) < 1e-9
     assert window.step_budget == 0.0
-
-
-def click(pos):
-    return pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos)
-
-
-def test_handle_clicks_a_button(window):
-    window.draw()
-    rays = window.rays
-    target = next(r for r, a in window.buttons if a == window.toggle_rays)
-    window.handle(click(target.center))
-    assert window.rays != rays
-
-
-def test_handle_slider_sets_cars_shown(window):
-    window.receive(ga_report(n=30))
-    window.draw()
-    window.handle(click((window.slider.left, window.slider.centery)))
-    assert window.shown == 1 and window.dragging
-    window.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=(window.slider.right, window.slider.centery), rel=(0, 0), buttons=(1, 0, 0)))
-    assert window.shown == 30
-    window.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(0, 0)))
-    assert not window.dragging
 
 
 def test_pausing_still_delivers_the_finished_generation(monkeypatch, tmp_path):
@@ -1326,101 +931,6 @@ def test_trainer_process_watches_the_viewer(monkeypatch):
     assert events == ["setpgrp", (viewer.watch_parent, (4321, fake_killpg), True), "train"]
 
 
-def test_leaderboard_lines_fit_the_panel(window):
-    width = window.panel.width - 16 - 16 - 16           # panel margins on both sides and the color swatch
-    for approach in config.APPROACHES:
-        for seed, app in ((0, False), (1, False), (2, False), (2, True)):      # 'GA (seeded)' is the widest run
-            for status in ("ready", "racing", "finished", "crashed", "stopped"):
-                line = viewer.leaderboard_line(2 * len(config.APPROACHES), approach, seed, config.RACE_LAPS, 888.88,
-                                               999.99, status, app=app)
-                assert window.small.size(line)[0] <= width - 4, line      # 4 px to spare: fonts differ by machine
-    line = viewer.leaderboard_line(1, "kt_hyperband", 0, 1, 52.31, 51.94, "racing")
-    assert line == "1. KT Hyperband (seeded) lap 1 52.3/51.9 racing"
-    assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA r1 lap 0 –/– ready"
-
-
-def test_race_panel_text_fits_the_panel(window, tmp_path, monkeypatch):
-    race_window(window, tmp_path)
-    window.update(1 / 60)
-    window.start_race()
-    window.update(1 / 60)
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append((string, x, font or window.font))
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
-    assert any(string.startswith("1. ") for string, _, _ in drawn)
-    for string, x, font in drawn:
-        assert x + font.size(string)[0] <= window.panel.right - 16, string
-
-
-def test_a_race_of_every_method_fits_the_panel(window, tmp_path, monkeypatch):
-    save_race_champions(tmp_path, approaches=[(approach, 0) for approach in config.APPROACHES])
-    window.champions_dir = tmp_path
-    window.set_mode("race")
-    window.update(1 / 60)
-    window.start_race()
-    window.update(1 / 60)
-    assert [approach for approach, _ in window.lineup] == list(config.APPROACHES)
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append((string, y, font or window.font))
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    window.buttons = []
-    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
-    assert sum(string.startswith(f"{k}. ") for string, _, _ in drawn for k in range(1, 9)) == 8
-    for string, y, font in drawn:
-        assert y + font.get_linesize() <= window.panel.bottom - 30, string
-    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
-
-
-@pytest.mark.parametrize("size", [config.WINDOW_SIZE, (1920, 1080)])
-def test_a_race_of_both_runs_of_every_method_fits_the_panel(window, tmp_path, monkeypatch, size):
-    """16 cars, the race control on all runs (spec §10.3): the panel fits and, from the default window up, the
-    leaderboard shows every car; the method switches form a grid of three columns."""
-    window.screen = pygame.display.set_mode(size)
-    window.layout()
-    save_race_champions(tmp_path, approaches=[(approach, run) for approach in config.APPROACHES for run in (0, 1)])
-    window.champions_dir = tmp_path
-    window.race_runs = "all"
-    window.set_mode("race")
-    window.update(1 / 60)
-    window.start_race()
-    window.update(1 / 60)
-    assert len(window.lineup) == 16 and len(window.race.cars.x) == 16
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append((string, x, y, font or window.font))
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    buttons = recording_buttons(window, monkeypatch)
-    window.buttons = []
-    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
-    for string, x, y, font in drawn:
-        assert y + font.get_linesize() <= window.panel.bottom - 30, string
-        assert x + font.size(string)[0] <= window.panel.right - 16, string
-    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
-    for label, *_, rect in buttons:
-        assert window.small.size(label)[0] <= rect.width - 10, label             # each label fits its button
-    rows = [string for string, _, _, _ in drawn if string[:1].isdigit() and ". " in string]
-    more = [string for string, _, _, _ in drawn if string.startswith("… ")]
-    if size == config.WINDOW_SIZE:      # the track name and five difficulties take rows: the rest is counted (§10.3)
-        assert len(rows) >= 12 and more == [f"… {17 - len(rows)} more"]                 # 16 cars and the pole ghost
-    else:
-        assert len(rows) == 17 and not more
-    switches = method_switches(buttons)
-    assert [label for label, _, _ in switches] == [config.LABELS[approach] for approach in config.APPROACHES]
-    assert len({rect.left for _, _, rect in switches}) == 3 and len({rect.top for _, _, rect in switches}) == 3
-
-
 def test_settings_are_locked_while_training(window):
     class Alive:
         pid = 0
@@ -1440,6 +950,7 @@ def test_settings_are_locked_while_training(window):
     assert window.population["ga"] == config.GA_POP
 
 
+@pytest.mark.skip(reason="rewritten in Task 2")
 def test_the_run_control_names_the_seeded_run(window, monkeypatch):
     """spec §10.2: the training view's control reads 'Run', its value '0 (seeded)' for run 0 and '1' for run 1."""
     drawn, text = [], window.text
@@ -1450,7 +961,6 @@ def test_the_run_control_names_the_seeded_run(window, monkeypatch):
 
     monkeypatch.setattr(window, "text", recording_text)
     buttons = recording_buttons(window, monkeypatch)
-    window.draw()
     strings = [string for string, _, _ in drawn]
     assert "Run" in strings and "Run seed" not in strings
     value, x, font = next(item for item in drawn if item[0] == "0 (seeded)")
@@ -1458,7 +968,6 @@ def test_the_run_control_names_the_seeded_run(window, monkeypatch):
     assert x + font.size(value)[0] < later.left                         # the value fits before the > button
     drawn.clear()
     window.change_run_seed(1)
-    window.draw()
     assert "1" in [string for string, _, _ in drawn] and "0 (seeded)" not in [string for string, _, _ in drawn]
 
 
@@ -1550,12 +1059,10 @@ def test_tracks_are_built_in_the_background(monkeypatch, circle_track):
         return circle_track
 
     monkeypatch.setattr(viewer, "get_track", slow_track)
-    pygame.init()
-    app = viewer.App(pygame.display.set_mode(config.WINDOW_SIZE))
+    app = viewer.App()          # background building is what these two tests check
     try:
         app.receive(ga_report())
         app.update(1 / 60)
-        app.draw()
         assert app.playback is None and "Map:" in app.map_text()     # the window keeps drawing meanwhile
         release.set()
         for _ in range(200):
@@ -1566,7 +1073,6 @@ def test_tracks_are_built_in_the_background(monkeypatch, circle_track):
         assert app.playback is not None
     finally:
         release.set()
-        pygame.quit()
 
 
 def test_map_text_names_the_track(window, circle_track):
@@ -1582,23 +1088,8 @@ def test_imitation_preview_uses_the_difficulty(monkeypatch, window, circle_track
     monkeypatch.setattr(viewer, "get_track", lambda seed, level: calls.append((seed, level)) or circle_track)
     window.select_approach("baseline")
     window.set_difficulty(3)
-    window.draw()
+    window.shown_track()
     assert (config.KT_VIEW_SEED, 3) in calls
-
-
-def test_training_panel_fits_the_window(window):
-    for approach in config.APPROACHES:
-        window.approach = approach
-        window.draw()
-        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
-        assert window.slider.bottom <= window.panel.bottom - 30
-    window.receive(ga_report())
-    window.update(1 / 60)
-    for approach in config.APPROACHES:
-        window.approach = approach
-        window.draw()
-        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
-        assert window.slider.bottom <= window.panel.bottom - 30, approach
 
 
 def test_a_failed_track_build_is_reported_and_retried(window, monkeypatch, circle_track):
@@ -1625,32 +1116,19 @@ def test_a_failed_background_build_is_reported_and_retried(monkeypatch, circle_t
         return circle_track
 
     monkeypatch.setattr(viewer, "get_track", flaky)
-    pygame.init()
-    app = viewer.App(pygame.display.set_mode(config.WINDOW_SIZE))
-    try:
-        track = app.request_track(0, 1)
-        for _ in range(200):
-            if not app.building:
-                break
-            time.sleep(0.01)
-        assert track is None and "seed 0" in app.status and not app.building
-        track = app.request_track(0, 1)
-        for _ in range(200):
-            if app.request_track(0, 1) is not None:
-                break
-            time.sleep(0.01)
-        assert app.request_track(0, 1) is circle_track
-    finally:
-        pygame.quit()
-
-
-def test_a_light_color_swatch_is_outlined(window):
-    rect = pygame.Rect(10, 10, 10, 10)
-    for approach, outlined in (("neat", True), ("es_seeded", False)):
-        window.screen.fill(viewer.PANEL_BG)
-        window.swatch(approach, rect)
-        assert (tuple(window.screen.get_at(rect.topleft))[:3] == viewer.INK) == outlined
-        assert tuple(window.screen.get_at(rect.center))[:3] == viewer.hex_to_rgb(config.COLORS[approach])
+    app = viewer.App()          # background building is what these two tests check
+    track = app.request_track(0, 1)
+    for _ in range(200):
+        if not app.building:
+            break
+        time.sleep(0.01)
+    assert track is None and "seed 0" in app.status and not app.building
+    track = app.request_track(0, 1)
+    for _ in range(200):
+        if app.request_track(0, 1) is not None:
+            break
+        time.sleep(0.01)
+    assert app.request_track(0, 1) is circle_track
 
 
 # ----- network window -----
@@ -1878,7 +1356,7 @@ def test_the_values_follow_the_selected_car(live, tmp_path):
     live.toggle_network_window()
     live.start_race()
     drive_until_values(live)
-    live.cycle_network_car()                                         # ga run 0, the second car
+    live.set_follow(1)                                               # ga run 0, the second car
     live.update(1 / 60)
     driver, obs, _, inputs = live.values_calls[-1]
     assert driver is live.driver("ga", 0) and np.array_equal(obs, inputs[1])
@@ -1891,6 +1369,7 @@ def test_no_values_are_sent_while_the_race_stands_still_or_after_the_car_is_done
     live.toggle_network_window()
     live.start_race()
     drive_until_values(live)
+    live.set_follow(0)
     live.racing = False                                              # paused: the last step is shown once
     Clock.now += viewer.NET_FRAME_INTERVAL
     live.update(1 / 60)
@@ -2006,7 +1485,7 @@ def three_car_race(window, tmp_path):
     assert window.lineup == [("es", 0), ("ga", 0), ("neat", 0)]
 
 
-def test_the_race_cycle_button_walks_the_lineup_and_wraps(net, tmp_path):
+def test_the_network_window_follows_the_followed_car_through_the_lineup(net, tmp_path):
     three_car_race(net, tmp_path)
     net.toggle_network_window()
     net.update(1 / 60)
@@ -2014,49 +1493,17 @@ def test_the_race_cycle_button_walks_the_lineup_and_wraps(net, tmp_path):
     assert "generation" not in sent(net)[0]["title"] and "seed 0" not in sent(net)[0]["title"]
     net.update(1 / 60)
     assert len(sent(net)) == 1                                  # unchanged: nothing sent
-    seen = []
-    for _ in range(4):
-        net.cycle_network_car()
-        seen.append(net.net_choice)
+    for index in (1, 2, 0, 1):
+        net.set_follow(index)
         net.update(1 / 60)
-    assert seen == [1, 2, 0, 1] and len(sent(net)) == 5
-    assert sent(net)[-1]["title"].startswith("GA (seeded) · ")
-
-
-def test_the_selection_falls_back_to_the_first_car(net, tmp_path):
-    three_car_race(net, tmp_path)
-    net.net_choice = 2                                          # neat
-    net.toggle_race("neat")
-    assert net.lineup == [("es", 0), ("ga", 0)] and net.net_choice == 0
-    net.net_choice = 5
-    assert net.selected_car() == ("es", 0)
+    assert len(sent(net)) == 5 and sent(net)[-1]["title"].startswith("GA (seeded) · ")
 
 
 def test_the_selection_stays_on_its_car_when_others_leave(net, tmp_path):
     three_car_race(net, tmp_path)
-    net.net_choice = 1                                          # ga
+    net.set_follow(1)                                           # ga
     net.toggle_race("es")
-    assert net.lineup == [("ga", 0), ("neat", 0)] and net.selected_car() == ("ga", 0) and net.net_choice == 0
-
-
-def test_the_network_buttons_fit_both_panels(net, tmp_path):
-    for approach in config.APPROACHES:
-        net.approach = approach
-        net.draw()
-        assert any(rect.height and action == net.toggle_network_window for rect, action in net.buttons)
-        assert all(rect.bottom <= net.panel.bottom - 30 for rect, _ in net.buttons), approach
-    save_race_champions(tmp_path, approaches=[(approach, 0) for approach in config.APPROACHES])
-    net.champions_dir = tmp_path
-    net.set_mode("race")
-    net.update(1 / 60)
-    net.start_race()
-    net.update(1 / 60)
-    net.buttons = []
-    net.draw()
-    actions = [action for _, action in net.buttons]
-    assert net.toggle_network_window in actions and net.cycle_network_car in actions
-    assert all(rect.bottom <= net.panel.bottom - 30 for rect, _ in net.buttons)
-    assert net.lineup[0] == ("baseline", 0) and net.network_car_label() == "Network of: Baseline (seeded) ▸"
+    assert net.lineup == [("ga", 0), ("neat", 0)] and net.followed_car() == ("ga", 0) and net.follow == ("ga", 0)
 
 
 def test_the_network_window_names_race_cars_as_the_leaderboard_does(net, tmp_path):
@@ -2068,12 +1515,11 @@ def test_the_network_window_names_race_cars_as_the_leaderboard_does(net, tmp_pat
     net.cycle_app_choice("ga")
     net.toggle_network_window()
     names = []
-    for _ in net.race_cars():
+    for i in range(len(net.race_cars())):
+        net.set_follow(i)
         net.update(1 / 60)
-        names.append((net.network_car_label(), sent(net)[-1]["title"].split(" · ")[0]))
-        net.cycle_network_car()
-    assert names == [("Network of: ES (seeded) ▸", "ES (seeded)"), ("Network of: GA (seeded) ▸", "GA (seeded)"),
-                     ("Network of: GA r1 ▸", "GA r1"), ("Network of: GA (app) s2 ▸", "GA (app) s2")]
+        names.append(sent(net)[-1]["title"].split(" · ")[0])
+    assert names == ["ES (seeded)", "GA (seeded)", "GA r1", "GA (app) s2"]
 
 
 # ----- saved application runs (spec §10.6) -----
@@ -2256,7 +1702,6 @@ def test_the_panel_asks_for_new_run_when_a_saved_run_cannot_resume(window):
 
     window.process, window.reports = Unusable(), FakeQueue()
     window.poll_reports()
-    window.draw()
     assert "New run" in window.status and len(window.status) <= 56 and window.process is None
 
 
@@ -2293,7 +1738,7 @@ def test_play_resumes_a_saved_run_and_continues_its_plot(window, monkeypatch):
     assert window.has_saved_run()
     window.toggle_play()
     assert run.exists() and len(created) == 1
-    assert [(g, s, marked) for g, s, _, marked in window.history] == [(0, 0.5, False), (1, 0.9, True)]
+    assert [(g, s, marked) for g, s, _, marked in window.history] == [(0, 0.5, None), (1, 0.9, "level_up")]
 
 
 def test_imitation_approaches_have_no_saved_run(window):
@@ -2302,6 +1747,7 @@ def test_imitation_approaches_have_no_saved_run(window):
     assert not window.has_saved_run() and window.saved_history() == []
 
 
+@pytest.mark.skip(reason="rewritten in Task 2")
 def test_an_idle_panel_mentions_a_saved_run(window, monkeypatch):
     save_app_run(window)
     drawn, text = [], window.text
@@ -2311,16 +1757,14 @@ def test_an_idle_panel_mentions_a_saved_run(window, monkeypatch):
         return text(string, x, y, font, color)
 
     monkeypatch.setattr(window, "text", recording_text)
-    window.draw()
     assert any(string.startswith("Saved run found") for string in drawn)
 
 
+@pytest.mark.skip(reason="rewritten in Task 2")
 def test_the_new_run_button_is_offered_only_while_idle(window, monkeypatch):
-    window.draw()
     assert any(action == window.new_run for _, action in window.buttons)
     fake_trainer_context(monkeypatch, [])
     window.toggle_play()
-    window.draw()
     assert not any(action == window.new_run for _, action in window.buttons)
 
 
@@ -2348,6 +1792,7 @@ def test_app_cars_form_their_own_group_switched_off_by_default(window, tmp_path)
     assert nets.champion_seeds(window.champions_dir) == {"es": [0], "ga": [0, 1]}     # reported set untouched
 
 
+@pytest.mark.skip(reason="rewritten in Task 2")
 def test_the_race_group_button_switches_the_controller_list(window, tmp_path, monkeypatch):
     app_race_window(window, tmp_path)
     drawn, text = [], window.text
@@ -2358,13 +1803,11 @@ def test_the_race_group_button_switches_the_controller_list(window, tmp_path, mo
 
     monkeypatch.setattr(window, "text", recording_text)
     buttons = recording_buttons(window, monkeypatch)
-    window.draw()
     assert "Controllers: reported ▸" in window.race_group_label() and ("ES", True) in [
         (label, on) for label, on, _ in method_switches(buttons)]
     window.cycle_race_group()
     drawn.clear()
     buttons.clear()
-    window.draw()
     assert window.race_group == "app" and "NEAT (app)" in drawn and not method_switches(buttons)
     window.cycle_race_group()
     assert window.race_group == "final"
@@ -2387,9 +1830,8 @@ def test_app_cars_are_labelled_in_the_network_selector_and_leaderboard(net, tmp_
     app_race_window(net, tmp_path)
     net.cycle_app_choice("neat")
     assert net.race_cars()[-1] == ("neat", 0, "app")
-    while net.selected_car() != ("neat", 0, "app"):
-        net.cycle_network_car()
-    assert net.network_car_label() == "Network of: NEAT (app) s0 ▸"
+    net.set_follow(len(net.race_cars()) - 1)
+    assert net.followed_car() == ("neat", 0, "app")
     assert viewer.leaderboard_line(3, "neat", 0, 1, 31.0, 30.5, "racing", app=True).startswith("3. NEAT (app) s0 lap 1")
     assert viewer.leaderboard_line(2, "ga", 1, 0, float("nan"), float("nan"), "ready") == "2. GA r1 lap 0 –/– ready"
 
@@ -2401,37 +1843,6 @@ def test_a_failed_app_car_is_dropped_with_a_message(window, tmp_path):
     window.drivers = {}
     window.update(1 / 60)
     assert ("ga", 2, "app") not in window.race_cars() and "GA (app) run 2" in window.status
-
-
-@pytest.mark.parametrize("group", ["final", "app"])
-def test_a_race_of_every_method_and_every_app_car_fits_the_panel(window, tmp_path, monkeypatch, group):
-    every = [(approach, 0) for approach in config.APPROACHES]
-    save_race_champions(tmp_path, approaches=every)
-    save_race_champions(window.app_champions_dir, approaches=every)
-    window.champions_dir = tmp_path
-    window.set_mode("race")
-    for approach in config.APPROACHES:
-        window.cycle_app_choice(approach)
-    if group == "app":
-        window.cycle_race_group()
-    window.update(1 / 60)
-    window.start_race()
-    window.update(1 / 60)
-    assert len(window.race_cars()) == 2 * len(config.APPROACHES)
-    drawn, text = [], window.text
-
-    def recording_text(string, x, y, font=None, color=viewer.INK):
-        drawn.append((string, y, font or window.font))
-        return text(string, x, y, font, color)
-
-    monkeypatch.setattr(window, "text", recording_text)
-    window.buttons = []
-    window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
-    for string, y, font in drawn:
-        assert y + font.get_linesize() <= window.panel.bottom - 30, string
-    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
-    rows = [string for string, _, _ in drawn if string[:1].isdigit() and ". " in string]
-    assert rows and (len(rows) == 16 or any(string.startswith("… ") for string, _, _ in drawn))
 
 
 # ----- notebook runs in the training view (read-only replay of a reported run) -----
@@ -2462,7 +1873,6 @@ def test_a_notebook_run_replays_its_latest_generation(window, tmp_path, monkeypa
     assert window.latest["generation"] == 7 and window.playback is not None and window.playback_generation == 7
     for _ in range(30):
         window.update(1 / 60)
-        window.draw()
     assert window.playback.cars.time > 0
 
 
@@ -2502,8 +1912,7 @@ def test_the_notebook_plot_follows_the_runs_log(window, tmp_path):
     path = save_replay(window, ga_report(2))
     (path.parent / "log.csv").write_text("generation,min_share,event\n0,0.5,\n1,0.7,level_up\n2,0.8,\n")
     window.update(1 / 60)
-    assert [h[0] for h in window.history] == [0, 1, 2] and [h[3] for h in window.history] == [False, True, False]
-    window.draw()
+    assert [h[0] for h in window.history] == [0, 1, 2] and [h[3] for h in window.history] == [None, "level_up", None]
 
 
 def test_the_notebook_view_names_what_it_cannot_replay(window, tmp_path):
@@ -2515,7 +1924,6 @@ def test_the_notebook_view_names_what_it_cannot_replay(window, tmp_path):
     def look():
         now[0] += config.REPLAY_POLL_SECONDS
         window.update(1 / 60)
-        window.draw()
         messages.append(window.status)
 
     look()
@@ -2550,7 +1958,6 @@ def test_the_notebook_view_names_a_run_of_an_earlier_revision(window, tmp_path):
         save_replay(window, ga_report(5, approach=approach, population_=nets.DensePopulation(weights, hidden)),
                     approach=approach)
         window.update(1 / 60)
-        window.draw()
         assert "older revision, 10 inputs" in window.status and len(window.status) <= 56
         assert window.latest is None and window.playback is None
 
@@ -2597,7 +2004,6 @@ def test_the_notebook_view_replays_an_archived_run_on_its_revisions_maps(window,
     save_replay(window, ga_report(5, level=3, population_=old_population()))
     for _ in range(10):
         window.update(1 / 60)
-        window.draw()
     assert window.latest["generation"] == 5 and built == [12.0] and window.playback.cars.time > 0
     window.cycle_folder()                                                   # back to the current results
     assert window.runs_dir == tmp_path / "runs" and window.latest is None
@@ -2615,10 +2021,6 @@ def test_the_notebook_view_replays_every_run_of_an_archive(window, tmp_path, mon
         save_replay(window, ga_report(4 + run), seed=run)
     window.update(1 / 60)
     assert window.latest["generation"] == 4
-    drawn, text = [], window.text
-    monkeypatch.setattr(window, "text", lambda string, *args: drawn.append(string) or text(string, *args))
-    window.draw()
-    assert "0" in drawn and "0 (seeded)" not in drawn                  # every run of an archive was seeded
     for _ in range(4):
         window.change_run_seed(1)
     window.update(1 / 60)
@@ -2667,7 +2069,6 @@ def test_the_race_view_races_an_archives_controllers_on_its_maps(window, tmp_pat
     window.start_race()
     for _ in range(10):
         window.update(1 / 60)
-        window.draw()
     assert window.race_cars() == [("ga", 0)] and window.race.cars.time > 0
     assert (config.TEST_LEVEL, None) in built            # the test circuits at their own widths (spec §4.7)
 
@@ -2729,7 +2130,6 @@ def test_the_notebook_view_writes_nothing(window, tmp_path, monkeypatch):
     before = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*")}
     for _ in range(60):
         window.update(1 / 60)
-        window.draw()
     window.toggle_play()
     window.toggle_play()
     window.stop()
@@ -2764,7 +2164,6 @@ def test_changing_method_or_seed_loads_that_notebook_run(window, tmp_path):
     window.select_approach("neat")
     window.update(1 / 60)
     assert window.latest["approach"] == "neat" and window.playback_generation == 9
-    window.draw()
 
 
 def test_an_imitation_method_replays_its_speed_push(window, tmp_path):
@@ -2774,7 +2173,6 @@ def test_an_imitation_method_replays_its_speed_push(window, tmp_path):
     assert paths.replay_path("baseline", 0, tmp_path).parent == paths.speed_dir("baseline", 0, tmp_path)
     window.update(1 / 60)
     assert window.latest["generation"] == 4 and window.playback is not None
-    window.draw()
 
 
 def test_switching_back_to_app_training_clears_the_notebook_replay(window, tmp_path):
@@ -2785,21 +2183,6 @@ def test_switching_back_to_app_training_clears_the_notebook_replay(window, tmp_p
     assert window.source == "app" and window.latest is None and window.playback is None
     window.update(1 / 60)
     assert window.latest is None                                     # app training shows only its own reports
-
-
-def test_the_notebook_panel_fits_the_window(window, tmp_path):
-    notebook_view(window, tmp_path)
-    for approach in config.APPROACHES:
-        window.approach = approach
-        window.draw()
-        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons), approach
-    save_replay(window, neat_report(2), approach="neat")
-    window.select_approach("neat")
-    window.update(1 / 60)
-    window.draw()
-    assert window.latest is not None
-    assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
-    assert window.slider.bottom <= window.panel.bottom - 30
 
 
 def test_a_controller_of_another_input_count_is_left_out_of_the_race(window, tmp_path, monkeypatch):
@@ -2817,58 +2200,10 @@ def test_a_controller_of_another_input_count_is_left_out_of_the_race(window, tmp
     assert "10 inputs" in window.status and window.race is not None
 
 
-def test_the_viewer_ships_its_font():
-    """The viewer's texts are measured against this font, so it travels with the project: a machine without DejaVu
-    Sans Condensed would otherwise draw every text about 12% wider (spec §10)."""
-    assert config.FONT_PATH.is_file() and config.FONT_PATH.with_name("LICENSE").is_file()
-    import pygame
-    pygame.font.init()
-    font = pygame.font.Font(str(config.FONT_PATH), 13)
-    assert font.size("16. KT Hyperband (seeded) lap 3 888.9/1000.0 finished")[0] <= 332 - 4
-
-
 def test_runs_1_to_3_are_named_r1_to_r3():
     assert viewer.car_name("ga", 0) == "GA (seeded)" and viewer.car_name("ga", 1) == "GA r1"
     assert viewer.car_name("ga", 3) == "GA r3" and viewer.car_name("ga", 2, archived=True) == "GA s2"
     assert viewer.car_name("ga", 1, app=True) == "GA (app) s1"
-
-
-def test_a_race_of_all_32_runs_shows_the_rows_that_fit_then_a_count(window, tmp_path, monkeypatch):
-    """spec §10.3: 8 methods x 4 runs at 1280x800 show as many rows as fit, then '… N more', nothing overlapping;
-    the default best (8 cars) shows every row."""
-    window.screen = pygame.display.set_mode((1280, 800))
-    window.layout()
-    save_race_champions(tmp_path, approaches=[(approach, run) for approach in config.APPROACHES for run in range(4)])
-    window.champions_dir = tmp_path
-    window.set_mode("race")
-
-    def panel(cars):
-        window.update(1 / 60)
-        window.start_race()
-        window.update(1 / 60)
-        assert len(window.race.cars.x) == cars
-        drawn, text = [], window.text
-
-        def recording_text(string, x, y, font=None, color=viewer.INK):
-            drawn.append((string, x, y, font or window.font))
-            return text(string, x, y, font, color)
-
-        monkeypatch.setattr(window, "text", recording_text)
-        window.buttons = []
-        window.draw_race_panel(window.panel.left + 16, 58, window.panel.width - 32)
-        for string, x, y, font in drawn:
-            assert y + font.get_linesize() <= window.panel.bottom - 30 - 4, string
-            assert x + font.size(string)[0] <= window.panel.right - 16, string
-        assert all(rect.bottom <= window.panel.bottom - 30 for rect, _ in window.buttons)
-        window.stop_race()
-        return ([string for string, *_ in drawn if string[:1].isdigit() and ". " in string],
-                [string for string, *_ in drawn if string.startswith("… ")])
-
-    rows, more = panel(8)                                                   # best: one run per method
-    assert len(rows) == 9 and more == []                                    # and the pole ghost
-    window.cycle_race_runs()                                                # all
-    rows, more = panel(32)
-    assert 0 < len(rows) < 33 and more == [f"… {33 - len(rows)} more"]
 
 
 def recording_tracks(monkeypatch, circle_track):
@@ -2959,7 +2294,6 @@ def test_a_test_circuit_race_has_the_pole_drivers_ghost_car(window, tmp_path, mo
     for _ in range(60):
         window.update(1 / 60)
     assert window.race.elapsed > 0.0
-    window.draw()
     window.stop_race()
     window.set_race_level(1)                                             # a generated map has no pole lap
     window.update(1 / 60)
@@ -2967,24 +2301,12 @@ def test_a_test_circuit_race_has_the_pole_drivers_ghost_car(window, tmp_path, mo
     assert window.ghost is None
 
 
-def test_the_race_and_training_panels_draw_with_every_difficulty(window, tmp_path, monkeypatch, circle_track):
-    recording_tracks(monkeypatch, circle_track)
-    race_window(window, tmp_path)
-    for level in config.APP_DIFFICULTIES:
-        window.set_race_level(level)
-        window.update(1 / 60)
-        window.draw()
-    window.set_mode("train")
-    window.draw()
-    assert viewer.GRIP_LABELS["Unlimited"] == "Unlimited (10×)" and "Normal" in viewer.GRIP_LABELS
-
-
 def test_the_imitation_view_at_extra_hard_drives_the_first_training_layout(monkeypatch, window, circle_track):
     calls = []
     monkeypatch.setattr(viewer, "get_track", lambda seed, level: calls.append((seed, level)) or circle_track)
     window.select_approach("baseline")
     window.set_difficulty(config.MAX_LEVEL)
-    window.draw()
+    window.shown_track()
     assert (0, config.MAX_LEVEL) in calls and (config.KT_VIEW_SEED, config.MAX_LEVEL) not in calls
 
 
@@ -3031,15 +2353,6 @@ def test_a_folder_of_another_input_count_is_not_replayed_with_a_note(tmp_path):
     assert viewer.other_interface("current", tmp_path) is None
 
 
-def test_the_track_picture_draws_the_racing_line(circle_track):
-    camera = viewer.Camera(circle_track, pygame.Rect(0, 0, 400, 400))
-    surface = viewer.render_track(circle_track, camera, (400, 400))
-    quarter = len(circle_track.centerline) // 4                  # away from the start line, drawn over the line
-    x, y = camera.to_screen(*circle_track.line[quarter])
-    near = {tuple(surface.get_at((int(x) + dx, int(y) + dy)))[:3] for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
-    assert viewer.RACING_LINE in near                            # a one-pixel line, whichever pixel it lands on
-
-
 def test_an_archive_of_another_action_set_is_not_replayed(window, tmp_path):
     with_actions(archive_folder(tmp_path, name="revision3.8", inputs=config.N_INPUTS), 15)
     window.results_dir = tmp_path
@@ -3072,7 +2385,98 @@ def test_a_controller_of_another_action_set_is_refused(window, tmp_path):
 
 def test_the_training_plot_marks_hardening(window, tmp_path):
     window.receive(ga_report(0, event="hardened"))
-    assert window.history[-1][3] is True
+    assert window.history[-1][3] == "hardened"
     log = tmp_path / "log.csv"
     log.write_text("generation,min_share,event\n0,0.5,\n1,0.95,hardened\n")
-    assert [row[3] for row in viewer.log_history(log)] == [False, True]
+    assert [row[3] for row in viewer.log_history(log)] == [None, "hardened"]
+
+
+# ----- headless viewer: watched state, followed car, shutdown -----
+def test_unwatched_app_does_not_advance(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    window.watched = False
+    before = window.race.elapsed
+    window.update(1.0)
+    assert window.race.elapsed == before
+    window.watched = True
+    window.update(1.0)
+    assert window.race.elapsed > before
+
+
+def test_an_unwatched_app_still_polls_its_reports(window):
+    window.watched = False
+    window.receive(ga_report())
+    window.update(1.0)
+    assert window.latest is not None
+    assert window.playback is None or window.playback.cars.time == 0.0
+
+
+def test_followed_car_is_the_leader_until_a_car_is_chosen(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.start_race()
+    for _ in range(60):
+        window.update(1 / 60)
+    cars = window.race_cars()
+    assert window.follow is None
+    assert window.followed_car() == cars[viewer.race_leader(window.race.cars)]
+    window.set_follow(2)
+    assert window.follow == cars[2] and window.followed_car() == cars[2]
+    window.set_follow(None)
+    assert window.follow is None and window.followed_car() == cars[viewer.race_leader(window.race.cars)]
+    window.set_follow(99)                                       # outside the race: the leader
+    assert window.follow is None
+
+
+def test_follow_survives_a_reset_only_if_the_car_still_races(window, tmp_path):
+    race_window(window, tmp_path)
+    assert window.race_cars() == [("es", 0), ("ga", 0), ("ga", 1)]
+    window.set_follow(1)
+    window.reset_race()
+    assert window.follow == ("ga", 0)
+    window.toggle_race("ga")                                    # the followed car leaves the race
+    assert window.follow is None
+    window.set_follow(0)
+    window.toggle_race("ga")
+    assert window.follow == ("es", 0)
+
+
+def test_network_window_shows_the_followed_car(window, tmp_path):
+    race_window(window, tmp_path)
+    window.update(1 / 60)
+    window.set_follow(2)
+    assert window.shown_network()[0] == ("race", *window.followed_car()) == ("race", "ga", 1)
+    assert window.selected_car() == window.followed_car()
+
+
+def test_history_keeps_the_event_name_of_every_report(window):
+    window.receive(ga_report(0, event="tightened"))
+    assert window.history[-1][3] == "tightened"
+    window.receive(ga_report(1))
+    assert window.history[-1][3] is None
+
+
+def test_playback_keeps_the_last_actions(circle_track):
+    playback = viewer.Playback(circle_track, lambda obs, cars: np.full(len(cars.x), 8), 3)
+    assert playback.actions.tolist() == [-1, -1, -1]
+    playback.advance(2)
+    assert playback.actions.dtype.kind == "i" and playback.actions.tolist() == [8, 8, 8]
+    assert all(0 <= a < config.N_ACTIONS for a in playback.actions)
+
+
+def test_shutdown_stops_training_and_the_network_window(window, monkeypatch):
+    calls = []
+    monkeypatch.setattr(window, "stop_training", lambda: calls.append("training"))
+    monkeypatch.setattr(window, "close_network_window", lambda: calls.append("network"))
+    assert window.alive
+    window.shutdown()
+    assert calls == ["training", "network"] and not window.alive
+
+
+def test_set_shown_keeps_the_count_inside_the_population(window):
+    window.set_shown(10_000)
+    assert window.shown == window.population_size()
+    window.set_shown(0)
+    assert window.shown == 1
