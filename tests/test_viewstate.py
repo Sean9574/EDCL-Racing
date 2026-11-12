@@ -8,7 +8,7 @@ from racing import app as viewer
 from racing import config
 from racing.viewstate import frame_state, panel_state, scene_state
 from test_app import (app_race_window, fake_trainer_context, ga_report, race_window,  # noqa: F401
-                      save_app_run, window)
+                      save_app_run)
 
 
 def training_window(window, n=30):

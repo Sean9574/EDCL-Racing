@@ -1466,3 +1466,63 @@ COMMANDS = {        # the page's commands (name -> function of the app and its a
     "follow": _follow,
     "quit": lambda app, arg: app.shutdown(),
 }
+
+
+def main(argv=None):
+    """Start the viewer: serve the page, open the browser and run until the Quit button or Ctrl+C."""
+    import argparse
+    import logging
+    import subprocess
+    import webbrowser
+    from racing import server as web
+
+    parser = argparse.ArgumentParser(prog="python -m racing.app", description="The EC Racing viewer.")
+    parser.add_argument("--port", type=int, default=config.VIEWER_PORT, help="first port to try (default %(default)s)")
+    parser.add_argument("--no-browser", action="store_true", help="do not open the page")
+    options = parser.parse_args(argv)
+
+    config.VIEWER_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(config.VIEWER_LOG_PATH, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    log = logging.getLogger("racing.viewer")
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+    viewer = App()
+    viewer_server = web.ViewerServer(viewer, port=options.port)
+    try:
+        log.info("viewer starting")
+        url = viewer_server.start()
+        print("EC Racing viewer")
+        print(f"  open:     {url}")
+        print(f"  results:  {config.RESULTS_DIR}")
+        print(f"  log:      {config.VIEWER_LOG_PATH}")
+        print("  quit:     Ctrl+C here, or the Quit button", flush=True)
+        if not options.no_browser:
+            try:
+                command = web.browser_command(url, Path("/proc/version").read_text())
+            except OSError:
+                command = None
+            try:
+                if command is not None:
+                    subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    webbrowser.open(url)
+            except OSError as error:
+                log.warning("could not open the browser: %s", error)
+                print(f"  (could not open the browser: {error})")
+        viewer_server.run_forever()
+    except KeyboardInterrupt:
+        log.info("Ctrl+C")
+    except Exception:
+        log.exception("viewer failed")
+        raise
+    finally:
+        viewer_server.stop()
+        viewer.shutdown()
+        log.removeHandler(handler)
+        handler.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

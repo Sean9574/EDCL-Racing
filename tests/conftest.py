@@ -119,3 +119,17 @@ def normal_priority(monkeypatch):
     usual. tests/test_evolution.py checks the real function in a fresh process."""
     from racing import evolution
     monkeypatch.setattr(evolution, "lower_priority", lambda nice=None: None)
+
+
+@pytest.fixture
+def window(monkeypatch, circle_track, tmp_path_factory):
+    """An App on the circle track whose results folder is a temporary one (viewer tests)."""
+    from racing import app as viewer
+    from racing import config
+    monkeypatch.setattr(config, "RESULTS_DIR", tmp_path_factory.mktemp("results"))   # never the checkout's results/
+    monkeypatch.setattr(viewer, "get_track", lambda seed, level: circle_track)
+    monkeypatch.setattr(viewer.os, "killpg", lambda pgid, sig: None)     # tests never signal real processes
+    instance = viewer.App(background_tracks=False)
+    yield instance
+    instance.process = None
+    instance.stop_training()

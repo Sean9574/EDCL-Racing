@@ -320,6 +320,11 @@ REPLAY_POLL_SECONDS = 1.0    # the notebook-run view looks for a newer generatio
 FONT_PATH = PROJECT_DIR / "racing" / "fonts" / "DejaVuSansCondensed.ttf"   # the viewer's font, shipped with the project so
                              # every text has the same width on every machine (racing/fonts/LICENSE)
 RESULTS_DIR = PROJECT_DIR / "results"
+VIEWER_PORT = 8765                  # the viewer's local web server; a busy port falls back to the next free one
+VIEWER_LOG_PATH = RESULTS_DIR / "viewer.log"
+FRAME_HZ = 30                       # car frames sent to the page per second
+PANEL_HZ = 5                        # panel updates sent at most this often (only when they changed)
+WEB_DIR = PROJECT_DIR / "racing" / "web"     # the viewer page and its scripts
 CIRCUIT_GRIDS_DIR = Path(os.environ.get("EC_RACING_CIRCUIT_GRIDS") or RESULTS_DIR / "circuit_grids")
                              # real circuits' road grids, built once per machine and memory-mapped (spec §4.7, §9.10);
                              # EC_RACING_CIRCUIT_GRIDS names another folder, which worker processes also read;

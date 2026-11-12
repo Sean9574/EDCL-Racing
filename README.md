@@ -505,7 +505,7 @@ pilot: it needs a refined baseline of this revision.
 python -m racing.app
 ```
 
-On Windows 11 the window opens through WSLg.
+The viewer opens in your web browser (a local page at http://127.0.0.1:8765/; `--port` and `--no-browser` change that). The log is `results/viewer.log`.
 
 - **Training view:** choose an approach, run (*0 (seeded)* or *1*), difficulty and population size, then press Play
   (or Space). Training follows the mastery rules and continues until Stop, which freezes the cars where they are.
