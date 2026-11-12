@@ -19,6 +19,17 @@
   const STEER_SHOWN = 0.45;                  // rad, the front wheels' angle at a full steering command
   const SPIN = 0.06;                         // shown wheel spin per metre as a share of the true spin (no strobing)
   const STEER_LEVELS = {S: 0, "¼": 0.25, "½": 0.5, "¾": 0.75, 1: 1};
+  /* The scene's lights put about 1.45× light on a surface facing up, which washed the paint out (KT Random's orange
+     read as NEAT's yellow). The paint is matte-ish with a thin clear coat; its albedo is the method's color times
+     PAINT_GAIN plus a faint self-light (PAINT_GLOW) that keeps the shaded sides readable, so the lit paint lands
+     within about 20 of each channel of the hex from above and behind (spec §10.1, Okabe–Ito). The light model has
+     no self-light and uses LIGHT_GAIN. */
+  const PAINT_GAIN = 0.58, PAINT_GLOW = 0.15, LIGHT_GAIN = 0.68;
+  const GLOW_BACK = 1.1;                     // m a glow sits back along its ray from the road edge, so walls never cut it
+  const GLOW_HEIGHT = 0.8;                   // m, high enough that the road does not cut its lower half either
+  const GLOW_NEAR = [2, 4];                  // m from the camera: glows fade out below this range (Wheels camera)
+  const GLOW_SIZE = 2.2;                     // m across, from 25 m away and further (Top, Chase); closer ones shrink
+  const GLOW_FULL = 25;                      // to 30 % so a Wheels view is not washed pink
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const EMPTY = new T.BufferGeometry();
@@ -133,8 +144,8 @@
   function makeCar(look) {
     const G = new T.Group();
     const mats = {
-      paint: new T.MeshPhysicalMaterial({color: look.color, metalness: 0.25, roughness: 0.36, clearcoat: 0.9,
-                                         clearcoatRoughness: 0.18}),
+      paint: new T.MeshPhysicalMaterial({color: look.color, metalness: 0, roughness: 0.6, clearcoat: 0.15,
+                                         clearcoatRoughness: 0.35}),
       white: new T.MeshPhysicalMaterial({color: WHITE, metalness: 0.1, roughness: 0.4, clearcoat: 0.6}),
       carbon: new T.MeshStandardMaterial({color: 0x1d2025, roughness: 0.5, metalness: 0.35}),
       black: new T.MeshStandardMaterial({color: 0x0c0d0f, roughness: 0.8}),
@@ -160,7 +171,10 @@
     }
     const car = {G, mats, wheels, steerers, look: {}, opacity: 1, shadows: true, steer: 0, dist: 0, last: null};
     car.setLook = next => {
-      if (next.color !== car.look.color) mats.paint.color.set(next.color);
+      if (next.color !== car.look.color) {
+        mats.paint.color.set(next.color).multiplyScalar(PAINT_GAIN);
+        mats.paint.emissive.set(next.color).multiplyScalar(PAINT_GLOW);
+      }
       if (next.stripe !== car.look.stripe || next.app !== car.look.app) {
         const parts = body(next.stripe, next.app);
         for (const k in shells) {
@@ -263,6 +277,7 @@
     };
     // the rays of a car at (x, y) heading h; lengths[k] at angles[k] (index 0 points right); dim for other cars
     S.draw = (x, y, h, lengths, sensor, dim) => {
+      const camera = ECR.scene.camera ? ECR.scene.camera.position : null;
       lines.forEach(o => { o.visible = true; });
       S.shown = true;
       fanPos[0] = x; fanPos[1] = 0.04; fanPos[2] = -y;
@@ -271,10 +286,17 @@
         fanPos.set([ex, 0.04, -ey], (k + 1) * 3);
         rimPos.set([ex, 0.06, -ey], k * 3);
         rayPos.set([x, 0.06, -y, ex, 0.06, -ey], k * 6);
-        const hit = r < sensor - GLOW_MARGIN;
+        const back = Math.min(GLOW_BACK, r), gx = ex - Math.cos(a) * back, gy = ey - Math.sin(a) * back;
+        const near = camera ? Math.hypot(camera.x - gx, camera.y - GLOW_HEIGHT, camera.z + gy) : Infinity;
+        const fade = Math.min(1, Math.max(0, (near - GLOW_NEAR[0]) / (GLOW_NEAR[1] - GLOW_NEAR[0])));
+        const hit = r < sensor - GLOW_MARGIN && fade > 0;
         glows[k].visible = hit;
-        if (hit) glows[k].position.set(ex, 0.35, -ey);
-        glows[k].material.opacity = dim ? 0.5 : 1;
+        if (hit) {
+          const size = GLOW_SIZE * Math.min(1, Math.max(0.3, near / GLOW_FULL));
+          glows[k].position.set(gx, GLOW_HEIGHT, -gy);
+          glows[k].scale.set(size, size, 1);
+        }
+        glows[k].material.opacity = (dim ? 0.5 : 1) * fade;
       }
       fanG.attributes.position.needsUpdate = true;
       rayG.attributes.position.needsUpdate = true;
@@ -410,7 +432,7 @@
   // the light fleet: capacity grows to the largest display count seen
   function makeFleet() {
     const geo = lightGeometry();
-    const bodyMat = new T.MeshStandardMaterial({color: 0xffffff, roughness: 0.45, metalness: 0.2, transparent: true,
+    const bodyMat = new T.MeshStandardMaterial({color: 0xffffff, roughness: 0.6, metalness: 0, transparent: true,
                                                 opacity: LIGHT_OPACITY, depthWrite: false});
     const tyreMat = new T.MeshStandardMaterial({color: 0x141517, roughness: 0.9, transparent: true,
                                                 opacity: LIGHT_OPACITY, depthWrite: false});
@@ -444,7 +466,8 @@
       if (recolor) {
         F.color = color;
         F.base.set(color);
-        F.faded.copy(F.base).lerp(new T.Color(BG), DONE_FADE);
+        F.faded.copy(F.base).lerp(new T.Color(BG), DONE_FADE).multiplyScalar(LIGHT_GAIN);
+        F.base.multiplyScalar(LIGHT_GAIN);
       }
       let colorsChanged = false;
       const ds = span / 260;
@@ -555,6 +578,7 @@
         out.r = span / (i === s.focus ? 45 : 70);
         out.alpha = s.crashed[i] ? 0.4 : 1;
         out.ring = true;
+        out.group = 2 * i + (s.crashed[i] ? 1 : 0);
       };
     }
     const color = panel && panel.color || FALLBACK;
@@ -564,6 +588,7 @@
       out.r = span / (focus ? 55 : 110);
       out.alpha = s.done[i] ? 0.25 : 0.75;
       out.ring = false;
+      out.group = focus ? 2 : s.done[i] ? 1 : 0;
     };
   }
 

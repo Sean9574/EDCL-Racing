@@ -104,12 +104,14 @@
     sun.shadow.mapSize.set(2048, 2048);
     Object.assign(sun.shadow.camera, {left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 300});
     sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.04;                // no acne bands on surfaces lit at a grazing angle
     scene.add(sun, sun.target);
 
     const first = PRESETS[ECR.view.camera] || PRESETS.top;          // start at the chosen preset, no glide in
     off = new T.Vector3(...first.off);
     look = new T.Vector3(...first.look);
     api.three = scene;
+    api.camera = cam;
     api.textures = makeTextures();
     controls(R.domElement);
     const resize = () => {
@@ -192,15 +194,25 @@
     return g;
   }
 
-  // a closed vertical wall along an outline
-  function wall(A, h0, h1) {
+  /* A closed vertical wall along outline A, its faces toward the road (the side the other outline `inside` lies
+     on). The wall is single-sided, so a camera outside it (the Wheels camera beside a car at the edge) sees through. */
+  function wall(A, inside, h0, h1) {
     const n = A.length, along = arcLengths(A, A), pos = [], uv = [], idx = [];
     for (let i = 0; i <= n; i++) {
       const p = A[i % n];
       pos.push(p[0], h0, -p[1], p[0], h1, -p[1]);
       uv.push(along[i] / 5, 0, along[i] / 5, 1);
     }
-    for (let i = 0; i < n; i++) { const k = 2 * i; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+    let left = 0;                                // > 0: the road lies to the left of A's direction
+    for (let i = 0; i < n; i++) {
+      const a = A[i], b = A[(i + 1) % n], c = inside[i];
+      left += (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    }
+    for (let i = 0; i < n; i++) {                // (k, k+2, k+1) faces the right of A's direction
+      const k = 2 * i;
+      if (left > 0) idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+      else idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+    }
     const g = new T.BufferGeometry();
     g.setAttribute("position", new T.Float32BufferAttribute(pos, 3));
     g.setAttribute("uv", new T.Float32BufferAttribute(uv, 2));
@@ -264,9 +276,9 @@
           new T.MeshBasicMaterial({color: GREEN, transparent: true, opacity: 0.55, side: T.DoubleSide, depthWrite: false,
                                    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6}));
     }
-    const wallMat = new T.MeshStandardMaterial({map: tex.wall, roughness: 0.75, side: T.DoubleSide});
-    add(wall(L, 0, WALL_HEIGHT), wallMat, {castShadow: true, receiveShadow: true});
-    add(wall(Rt, 0, WALL_HEIGHT), wallMat, {castShadow: true, receiveShadow: true});
+    const wallMat = new T.MeshStandardMaterial({map: tex.wall, roughness: 0.75, shadowSide: T.DoubleSide});
+    add(wall(L, Rt, 0, WALL_HEIGHT), wallMat, {castShadow: true});           // walls cast on the road but take no
+    add(wall(Rt, L, 0, WALL_HEIGHT), wallMat, {castShadow: true});           // shadow themselves: no acne bands
 
     // the whole-map road: wider and solid, above the walls, so the lap reads as one clean line from far above
     const pad = span / 450;
@@ -349,9 +361,11 @@
     return [(x - mini.x0) * mini.scale, (mini.y0 - y) * mini.scale];
   }
 
-  /* Draw the mini-map: `dot(i, out)` sets out.color (CSS), out.r (m), out.alpha and out.ring (a dark outline) for
-     car i. Dots of one look are filled as one path (thousands of cars stay cheap); the focus car is drawn last,
-     larger, always outlined. */
+  /* Draw the mini-map: `dot(i, out)` sets out.group (a small whole number, one per look), out.color (CSS), out.r (m),
+     out.alpha and out.ring (a dark outline) for car i. Dots of one group are filled as one path with no allocation
+     per car, so thousands of cars stay cheap; the focus car is drawn last, larger, always outlined. */
+  const miniGroups = [];
+  const miniDot = {group: 0, color: "#fff", r: 1, alpha: 1, ring: false};
   function drawMini(s, dot) {
     if (!api.track || !mini.ctx || mini.el.hidden || host.classList.contains("mapview") ||
         host.classList.contains("setup")) return;
@@ -363,18 +377,21 @@
     g.setTransform(mini.dpr, 0, 0, mini.dpr, 0, 0);
     g.strokeStyle = "#101215";
     g.lineWidth = 1.2;
-    const out = {color: "#fff", r: 1, alpha: 1, ring: false}, focus = s.focus, groups = new Map();
+    const out = miniDot, focus = s.focus, x0 = mini.x0, y0 = mini.y0, scale = mini.scale;
+    miniGroups.length = 0;
     for (let i = 0; i < s.n; i++) {
       if (i === focus) continue;
       dot(i, out);
-      const key = `${out.color}|${out.alpha}|${out.ring}`;
-      let group = groups.get(key);
-      if (!group) groups.set(key, group = {path: new Path2D(), color: out.color, alpha: out.alpha, ring: out.ring});
-      const [px, py] = miniPoint(s.x(i), s.y(i)), r = Math.max(out.r * mini.scale, 1.2);
+      let group = miniGroups[out.group];
+      if (!group) {
+        miniGroups[out.group] = group = {path: new Path2D(), color: out.color, alpha: out.alpha, ring: out.ring};
+      }
+      const px = (s.x(i) - x0) * scale, py = (y0 - s.y(i)) * scale, r = Math.max(out.r * scale, 1.2);
       group.path.moveTo(px + r, py);
       group.path.arc(px, py, r, 0, 2 * Math.PI);
     }
-    for (const group of groups.values()) {
+    for (const group of miniGroups) {
+      if (!group) continue;
       g.globalAlpha = group.alpha;
       g.fillStyle = group.color;
       g.fill(group.path);
@@ -383,7 +400,7 @@
     g.globalAlpha = 1;
     if (focus >= 0 && focus < s.n) {
       dot(focus, out);
-      const [px, py] = miniPoint(s.x(focus), s.y(focus)), r = Math.max(out.r * mini.scale, 3);
+      const px = (s.x(focus) - x0) * scale, py = (y0 - s.y(focus)) * scale, r = Math.max(out.r * scale, 3);
       g.fillStyle = out.color;
       g.beginPath();
       g.arc(px, py, r, 0, 2 * Math.PI);
@@ -456,14 +473,19 @@
     sun.target.updateMatrixWorld();
   }
 
-  /* Draw one display frame. `s` is the interpolated car state from main.js (or null before the first frame). */
-  function render(s, dt, now) {
+  /* Place the camera (and the sun) for one display frame, before the cars are drawn so they can use its position.
+     `s` is the interpolated car state from main.js (or null before the first frame). */
+  function place(s, dt, now) {
+    if (api.ok && api.track) placeCamera(dt, followPose(s, now));
+  }
+
+  // draw the frame (the plain background without a track)
+  function render() {
     if (!api.ok) return;
     if (!api.track) { R.clear(); return; }
-    placeCamera(dt, followPose(s, now));
     R.render(scene, cam);
   }
 
-  Object.assign(api, {init, load, clear, setCamera, setRays, render, drawMini, PRESETS});
+  Object.assign(api, {init, load, clear, setCamera, setRays, place, render, drawMini, PRESETS});
   ECR.scene = api;
 })();

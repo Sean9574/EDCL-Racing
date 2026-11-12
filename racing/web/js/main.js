@@ -220,17 +220,23 @@
   };
 
   // ---------- the display loop ----------
-  let last = performance.now();
+  let last = performance.now(), failed = null;
   function tick(ms) {
+    requestAnimationFrame(tick);                 // first, so one bad frame never stops the display
     const dt = clamp((ms - last) / 1000, 0, 0.25), now = ms / 1000;     // a slow machine still settles the camera
     last = ms;
-    if (ECR.scene.ok && !notices.final) {
+    if (!ECR.scene.ok || notices.final) return;
+    try {
       const s = ECR.scene.track ? makeSample(now) : null;
+      ECR.scene.place(s, dt, now);
       ECR.cars.update(s, dt, ECR.panel);
-      ECR.scene.render(s, dt, now);
+      ECR.scene.render();
       if (ECR.scene.track) ECR.scene.drawMini(s, s ? ECR.cars.miniDots(s, ECR.panel) : null);
+      failed = null;
+    } catch (error) {
+      if (String(error) !== failed) console.error("display frame failed:", error);   // each new problem once
+      failed = String(error);
     }
-    requestAnimationFrame(tick);
   }
 
   if (!ECR.scene.init(sim)) {
