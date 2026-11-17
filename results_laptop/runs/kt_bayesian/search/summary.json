@@ -1,0 +1,23 @@
+{
+  "approach": "kt_bayesian",
+  "seed": 0,
+  "trials": 30,
+  "configurations": 30,
+  "total_epochs": 2048,
+  "trials_at_limit": 2,
+  "max_epochs": 150,
+  "wall_time": 495.5384020805359,
+  "best_val_accuracy": 0.7037879824638367,
+  "chosen_trial": "28",
+  "chosen_val_accuracy": 0.7037879824638367,
+  "chosen_params": 5839,
+  "chosen_hyperparameters": {
+    "activation": "tanh",
+    "dropout": 0.0,
+    "layers": 2,
+    "units_0": 64,
+    "learning_rate": 0.01,
+    "units_1": 64,
+    "units_2": 32
+  }
+}

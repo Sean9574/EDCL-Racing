@@ -1,0 +1,4 @@
+Method,Trials,Configurations,Total epochs,Trials at the epoch limit,Search time (s)
+KT Random,30,30,2129,1,914.2
+KT Hyperband,254,172,2783,3,1762.9
+KT Bayesian,30,30,2048,2,495.5

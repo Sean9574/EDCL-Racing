@@ -1,0 +1,17 @@
+{
+  "approach": "kt_random",
+  "seed": 1,
+  "epochs": 118,
+  "val_accuracy": 0.654874324798584,
+  "params": 431,
+  "wall_time": 12.393563508987427,
+  "hyperparameters": {
+    "activation": "tanh",
+    "dropout": 0.0,
+    "layers": 1,
+    "units_0": 16,
+    "learning_rate": 0.006525655319508182,
+    "units_1": 16,
+    "units_2": 32
+  }
+}

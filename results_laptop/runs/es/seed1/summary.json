@@ -1,0 +1,14 @@
+{
+  "approach": "es",
+  "seed": 1,
+  "generations": 363,
+  "evals": 199650,
+  "level_reached": 4,
+  "start_level": 1,
+  "mu": 50,
+  "lam": 500,
+  "seeded": false,
+  "val_fitness": 1.5160701854135823,
+  "champion_path": "/home/sean/Desktop/Classes/ECDL/Project/results/champions/es/seed1.keras",
+  "wall_time": 2478.559364080429
+}

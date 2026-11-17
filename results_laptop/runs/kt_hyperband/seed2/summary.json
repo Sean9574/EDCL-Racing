@@ -1,0 +1,17 @@
+{
+  "approach": "kt_hyperband",
+  "seed": 2,
+  "epochs": 35,
+  "val_accuracy": 0.6729609966278076,
+  "params": 3279,
+  "wall_time": 5.24975848197937,
+  "hyperparameters": {
+    "activation": "relu",
+    "dropout": 0.0,
+    "layers": 2,
+    "units_0": 64,
+    "learning_rate": 0.008489955631612837,
+    "units_1": 32,
+    "units_2": 16
+  }
+}

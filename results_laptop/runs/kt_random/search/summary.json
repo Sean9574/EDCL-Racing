@@ -1,0 +1,23 @@
+{
+  "approach": "kt_random",
+  "seed": 0,
+  "trials": 30,
+  "configurations": 30,
+  "total_epochs": 2129,
+  "trials_at_limit": 1,
+  "max_epochs": 150,
+  "wall_time": 914.171374797821,
+  "best_val_accuracy": 0.6665339469909668,
+  "chosen_trial": "06",
+  "chosen_val_accuracy": 0.6665339469909668,
+  "chosen_params": 431,
+  "chosen_hyperparameters": {
+    "activation": "tanh",
+    "dropout": 0.0,
+    "layers": 1,
+    "units_0": 16,
+    "learning_rate": 0.006525655319508182,
+    "units_1": 16,
+    "units_2": 32
+  }
+}

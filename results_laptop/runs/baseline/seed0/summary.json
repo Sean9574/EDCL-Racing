@@ -1,0 +1,8 @@
+{
+  "approach": "baseline",
+  "seed": 0,
+  "epochs": 150,
+  "val_accuracy": 0.6037993431091309,
+  "params": 431,
+  "wall_time": 14.73366641998291
+}

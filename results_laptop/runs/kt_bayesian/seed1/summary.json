@@ -1,0 +1,17 @@
+{
+  "approach": "kt_bayesian",
+  "seed": 1,
+  "epochs": 35,
+  "val_accuracy": 0.7003753781318665,
+  "params": 5839,
+  "wall_time": 5.782244682312012,
+  "hyperparameters": {
+    "activation": "tanh",
+    "dropout": 0.0,
+    "layers": 2,
+    "units_0": 64,
+    "learning_rate": 0.01,
+    "units_1": 64,
+    "units_2": 32
+  }
+}

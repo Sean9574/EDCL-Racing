@@ -1,0 +1,4 @@
+Method,Trial,Parameters,Validation accuracy,Mean validation fitness,Tracks completed (of 20),Mean lap time (s),Crashes
+KT Random,10,2239,0.593,1.286,17,55.45,3
+KT Hyperband,0141,1339,0.5832,1.355,15,54.97,5
+KT Bayesian,01,1999,0.6011,1.264,16,57.05,4

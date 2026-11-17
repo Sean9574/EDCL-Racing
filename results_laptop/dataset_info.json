@@ -1,0 +1,21 @@
+{
+  "wall_time": 32.49489092826843,
+  "n_jobs": 6,
+  "splits": {
+    "train": {
+      "tracks": 121,
+      "rows": 91803,
+      "respawns": 286
+    },
+    "val": {
+      "tracks": 20,
+      "rows": 17582,
+      "respawns": 72
+    },
+    "test": {
+      "tracks": 20,
+      "rows": 17095,
+      "respawns": 59
+    }
+  }
+}

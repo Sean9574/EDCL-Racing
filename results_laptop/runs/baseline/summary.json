@@ -1,0 +1,7 @@
+{
+  "approach": "baseline",
+  "epochs": 50,
+  "val_accuracy": 0.5550563335418701,
+  "params": 431,
+  "wall_time": 17.702404737472534
+}

@@ -1,0 +1,23 @@
+{
+  "approach": "kt_hyperband",
+  "seed": 0,
+  "trials": 254,
+  "configurations": 172,
+  "total_epochs": 2783,
+  "trials_at_limit": 3,
+  "max_epochs": 150,
+  "wall_time": 1762.9352390766144,
+  "best_val_accuracy": 0.7046411037445068,
+  "chosen_trial": "0208",
+  "chosen_val_accuracy": 0.7012284994125366,
+  "chosen_params": 3279,
+  "chosen_hyperparameters": {
+    "activation": "relu",
+    "dropout": 0.0,
+    "layers": 2,
+    "units_0": 64,
+    "learning_rate": 0.008489955631612837,
+    "units_1": 32,
+    "units_2": 16
+  }
+}

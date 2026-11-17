@@ -1,0 +1,15 @@
+{
+  "approach": "ga",
+  "seed": 1,
+  "generations": 200,
+  "evals": 200000,
+  "level_reached": 4,
+  "start_level": 1,
+  "pop_size": 1000,
+  "kept_min": 50,
+  "keep_max": 500,
+  "s_max": 0.1,
+  "val_fitness": 1.561169760709811,
+  "champion_path": "/home/sean/Desktop/Classes/ECDL/Project/results/champions/ga/seed1.keras",
+  "wall_time": 1561.4270012378693
+}

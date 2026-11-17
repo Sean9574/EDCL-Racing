@@ -1,0 +1,9 @@
+{
+  "baseline": 1,
+  "kt_random": 1,
+  "kt_hyperband": 2,
+  "kt_bayesian": 2,
+  "es": 0,
+  "ga": 1,
+  "es_seeded": 2
+}

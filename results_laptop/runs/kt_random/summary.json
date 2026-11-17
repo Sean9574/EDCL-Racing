@@ -1,0 +1,10 @@
+{
+  "approach": "kt_random",
+  "trials": 30,
+  "total_epochs": 30,
+  "wall_time": 1175.7625935077667,
+  "best_val_accuracy": 0.6559549570083618,
+  "chosen_trial": "24",
+  "chosen_val_accuracy": 0.6559549570083618,
+  "chosen_params": 2239
+}
